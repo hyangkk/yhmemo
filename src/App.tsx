@@ -7,7 +7,6 @@ import type { Note } from './types'
 import { db } from './firebase'
 import {
   collection,
-  getDocs,
   addDoc,
   updateDoc,
   deleteDoc,
