@@ -1,6 +1,7 @@
 import { Box, TextField } from '@mui/material';
 import type { Note } from '../types';
 import { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 interface NoteEditorProps {
   note: Note | null;
@@ -22,18 +23,22 @@ const NoteEditor = ({ note, onUpdateNote }: NoteEditorProps) => {
   }, [note]);
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    setTitle(newTitle);
-    if (note) {
-      onUpdateNote({ ...note, title: newTitle });
-    }
+    setTitle(e.target.value);
   };
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newContent = e.target.value;
-    setContent(newContent);
+    setContent(e.target.value);
+  };
+
+  const handleTitleBlur = () => {
     if (note) {
-      onUpdateNote({ ...note, content: newContent });
+      onUpdateNote({ ...note, title });
+    }
+  };
+
+  const handleContentBlur = () => {
+    if (note) {
+      onUpdateNote({ ...note, content });
     }
   };
 
@@ -68,6 +73,7 @@ const NoteEditor = ({ note, onUpdateNote }: NoteEditorProps) => {
         variant="standard"
         value={title}
         onChange={handleTitleChange}
+        onBlur={handleTitleBlur}
         placeholder="제목"
         sx={{ mb: 2 }}
       />
@@ -76,6 +82,7 @@ const NoteEditor = ({ note, onUpdateNote }: NoteEditorProps) => {
         multiline
         value={content}
         onChange={handleContentChange}
+        onBlur={handleContentBlur}
         placeholder="내용을 입력하세요"
         sx={{ flex: 1 }}
         InputProps={{
@@ -87,6 +94,9 @@ const NoteEditor = ({ note, onUpdateNote }: NoteEditorProps) => {
           },
         }}
       />
+      <Box sx={{ mt: 2, p: 2, bgcolor: '#f6f8fa', borderRadius: 2, minHeight: 100 }}>
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </Box>
     </Box>
   );
 };

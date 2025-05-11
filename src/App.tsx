@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Box, CssBaseline, ThemeProvider, createTheme } from '@mui/material'
+import { Box, CssBaseline, ThemeProvider, createTheme, useMediaQuery, Button } from '@mui/material'
 import Sidebar from './components/Sidebar'
 import NoteList from './components/NoteList'
 import NoteEditor from './components/NoteEditor'
@@ -29,6 +29,8 @@ function App() {
   const [notes, setNotes] = useState<Note[]>([])
   const [selectedNote, setSelectedNote] = useState<Note | null>(null)
   const notesRef = collection(db, 'notes')
+  const isMobile = useMediaQuery('(max-width:600px)')
+  const [showDetail, setShowDetail] = useState(false)
 
   // Firestore에서 메모 실시간 구독
   useEffect(() => {
@@ -88,20 +90,46 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', height: '100vh' }}>
-        <Sidebar onCreateNote={handleCreateNote} />
-        <Box sx={{ display: 'flex', flex: 1 }}>
-          <NoteList
-            notes={notes}
-            selectedNote={selectedNote}
-            onSelectNote={setSelectedNote}
-            onDeleteNote={handleDeleteNote}
-          />
-          <NoteEditor
-            note={selectedNote}
-            onUpdateNote={handleUpdateNote}
-          />
-        </Box>
+      <Box sx={{ height: '100vh', width: '100vw', overflow: 'hidden' }}>
+        {isMobile ? (
+          showDetail && selectedNote ? (
+            <Box sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
+              <Box sx={{ p: 1 }}>
+                <Button variant="text" onClick={() => setShowDetail(false)} sx={{ fontSize: 18 }}>← 뒤로</Button>
+              </Box>
+              <NoteEditor
+                note={selectedNote}
+                onUpdateNote={handleUpdateNote}
+              />
+            </Box>
+          ) : (
+            <NoteList
+              notes={notes}
+              selectedNote={selectedNote}
+              onSelectNote={note => {
+                setSelectedNote(note);
+                setShowDetail(true);
+              }}
+              onDeleteNote={handleDeleteNote}
+            />
+          )
+        ) : (
+          <Box sx={{ display: 'flex', height: '100vh' }}>
+            <Sidebar onCreateNote={handleCreateNote} />
+            <Box sx={{ display: 'flex', flex: 1 }}>
+              <NoteList
+                notes={notes}
+                selectedNote={selectedNote}
+                onSelectNote={setSelectedNote}
+                onDeleteNote={handleDeleteNote}
+              />
+              <NoteEditor
+                note={selectedNote}
+                onUpdateNote={handleUpdateNote}
+              />
+            </Box>
+          </Box>
+        )}
       </Box>
     </ThemeProvider>
   )

@@ -3,6 +3,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import type { Note } from '../types';
+import ReactMarkdown from 'react-markdown';
 
 interface NoteListProps {
   notes: Note[];
@@ -32,7 +33,9 @@ const NoteList = ({ notes, selectedNote, onSelectNote, onDeleteNote }: NoteListP
                 aria-label="delete"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDeleteNote(note.id);
+                  if (window.confirm('정말 삭제하시겠습니까?')) {
+                    onDeleteNote(note.id);
+                  }
                 }}
               >
                 <DeleteIcon />
