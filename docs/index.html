@@ -132,6 +132,9 @@
       width: 100%;
     }
     .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; width: 100%; }
+    .btn-run { background: #ff9500; color: #fff; width: 100%; }
+    .btn-run:hover { opacity: .9; }
+    .btn-run:disabled { opacity: .5; cursor: not-allowed; }
 
     .btn-row { display: flex; gap: 10px; }
 
@@ -249,6 +252,7 @@
     <!-- 저장 -->
     <div class="card">
       <button class="btn btn-primary" onclick="saveSettings()" style="margin-bottom:10px">저장하기</button>
+      <button class="btn btn-run" onclick="runNow()" style="margin-bottom:10px" id="run-btn">지금 실행하기</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="loadSettings()">새로고침</button>
         <button class="btn btn-danger" onclick="disconnect()">연결 해제</button>
@@ -378,6 +382,38 @@
     document.getElementById('setup-card').classList.add('hidden');
     document.getElementById('loading').classList.remove('hidden');
     loadSettings();
+  }
+
+  async function runNow() {
+    const btn = document.getElementById('run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/news-idea-agent.yml/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ref: 'main' }),
+        }
+      );
+      if (res.status === 204) {
+        toast('실행 요청 완료! GitHub Actions에서 진행 중입니다.');
+      } else if (res.status === 401 || res.status === 404) {
+        toast('GitHub 토큰이 필요합니다. 아래 안내를 확인해주세요.', true);
+        alert('지금 실행하기는 GitHub Personal Access Token이 필요합니다.\n\nGitHub → Actions 탭 → 뉴스 아이디어 에이전트 → Run workflow 버튼을 직접 눌러주세요.');
+      } else {
+        toast('실행 실패 (' + res.status + ')', true);
+      }
+    } catch (e) {
+      toast('오류: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '지금 실행하기';
+    }
   }
 
   function disconnect() {
