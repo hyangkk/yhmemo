@@ -2,23 +2,19 @@ name: 뉴스 아이디어 에이전트
 
 on:
   schedule:
-    # 매 시간 정각 실행 (UTC 기준 - KST보다 9시간 느림)
+    # 매 시간 정각 실행 (UTC 기준)
     - cron: '0 * * * *'
   workflow_dispatch:
-    # 수동으로도 실행 가능 (Actions 탭 → Run workflow)
+    # 수동 실행 (Actions 탭 → Run workflow)
 
 jobs:
   generate-news-idea:
     name: 뉴스 수집 & 아이디어 생성
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # 결과 파일을 저장소에 커밋하기 위해 필요
 
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Python 3.11 설정
         uses: actions/setup-python@v5
@@ -31,19 +27,8 @@ jobs:
       - name: 뉴스 아이디어 에이전트 실행
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/news_idea_agent.py
-
-      - name: 생성된 아이디어 파일 커밋 & 푸시
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add news-ideas/
-          # 변경사항이 있을 때만 커밋
-          if git diff --staged --quiet; then
-            echo "새로운 파일 없음 (같은 시간에 이미 실행됨)"
-          else
-            TIMESTAMP=$(TZ='Asia/Seoul' date +'%Y-%m-%d %H:%M KST')
-            git commit -m "feat: 뉴스 아이디어 자동 생성 - ${TIMESTAMP}"
-            git push origin ${{ github.ref_name }}
-            echo "커밋 완료"
-          fi
