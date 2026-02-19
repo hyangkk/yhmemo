@@ -175,15 +175,20 @@
 
   <!-- 연결 설정 -->
   <div id="setup-card" class="card hidden">
-    <div class="card-title">Supabase 연결</div>
+    <div class="card-title">연결 설정</div>
     <div class="field">
-      <label>Project URL</label>
+      <label>Supabase Project URL</label>
       <input type="text" id="sb-url" placeholder="https://xxxx.supabase.co">
     </div>
     <div class="field">
-      <label>Anon Key</label>
+      <label>Supabase Anon Key</label>
       <input type="password" id="sb-key" placeholder="sb_publishable_...">
       <p class="hint">Supabase → Settings → API Keys → sb_publishable_ 키</p>
+    </div>
+    <div class="field">
+      <label>GitHub Personal Access Token</label>
+      <input type="password" id="gh-token" placeholder="ghp_...">
+      <p class="hint">GitHub → Settings → Developer settings → Personal access tokens → <b>workflow</b> 권한 필요</p>
     </div>
     <button class="btn btn-primary" onclick="connect()">연결하기</button>
   </div>
@@ -271,6 +276,7 @@
     return {
       url: localStorage.getItem('sb-url') || '',
       key: localStorage.getItem('sb-key') || '',
+      ghToken: localStorage.getItem('gh-token') || '',
     };
   }
 
@@ -376,15 +382,22 @@
   function connect() {
     const url = document.getElementById('sb-url').value.trim().replace(/\/$/, '');
     const key = document.getElementById('sb-key').value.trim().replace(/[^\x20-\x7E]/g, '');
-    if (!url || !key) { toast('URL과 키를 모두 입력해주세요', true); return; }
+    const ghToken = document.getElementById('gh-token').value.trim().replace(/[^\x20-\x7E]/g, '');
+    if (!url || !key) { toast('Supabase URL과 키를 입력해주세요', true); return; }
     localStorage.setItem('sb-url', url);
     localStorage.setItem('sb-key', key);
+    if (ghToken) localStorage.setItem('gh-token', ghToken);
     document.getElementById('setup-card').classList.add('hidden');
     document.getElementById('loading').classList.remove('hidden');
     loadSettings();
   }
 
   async function runNow() {
+    const { ghToken } = getSB();
+    if (!ghToken) {
+      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
+      return;
+    }
     const btn = document.getElementById('run-btn');
     btn.disabled = true;
     btn.textContent = '실행 중...';
@@ -396,17 +409,16 @@
           headers: {
             'Accept': 'application/vnd.github+json',
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ghToken}`,
           },
           body: JSON.stringify({ ref: 'main' }),
         }
       );
       if (res.status === 204) {
-        toast('실행 요청 완료! GitHub Actions에서 진행 중입니다.');
-      } else if (res.status === 401 || res.status === 404) {
-        toast('GitHub 토큰이 필요합니다. 아래 안내를 확인해주세요.', true);
-        alert('지금 실행하기는 GitHub Personal Access Token이 필요합니다.\n\nGitHub → Actions 탭 → 뉴스 아이디어 에이전트 → Run workflow 버튼을 직접 눌러주세요.');
+        toast('실행 요청 완료! 약 1분 후 텔레그램을 확인하세요.');
       } else {
-        toast('실행 실패 (' + res.status + ')', true);
+        const msg = await res.text();
+        toast('실행 실패 (' + res.status + '): ' + msg, true);
       }
     } catch (e) {
       toast('오류: ' + e.message, true);
