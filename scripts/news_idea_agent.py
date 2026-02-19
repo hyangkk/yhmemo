@@ -103,7 +103,7 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
     """활성화된 RSS 피드에서 최신 24시간 이내 뉴스 1개씩 수집."""
     import time as _time
     news_items = []
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
 
     feeds = [(name, url) for name, url in ALL_SOURCES.items() if name in active_sources]
 
