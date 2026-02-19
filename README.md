@@ -1,58 +1,83 @@
-# React + TypeScript + Vite
+# yhmemo - 메모 & 뉴스 아이디어 에이전트
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Firebase 기반 실시간 메모 앱과 매 시간 자동으로 주요 뉴스 3개를 수집하여 새로운 아이디어를 도출하는 AI 에이전트입니다.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 뉴스 아이디어 에이전트
 
-## Expanding the ESLint configuration
+### 동작 방식
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+```
+매 시간 정각
+    ↓
+주요 뉴스 RSS 피드에서 뉴스 3개 수집
+(BBC News / Reuters / AP News)
+    ↓
+Claude AI가 3개 뉴스를 분석·결합
+    ↓
+새로운 창의적 아이디어 도출
+    ↓
+news-ideas/ 폴더에 마크다운으로 자동 저장 & 커밋
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 결과물 위치
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+자동 생성된 아이디어는 [`news-ideas/`](./news-ideas/) 폴더에 `YYYY-MM-DD-HH.md` 형식으로 저장됩니다.
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
+### 필요한 GitHub Secrets 설정
+
+저장소의 **Settings → Secrets and variables → Actions** 에서 아래 시크릿을 추가해야 합니다:
+
+| 시크릿 이름 | 설명 |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude API 키 ([발급](https://console.anthropic.com/)) |
+
+### 수동 실행
+
+GitHub Actions 탭 → **뉴스 아이디어 에이전트** → **Run workflow** 버튼으로 즉시 실행할 수 있습니다.
+
+---
+
+## 메모 앱
+
+React + TypeScript + Vite + Firebase Firestore 기반의 실시간 메모 앱입니다.
+
+### 주요 기능
+
+- 실시간 Firebase 동기화
+- 마크다운 미리보기
+- 모바일 반응형 UI (Material UI)
+- 메모 생성 / 조회 / 수정 / 삭제
+
+### 로컬 개발 환경 설정
+
+```bash
+npm install
+npm run dev
 ```
 
-# redeploy test
+### 빌드
 
-# deploy author test
+```bash
+npm run build
+```
+
+---
+
+## 프로젝트 구조
+
+```
+yhmemo/
+├── .github/
+│   └── workflows/
+│       └── news-idea-agent.yml   # 매 시간 실행되는 뉴스 에이전트 워크플로우
+├── scripts/
+│   └── news_idea_agent.py        # 뉴스 수집 + AI 아이디어 생성 스크립트
+├── news-ideas/                   # 자동 생성된 아이디어 저장 폴더
+│   └── YYYY-MM-DD-HH.md
+└── src/                          # 메모 앱 소스
+    ├── components/
+    ├── App.tsx
+    └── firebase.ts
+```
