@@ -272,11 +272,13 @@
 
   async function sbFetch(path, options = {}) {
     const { url, key } = getSB();
+    // ASCII 범위 외 문자 제거 (HTTP 헤더 ISO-8859-1 제한 대응)
+    const safeKey = key.replace(/[^\x20-\x7E]/g, '');
     const res = await fetch(`${url}/rest/v1/${path}`, {
       ...options,
       headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
+        apikey: safeKey,
+        Authorization: `Bearer ${safeKey}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
         ...(options.headers || {}),
@@ -369,7 +371,7 @@
 
   function connect() {
     const url = document.getElementById('sb-url').value.trim().replace(/\/$/, '');
-    const key = document.getElementById('sb-key').value.trim();
+    const key = document.getElementById('sb-key').value.trim().replace(/[^\x20-\x7E]/g, '');
     if (!url || !key) { toast('URL과 키를 모두 입력해주세요', true); return; }
     localStorage.setItem('sb-url', url);
     localStorage.setItem('sb-key', key);
