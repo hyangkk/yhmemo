@@ -4,17 +4,20 @@
 - 매 시간 정각 GitHub Actions에 의해 자동 실행
 - RSS 피드에서 주요 뉴스 3개 수집
 - Claude AI로 3개 뉴스를 결합하여 새로운 아이디어 도출
-- 결과를 news-ideas/ 폴더에 마크다운으로 저장
+- Supabase에 저장 + 텔레그램으로 발송
 """
 
 import os
+import re
 import sys
+import json
 import feedparser
 import anthropic
+import urllib.request
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 
-# 수집할 RSS 피드 목록 (순서대로 하나씩 가져옴)
 RSS_FEEDS = [
     ("BBC News", "http://feeds.bbci.co.uk/news/rss.xml"),
     ("Reuters", "https://feeds.reuters.com/reuters/topNews"),
@@ -24,15 +27,19 @@ RSS_FEEDS = [
 KST = timezone(timedelta(hours=9))
 
 
+# ---------------------------------------------------------------------------
+# 1. 뉴스 수집
+# ---------------------------------------------------------------------------
+
 def fetch_top_news(count: int = 3) -> list[dict]:
-    """각 RSS 피드에서 최신 뉴스 1개씩 수집하여 count개 반환."""
+    """각 RSS 피드에서 최신 뉴스 1개씩 수집."""
     news_items = []
 
     for source_name, feed_url in RSS_FEEDS:
         if len(news_items) >= count:
             break
         try:
-            print(f"  [{source_name}] 뉴스 수집 중: {feed_url}")
+            print(f"  [{source_name}] 수집 중...")
             feed = feedparser.parse(feed_url)
 
             if not feed.entries:
@@ -44,21 +51,17 @@ def fetch_top_news(count: int = 3) -> list[dict]:
             summary = entry.get("summary", entry.get("description", title)).strip()
             link = entry.get("link", "")
 
-            # HTML 태그 간단 제거
-            import re
             summary = re.sub(r"<[^>]+>", "", summary).strip()
-
-            # 요약이 너무 길면 자름
             if len(summary) > 500:
                 summary = summary[:497] + "..."
 
             news_items.append(
                 {"source": source_name, "title": title, "summary": summary, "link": link}
             )
-            print(f"  [{source_name}] 수집 완료: {title[:60]}...")
+            print(f"  [{source_name}] OK: {title[:60]}...")
 
         except Exception as e:
-            print(f"  [{source_name}] 수집 실패: {e}", file=sys.stderr)
+            print(f"  [{source_name}] 실패: {e}", file=sys.stderr)
 
     if len(news_items) < count:
         print(f"경고: {count}개 중 {len(news_items)}개만 수집됨", file=sys.stderr)
@@ -66,8 +69,12 @@ def fetch_top_news(count: int = 3) -> list[dict]:
     return news_items[:count]
 
 
+# ---------------------------------------------------------------------------
+# 2. AI 아이디어 생성
+# ---------------------------------------------------------------------------
+
 def generate_idea(news_items: list[dict]) -> str:
-    """Claude AI로 뉴스 3개를 결합하여 새로운 아이디어 생성."""
+    """Claude AI로 뉴스 3개를 결합하여 아이디어 생성."""
     client = anthropic.Anthropic()
 
     news_block = "\n\n".join(
@@ -109,71 +116,138 @@ def generate_idea(news_items: list[dict]) -> str:
     return message.content[0].text
 
 
-def save_result(news_items: list[dict], idea: str) -> str:
-    """결과를 마크다운 파일로 news-ideas/ 에 저장."""
-    now_kst = datetime.now(KST)
-    filename = now_kst.strftime("%Y-%m-%d-%H") + ".md"
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "news-ideas")
-    output_dir = os.path.abspath(output_dir)
-    os.makedirs(output_dir, exist_ok=True)
+# ---------------------------------------------------------------------------
+# 3. Supabase 저장
+# ---------------------------------------------------------------------------
 
-    news_section = ""
-    for i, item in enumerate(news_items):
-        news_section += (
-            f"### 뉴스 {i + 1}: {item['title']}\n\n"
-            f"- **출처**: {item['source']}\n"
-            f"- **링크**: [{item['link']}]({item['link']})\n"
-            f"- **요약**: {item['summary']}\n\n"
-        )
+def save_to_supabase(news_items: list[dict], idea: str, generated_at: datetime) -> bool:
+    """Supabase news_ideas 테이블에 결과 저장 (REST API 사용)."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    content = f"""# 뉴스 아이디어 리포트
+    if not url or not key:
+        print("경고: SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 없습니다.", file=sys.stderr)
+        return False
 
-> 생성 시각: {now_kst.strftime("%Y년 %m월 %d일 %H시 %M분")} (KST)
-> 자동 생성: GitHub Actions 뉴스 아이디어 에이전트
+    endpoint = f"{url}/rest/v1/news_ideas"
 
----
+    payload = json.dumps({
+        "generated_at": generated_at.isoformat(),
+        "news_items": news_items,
+        "idea": idea,
+    }).encode("utf-8")
 
-## 수집된 주요 뉴스 3개
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        method="POST",
+    )
 
-{news_section}---
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print(f"Supabase 저장 완료 (status: {resp.status})")
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"Supabase 저장 실패 ({e.code}): {body}", file=sys.stderr)
+        return False
 
-## AI 도출 아이디어
 
-{idea}
-"""
+# ---------------------------------------------------------------------------
+# 4. 텔레그램 발송
+# ---------------------------------------------------------------------------
 
-    filepath = os.path.join(output_dir, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(content)
+def send_to_telegram(news_items: list[dict], idea: str, generated_at: datetime) -> bool:
+    """텔레그램 봇으로 결과 메시지 발송."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-    return filepath
+    if not token or not chat_id:
+        print("경고: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID가 없습니다.", file=sys.stderr)
+        return False
 
+    timestamp = generated_at.strftime("%Y년 %m월 %d일 %H시 (KST)")
+
+    news_lines = "\n".join(
+        f"{i + 1}. [{item['source']}] {item['title']}"
+        for i, item in enumerate(news_items)
+    )
+
+    # 텔레그램 MarkdownV2는 특수문자 이스케이프 필요 → HTML 모드 사용
+    message = (
+        f"<b>뉴스 아이디어 리포트</b>\n"
+        f"<i>{timestamp}</i>\n\n"
+        f"<b>수집된 뉴스</b>\n"
+        f"{news_lines}\n\n"
+        f"<b>AI 도출 아이디어</b>\n"
+        f"{idea[:2000]}"  # 텔레그램 메시지 길이 제한 대비
+    )
+
+    endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print("텔레그램 발송 완료")
+                return True
+            else:
+                print(f"텔레그램 발송 실패: {result}", file=sys.stderr)
+                return False
+    except Exception as e:
+        print(f"텔레그램 발송 오류: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# 메인
+# ---------------------------------------------------------------------------
 
 def main():
     print("=== 뉴스 아이디어 에이전트 시작 ===\n")
 
-    # 1. 뉴스 수집
     print("[1/3] 주요 뉴스 수집 중...")
     news_items = fetch_top_news(3)
-
     if not news_items:
-        print("오류: 뉴스를 하나도 수집하지 못했습니다.", file=sys.stderr)
+        print("오류: 뉴스를 수집하지 못했습니다.", file=sys.stderr)
         sys.exit(1)
+    print(f"수집 완료: {len(news_items)}개\n")
 
-    print(f"\n수집 완료: {len(news_items)}개\n")
-
-    # 2. AI 아이디어 생성
     print("[2/3] Claude AI로 아이디어 생성 중...")
     idea = generate_idea(news_items)
-    print("아이디어 생성 완료\n")
+    print("생성 완료\n")
 
-    # 3. 결과 저장
-    print("[3/3] 결과 저장 중...")
-    filepath = save_result(news_items, idea)
-    print(f"저장 완료: {filepath}\n")
+    generated_at = datetime.now(KST)
 
-    print("=== 완료 ===")
-    print(f"\n--- 생성된 아이디어 미리보기 ---\n{idea[:300]}...")
+    print("[3/3] 결과 저장 & 발송 중...")
+    supabase_ok = save_to_supabase(news_items, idea, generated_at)
+    telegram_ok = send_to_telegram(news_items, idea, generated_at)
+
+    print("\n=== 완료 ===")
+    print(f"  Supabase: {'OK' if supabase_ok else 'FAIL'}")
+    print(f"  Telegram: {'OK' if telegram_ok else 'FAIL'}")
+
+    if not supabase_ok and not telegram_ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
