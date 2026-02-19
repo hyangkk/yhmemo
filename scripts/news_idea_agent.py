@@ -133,8 +133,9 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                     break
 
             if not found:
-                print(f"  [{source_name}] 24시간 이내 뉴스 없음, 건너뜀")
-                continue
+                # 24시간 이내 뉴스 없으면 최신 기사로 fallback
+                print(f"  [{source_name}] 24시간 이내 뉴스 없음 → 최신 기사 사용")
+                found = feed.entries[0]
 
             title = found.get("title", "").strip()
             summary = found.get("summary", found.get("description", title)).strip()
