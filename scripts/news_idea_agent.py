@@ -100,8 +100,10 @@ def fetch_settings() -> dict:
 # ---------------------------------------------------------------------------
 
 def fetch_top_news(active_sources: list, count: int = 3) -> list:
-    """활성화된 RSS 피드에서 최신 뉴스 1개씩 수집."""
+    """활성화된 RSS 피드에서 최신 24시간 이내 뉴스 1개씩 수집."""
+    import time as _time
     news_items = []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
     feeds = [(name, url) for name, url in ALL_SOURCES.items() if name in active_sources]
 
@@ -116,10 +118,27 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                 print(f"  [{source_name}] 항목 없음, 건너뜀")
                 continue
 
-            entry = feed.entries[0]
-            title = entry.get("title", "").strip()
-            summary = entry.get("summary", entry.get("description", title)).strip()
-            link = entry.get("link", "")
+            found = None
+            for entry in feed.entries:
+                # published_parsed 또는 updated_parsed로 날짜 확인
+                parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
+                if parsed_time:
+                    pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
+                    if pub_dt >= cutoff:
+                        found = entry
+                        break
+                else:
+                    # 날짜 정보 없으면 첫 번째 항목 사용
+                    found = entry
+                    break
+
+            if not found:
+                print(f"  [{source_name}] 24시간 이내 뉴스 없음, 건너뜀")
+                continue
+
+            title = found.get("title", "").strip()
+            summary = found.get("summary", found.get("description", title)).strip()
+            link = found.get("link", "")
 
             summary = re.sub(r"<[^>]+>", "", summary).strip()
             if len(summary) > 500:
