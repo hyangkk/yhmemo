@@ -577,7 +577,8 @@ def main():
     print(f"  수집된 공고: {len(all_anns)}개")
 
     new_anns = [a for a in all_anns if a["announcement_id"] not in seen_ids]
-    print(f"  새 공고: {len(new_anns)}개")
+    new_anns = new_anns[:10]
+    print(f"  새 공고: {len(new_anns)}개 (최대 10개 제한)")
 
     # 4. 텔레그램 토큰 설정
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
