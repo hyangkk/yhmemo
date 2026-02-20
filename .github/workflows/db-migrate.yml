@@ -24,7 +24,10 @@ if not token:
 
 project_ref = "unuvbdqjgiypxfvlplpd"
 
-sql = "ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;"
+sql = """
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
+ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
+"""
 
 payload = json.dumps({"query": sql}).encode()
 req = urllib.request.Request(
