@@ -100,13 +100,14 @@ def _supabase_post(path: str, data: dict) -> bool:
 
 def fetch_settings() -> dict:
     """Supabase agent_settings(id=1)에서 K-Startup 설정 로드."""
-    default = {"kstartup_enabled": True, "kstartup_run_every_hours": 24}
+    default = {"kstartup_enabled": True, "kstartup_run_every_hours": 24, "kstartup_keywords": ""}
     rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
     if rows:
         s = rows[0]
         return {
             "kstartup_enabled": s.get("kstartup_enabled", True),
             "kstartup_run_every_hours": int(s.get("kstartup_run_every_hours", 24)),
+            "kstartup_keywords": s.get("kstartup_keywords", "") or "",
         }
     return default
 
@@ -114,6 +115,25 @@ def fetch_settings() -> dict:
 # ---------------------------------------------------------------------------
 # 1. 사용자 프로필 로드
 # ---------------------------------------------------------------------------
+
+def sort_by_keywords(announcements: list, keywords_str: str) -> list:
+    """keywords_str(쉼표 구분)에 해당하는 공고를 앞으로 정렬. 키워드 없으면 원래 순서 유지."""
+    if not keywords_str or not keywords_str.strip():
+        return announcements
+    keywords = [k.strip().lower() for k in keywords_str.split(",") if k.strip()]
+    if not keywords:
+        return announcements
+
+    def score(ann: dict) -> int:
+        text = (ann.get("title", "") + " " + ann.get("api_content", "")).lower()
+        return sum(1 for kw in keywords if kw in text)
+
+    matched = [a for a in announcements if score(a) > 0]
+    unmatched = [a for a in announcements if score(a) == 0]
+    matched.sort(key=score, reverse=True)
+    print(f"  키워드 매칭: {len(matched)}개 우선 / 나머지 {len(unmatched)}개")
+    return matched + unmatched
+
 
 def load_user_profile() -> dict:
     """Supabase user_profile 테이블(id=1)에서 사용자 프로필 로드."""
@@ -559,6 +579,7 @@ def main():
         return
 
     run_every = settings["kstartup_run_every_hours"]
+    kstartup_keywords = settings.get("kstartup_keywords", "")
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     if run_every > 1 and not is_manual:
         current_hour_utc = datetime.now(timezone.utc).hour
@@ -583,6 +604,7 @@ def main():
     # 3. 새 공고 수집 (최대 10개, seen_ids 제외하며 조기 중단)
     print("\n[3/5] K-Startup 사업공고 수집 중...")
     new_anns = fetch_announcements(seen_ids=seen_ids, max_new=10)
+    new_anns = sort_by_keywords(new_anns, kstartup_keywords)
     print(f"  새 공고: {len(new_anns)}개")
 
     # 4. 텔레그램 토큰 설정
