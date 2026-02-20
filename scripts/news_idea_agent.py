@@ -328,11 +328,14 @@ def main():
         sys.exit(0)
 
     run_every = int(settings["run_every_hours"])
-    if run_every > 1:
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if run_every > 1 and not is_manual:
         current_hour_utc = datetime.now(timezone.utc).hour
         if current_hour_utc % run_every != 0:
             print(f"현재 {current_hour_utc}시 (UTC) — {run_every}시간 간격 미해당. 건너뜀.")
             sys.exit(0)
+    if is_manual:
+        print("수동 실행 — 시간 간격 체크 건너뜀.")
 
     active_sources = settings["active_sources"]
     prompt_template = settings.get("prompt_template", "")
