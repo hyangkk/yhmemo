@@ -133,8 +133,20 @@ def fetch_announcements() -> list:
     return announcements
 
 
+def _make_session() -> requests.Session:
+    """세션 쿠키 확보를 위해 메인 페이지 먼저 방문 후 세션 반환."""
+    session = requests.Session()
+    session.headers.update(SESSION_HEADERS)
+    try:
+        session.get(KSTARTUP_LIST_URL, timeout=20)
+        print("  세션 쿠키 획득 완료")
+    except Exception as e:
+        print(f"  세션 초기화 실패 (계속 시도): {e}", file=sys.stderr)
+    return session
+
+
 def _try_ajax_api() -> list:
-    """AJAX API로 공고 목록 수집 시도."""
+    """AJAX API로 공고 목록 수집 시도 (세션 쿠키 사용)."""
     results = []
     params = {
         "pbancEndYn": "N",
@@ -143,21 +155,28 @@ def _try_ajax_api() -> list:
         "orderby": "REG_DT_DESC",
     }
 
+    session = _make_session()
+
     for url in [KSTARTUP_API_URL, KSTARTUP_LIST_URL]:
         try:
-            resp = requests.post(
+            resp = session.post(
                 url,
                 data=params,
-                headers={**SESSION_HEADERS, "X-Requested-With": "XMLHttpRequest"},
+                headers={"X-Requested-With": "XMLHttpRequest"},
                 timeout=20,
             )
+            print(f"  POST {url} → status {resp.status_code}, size {len(resp.content)}B")
             if resp.status_code != 200:
                 continue
 
             # JSON 응답 시도
             try:
                 data = resp.json()
-                items = data.get("list") or data.get("data") or data.get("resultList") or []
+                items = (
+                    data.get("list") or data.get("data") or
+                    data.get("resultList") or data.get("pbancList") or
+                    data.get("items") or []
+                )
                 if items:
                     for item in items:
                         ann = _parse_dict_item(item)
@@ -169,18 +188,23 @@ def _try_ajax_api() -> list:
             except ValueError:
                 pass
 
-            # HTML 응답 시도
+            # HTML 응답 시도 (확장된 셀렉터)
             soup = BeautifulSoup(resp.text, "html.parser")
-            items = soup.select("li.card-item, .biz-card, li[data-pbanc-sn]")
-            if not items:
-                items = soup.select("table tbody tr")
-            for item in items:
-                ann = _parse_html_item(item)
-                if ann:
-                    results.append(ann)
-            if results:
-                print(f"  AJAX에서 {len(results)}개 수집 (HTML)")
-                return results
+            html_selectors = [
+                "li.card-item", "li[data-pbanc-sn]", ".biz-card",
+                ".list-wrap li", ".board-list li", "ul.list li",
+                "table tbody tr", ".result-list li",
+            ]
+            for sel in html_selectors:
+                items = soup.select(sel)
+                if items:
+                    for item in items:
+                        ann = _parse_html_item(item)
+                        if ann:
+                            results.append(ann)
+                    if results:
+                        print(f"  AJAX에서 {len(results)}개 수집 (HTML/{sel})")
+                        return results
 
         except Exception as e:
             print(f"  AJAX 시도 실패 ({url}): {e}", file=sys.stderr)
@@ -189,15 +213,18 @@ def _try_ajax_api() -> list:
 
 
 def _try_html_parse() -> list:
-    """메인 목록 페이지 HTML 파싱."""
+    """메인 목록 페이지 HTML 파싱 (세션 쿠키 사용)."""
     results = []
     try:
-        resp = requests.get(KSTARTUP_LIST_URL, headers=SESSION_HEADERS, timeout=20)
+        session = _make_session()
+        resp = session.get(KSTARTUP_LIST_URL, timeout=20)
+        print(f"  GET {KSTARTUP_LIST_URL} → status {resp.status_code}, size {len(resp.content)}B")
         soup = BeautifulSoup(resp.text, "html.parser")
 
         selectors = [
-            "li.card-item", ".biz-card", "li[data-pbanc-sn]",
-            ".list-wrap li", "table tbody tr",
+            "li.card-item", "li[data-pbanc-sn]", ".biz-card",
+            ".list-wrap li", ".board-list li", "ul.list li",
+            "table tbody tr", ".result-list li",
         ]
         for sel in selectors:
             items = soup.select(sel)
@@ -209,6 +236,9 @@ def _try_html_parse() -> list:
                 if results:
                     print(f"  HTML({sel})에서 {len(results)}개 수집")
                     break
+        else:
+            # 디버그용: 페이지 일부 출력
+            print(f"  HTML 셀렉터 모두 실패. 페이지 앞 500자: {resp.text[:500]}", file=sys.stderr)
 
     except Exception as e:
         print(f"  HTML 파싱 실패: {e}", file=sys.stderr)
