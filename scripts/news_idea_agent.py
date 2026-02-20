@@ -103,7 +103,7 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
     """활성화된 RSS 피드에서 최신 24시간 이내 뉴스 1개씩 수집."""
     import time as _time
     news_items = []
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
 
     feeds = [(name, url) for name, url in ALL_SOURCES.items() if name in active_sources]
 
@@ -133,8 +133,9 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                     break
 
             if not found:
-                print(f"  [{source_name}] 24시간 이내 뉴스 없음, 건너뜀")
-                continue
+                # 24시간 이내 뉴스 없으면 최신 기사로 fallback
+                print(f"  [{source_name}] 24시간 이내 뉴스 없음 → 최신 기사 사용")
+                found = feed.entries[0]
 
             title = found.get("title", "").strip()
             summary = found.get("summary", found.get("description", title)).strip()
