@@ -69,7 +69,12 @@ DEFAULT_PROMPT_TEMPLATE = """당신은 창의적인 아이디어 기획자입니
 (단계별 접근법 또는 주요 실행 포인트 3가지)
 
 ## 기대 효과
-(이 아이디어가 가져올 변화와 가치)"""
+(이 아이디어가 가져올 변화와 가치)
+
+[주의사항]
+- 이미지 설명, 원문 링크, URL은 절대 포함하지 마세요.
+- 표(테이블) 형식을 사용하지 말고 글 형식으로 작성하세요.
+- 위의 5개 섹션만 작성하세요."""
 
 KST = timezone(timedelta(hours=9))
 
@@ -172,10 +177,12 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                 if collected >= needed:
                     break
                 parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
+                pub_time_str = ""
                 if parsed_time:
                     pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
                     if pub_dt < cutoff:
                         continue  # 너무 오래된 기사 건너뜀
+                    pub_time_str = pub_dt.astimezone(KST).strftime("%m/%d %H:%M")
                 title = entry.get("title", "").strip()
                 summary = entry.get("summary", entry.get("description", title)).strip()
                 link = entry.get("link", "")
@@ -184,9 +191,13 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                     summary = summary[:497] + "..."
                 if not title:
                     continue
-                news_items.append(
-                    {"source": source_name, "title": title, "summary": summary, "link": link}
-                )
+                news_items.append({
+                    "source": source_name,
+                    "title": title,
+                    "summary": summary,
+                    "link": link,
+                    "published_at": pub_time_str,
+                })
                 collected += 1
 
             if collected > 0:
@@ -212,9 +223,9 @@ def generate_idea(news_items: list, prompt_template: str = "") -> str:
     client = anthropic.Anthropic()
 
     news_block = "\n\n".join(
-        f"**뉴스 {i + 1} ({item['source']})**\n"
-        f"제목: {item['title']}\n"
-        f"내용: {item['summary']}"
+        f"**뉴스 {i + 1} ({item['source']}"
+        + (f", {item['published_at']}" if item.get('published_at') else "")
+        + f")**\n제목: {item['title']}\n내용: {item['summary']}"
         for i, item in enumerate(news_items)
     )
 
@@ -286,7 +297,9 @@ def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> boo
     timestamp = generated_at.strftime("%Y년 %m월 %d일 %H시 (KST)")
 
     news_lines = "\n".join(
-        f"{i + 1}. [{item['source']}] {item['title']}"
+        f"{i + 1}. [{item['source']}]"
+        + (f" {item['published_at']}" if item.get('published_at') else "")
+        + f" {item['title']}"
         for i, item in enumerate(news_items)
     )
 
