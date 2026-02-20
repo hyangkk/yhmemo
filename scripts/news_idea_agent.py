@@ -21,6 +21,10 @@ from datetime import datetime, timezone, timedelta
 
 
 ALL_SOURCES = {
+    # Google News (해외 서버에서도 안정적으로 접근 가능 — 최우선 시도)
+    "구글뉴스": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
+    "구글뉴스_경제": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR:ko",
+    "구글뉴스_IT": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGd3TVRBU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR:ko",
     # 방송사
     "KBS":    "https://news.kbs.co.kr/rss/rss.do",
     "MBC":    "https://imnews.imbc.com/rss/news/news_00.xml",
@@ -42,8 +46,11 @@ ALL_SOURCES = {
     "머니투데이": "https://rss.mt.co.kr/rss/mt_news.xml",
 }
 
+# GitHub Actions 환경에서도 항상 접근 가능한 보장 소스
+GUARANTEED_SOURCES = ["구글뉴스", "구글뉴스_경제", "구글뉴스_IT"]
+
 DEFAULT_PROMPT_TEMPLATE = """당신은 창의적인 아이디어 기획자입니다.
-아래 오늘의 주요 뉴스 3개를 깊이 분석하고, 이 3가지 흐름을 창의적으로 결합하여 혁신적인 새로운 아이디어를 하나 도출해주세요.
+아래 오늘의 주요 뉴스들을 깊이 분석하고, 이 뉴스들의 흐름을 창의적으로 결합하여 혁신적인 새로운 아이디어를 하나 도출해주세요.
 
 {news_block}
 
@@ -53,7 +60,7 @@ DEFAULT_PROMPT_TEMPLATE = """당신은 창의적인 아이디어 기획자입니
 (간결하고 인상적인 이름)
 
 ## 핵심 통찰
-(세 뉴스가 어떤 공통된 흐름이나 기회를 가리키는지 설명)
+(뉴스들이 어떤 공통된 흐름이나 기회를 가리키는지 설명)
 
 ## 아이디어 설명
 (구체적인 서비스/제품/정책/캠페인 아이디어)
@@ -119,7 +126,15 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
     news_items = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=3)
 
+    # active_sources 기반 피드 목록 (ALL_SOURCES 순서 유지)
     feeds = [(name, url) for name, url in ALL_SOURCES.items() if name in active_sources]
+
+    # Supabase 설정에 없더라도 구글뉴스는 항상 앞에 추가 (GitHub Actions에서 안정적으로 접근 가능)
+    guaranteed_feeds = [
+        (name, ALL_SOURCES[name]) for name in GUARANTEED_SOURCES
+        if name not in active_sources and name in ALL_SOURCES
+    ]
+    feeds = guaranteed_feeds + feeds
 
     # 일부 한국 뉴스 사이트는 봇 User-Agent 차단 → 브라우저처럼 위장
     ua_headers = {
@@ -150,35 +165,34 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                 print(f"  [{source_name}] 건너뜀 — {reason}", file=sys.stderr)
                 continue
 
-            found = None
+            # 한 소스에서 필요한 만큼 여러 기사 수집 (기존: 1개 고정 → 개선: 최대 needed개)
+            needed = count - len(news_items)
+            collected = 0
             for entry in feed.entries:
+                if collected >= needed:
+                    break
                 parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
                 if parsed_time:
                     pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
-                    if pub_dt >= cutoff:
-                        found = entry
-                        break
-                else:
-                    # 날짜 정보 없으면 첫 번째 항목 사용
-                    found = entry
-                    break
+                    if pub_dt < cutoff:
+                        continue  # 너무 오래된 기사 건너뜀
+                title = entry.get("title", "").strip()
+                summary = entry.get("summary", entry.get("description", title)).strip()
+                link = entry.get("link", "")
+                summary = re.sub(r"<[^>]+>", "", summary).strip()
+                if len(summary) > 500:
+                    summary = summary[:497] + "..."
+                if not title:
+                    continue
+                news_items.append(
+                    {"source": source_name, "title": title, "summary": summary, "link": link}
+                )
+                collected += 1
 
-            if not found:
-                print(f"  [{source_name}] 최근 뉴스 없음 → 최신 기사 사용")
-                found = feed.entries[0]
-
-            title = found.get("title", "").strip()
-            summary = found.get("summary", found.get("description", title)).strip()
-            link = found.get("link", "")
-
-            summary = re.sub(r"<[^>]+>", "", summary).strip()
-            if len(summary) > 500:
-                summary = summary[:497] + "..."
-
-            news_items.append(
-                {"source": source_name, "title": title, "summary": summary, "link": link}
-            )
-            print(f"  [{source_name}] OK: {title[:60]}...")
+            if collected > 0:
+                print(f"  [{source_name}] OK: {collected}개 수집")
+            else:
+                print(f"  [{source_name}] 최근 뉴스 없음", file=sys.stderr)
 
         except Exception as e:
             print(f"  [{source_name}] 실패: {e}", file=sys.stderr)
