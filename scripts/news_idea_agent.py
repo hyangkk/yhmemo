@@ -21,11 +21,25 @@ from datetime import datetime, timezone, timedelta
 
 
 ALL_SOURCES = {
-    "KBS":   "https://news.kbs.co.kr/rss/rss.do",
-    "MBC":   "https://imnews.imbc.com/rss/news/news_00.xml",
-    "SBS":   "https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER",
-    "JTBC":  "https://news.jtbc.co.kr/RSS/NewsFlash.xml",
-    "연합뉴스": "https://www.yna.co.kr/RSS/news.xml",
+    # 방송사
+    "KBS":    "https://news.kbs.co.kr/rss/rss.do",
+    "MBC":    "https://imnews.imbc.com/rss/news/news_00.xml",
+    "SBS":    "https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER",
+    "JTBC":   "https://news.jtbc.co.kr/RSS/NewsFlash.xml",
+    # 통신사
+    "연합뉴스":  "https://www.yna.co.kr/RSS/news.xml",
+    "뉴스1":   "https://www.news1.kr/rss/allNews.xml",
+    "뉴시스":  "https://www.newsis.com/RSS/",
+    # 종합일간지
+    "조선일보": "https://www.chosun.com/arc/outboundfeeds/rss/?outputType=xml",
+    "중앙일보": "https://rss.joinsmsn.com/news/sectlist/uAll.xml",
+    "동아일보": "https://rss.donga.com/total.xml",
+    "한겨레":  "https://www.hani.co.kr/rss/",
+    "경향신문": "https://www.khan.co.kr/rss/rssdata/total_news.xml",
+    # 경제지
+    "매일경제": "https://www.mk.co.kr/rss/30000001/",
+    "한국경제": "https://www.hankyung.com/feed/all-news",
+    "머니투데이": "https://rss.mt.co.kr/rss/mt_news.xml",
 }
 
 DEFAULT_PROMPT_TEMPLATE = """당신은 창의적인 아이디어 기획자입니다.
