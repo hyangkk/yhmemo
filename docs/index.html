@@ -254,10 +254,64 @@
       </div>
     </div>
 
+    <!-- K-Startup 프로필 -->
+    <div class="card">
+      <div class="card-title">K-Startup 내 프로필</div>
+      <p class="hint" style="margin-bottom:16px">자격요건 대조에 사용되는 기업/개인 정보입니다</p>
+      <div class="field">
+        <label>기업명</label>
+        <input type="text" id="company-name" placeholder="(주)예시기업">
+      </div>
+      <div class="field">
+        <label>사업자 유형</label>
+        <select id="company-type">
+          <option value="">선택</option>
+          <option value="법인">법인</option>
+          <option value="개인사업자">개인사업자</option>
+          <option value="해당없음">해당없음</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>설립 연도</label>
+        <input type="text" id="founded-year" placeholder="2021">
+      </div>
+      <div class="field">
+        <label>업종 / 산업 분야</label>
+        <input type="text" id="industry" placeholder="AI, 핀테크, 제조 등">
+      </div>
+      <div class="field">
+        <label>주요 제품 / 서비스</label>
+        <textarea id="main-product" style="min-height:80px" placeholder="AI 기반 문서 자동화 SaaS 서비스"></textarea>
+      </div>
+      <div class="field">
+        <label>직원 수</label>
+        <input type="text" id="employees" placeholder="5">
+      </div>
+      <div class="field">
+        <label>연간 매출액 (만원)</label>
+        <input type="text" id="annual-revenue" placeholder="15000">
+        <p class="hint">1억 5천만원이면 15000 입력</p>
+      </div>
+      <div class="field">
+        <label>사업장 소재지</label>
+        <input type="text" id="location" placeholder="서울 강남구">
+      </div>
+      <div class="field">
+        <label>보유 인증</label>
+        <input type="text" id="certifications" placeholder="벤처기업, 이노비즈, ISO9001 등">
+      </div>
+      <div class="field">
+        <label>기타 (수상, 특허, 투자 유치 등)</label>
+        <textarea id="notes" style="min-height:80px" placeholder="2023년 TIPS 선정, 특허 2건 보유"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="saveProfile()">프로필 저장</button>
+    </div>
+
     <!-- 저장 -->
     <div class="card">
-      <button class="btn btn-primary" onclick="saveSettings()" style="margin-bottom:10px">저장하기</button>
-      <button class="btn btn-run" onclick="runNow()" style="margin-bottom:10px" id="run-btn">지금 실행하기</button>
+      <button class="btn btn-primary" onclick="saveSettings()" style="margin-bottom:10px">뉴스 에이전트 설정 저장</button>
+      <button class="btn btn-run" onclick="runNow()" style="margin-bottom:10px" id="run-btn">뉴스 에이전트 지금 실행</button>
+      <button class="btn btn-run" onclick="runKstartupNow()" style="margin-bottom:10px;background:#30b94a" id="kstartup-run-btn">K-Startup 지금 실행</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="loadSettings()">새로고침</button>
         <button class="btn btn-danger" onclick="disconnect()">연결 해제</button>
@@ -428,6 +482,88 @@
     }
   }
 
+  async function loadProfile() {
+    try {
+      const data = await sbFetch('user_profile?id=eq.1');
+      if (!data || data.length === 0) return;
+      const p = data[0];
+      document.getElementById('company-name').value = p.company_name || '';
+      document.getElementById('company-type').value = p.company_type || '';
+      document.getElementById('founded-year').value = p.founded_year || '';
+      document.getElementById('industry').value = p.industry || '';
+      document.getElementById('main-product').value = p.main_product || '';
+      document.getElementById('employees').value = p.employees || '';
+      document.getElementById('annual-revenue').value = p.annual_revenue || '';
+      document.getElementById('location').value = p.location || '';
+      document.getElementById('certifications').value = p.certifications || '';
+      document.getElementById('notes').value = p.notes || '';
+    } catch (e) {
+      console.warn('프로필 로드 실패:', e.message);
+    }
+  }
+
+  async function saveProfile() {
+    const payload = {
+      company_name:   document.getElementById('company-name').value.trim(),
+      company_type:   document.getElementById('company-type').value,
+      founded_year:   parseInt(document.getElementById('founded-year').value) || null,
+      industry:       document.getElementById('industry').value.trim(),
+      main_product:   document.getElementById('main-product').value.trim(),
+      employees:      parseInt(document.getElementById('employees').value) || null,
+      annual_revenue: parseInt(document.getElementById('annual-revenue').value) || null,
+      location:       document.getElementById('location').value.trim(),
+      certifications: document.getElementById('certifications').value.trim(),
+      notes:          document.getElementById('notes').value.trim(),
+      updated_at:     new Date().toISOString(),
+    };
+    try {
+      await sbFetch('user_profile?id=eq.1', {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(payload),
+      });
+      toast('프로필 저장 완료!');
+    } catch (e) {
+      toast('저장 실패: ' + e.message, true);
+    }
+  }
+
+  async function runKstartupNow() {
+    const { ghToken } = getSB();
+    if (!ghToken) {
+      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
+      return;
+    }
+    const btn = document.getElementById('kstartup-run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/kstartup-agent.yml/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ghToken}`,
+          },
+          body: JSON.stringify({ ref: 'main' }),
+        }
+      );
+      if (res.status === 204) {
+        toast('K-Startup 실행 요청 완료! 잠시 후 텔레그램을 확인하세요.');
+      } else {
+        const msg = await res.text();
+        toast('실행 실패 (' + res.status + '): ' + msg, true);
+      }
+    } catch (e) {
+      toast('오류: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'K-Startup 지금 실행';
+    }
+  }
+
   function disconnect() {
     localStorage.removeItem('sb-url');
     localStorage.removeItem('sb-key');
@@ -441,6 +577,7 @@
     const { url, key } = getSB();
     if (url && key) {
       loadSettings();
+      loadProfile();
     } else {
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('setup-card').classList.remove('hidden');
