@@ -383,10 +383,15 @@ def filter_news_by_prompt(news_candidates: list, prompt_template: str, count: in
 {candidates_text}
 
 ---
-아래 사용자 요청의 주제/관심사에 가장 잘 맞는 뉴스 {count}개의 번호를 선택해주세요.
+아래 사용자 지침을 읽고, 지침에 맞게 뉴스를 선별하세요.
 
-사용자 요청:
+사용자 지침:
 {prompt_template[:800]}
+
+[선별 규칙]
+1. 지침에 "금지", "제외", "빼줘", "하지 마" 같은 표현이 있으면 해당 주제의 뉴스는 절대 선택하지 마세요.
+2. 금지 조건을 먼저 적용해 후보를 거른 뒤, 나머지 중에서 지침의 관심사에 가장 잘 맞는 뉴스를 선택하세요.
+3. 정확히 {count}개를 선택해야 합니다. 금지 조건 적용 후 적합한 뉴스가 {count}개 미만이면, 금지 조건을 위반하지 않는 범위에서 남은 뉴스 중 최선의 것을 채워 주세요.
 
 반드시 아래 JSON 형식으로만 응답하세요 (다른 텍스트 없이):
 {{"selected": [1, 3, 5]}}
@@ -613,8 +618,8 @@ def main():
     print(f"활성 소스: {active_sources} | 실행 주기: {run_every}시간")
     print(f"커스텀 프롬프트: {'있음' if has_custom_prompt else '없음 (기본값 사용)'}\n")
 
-    # 커스텀 프롬프트가 있으면 후보를 9개 수집 후 선별, 없으면 3개 바로 수집
-    candidate_count = 9 if has_custom_prompt else 3
+    # 커스텀 프롬프트가 있으면 후보를 12개 수집 후 선별 (금지 규칙 적용 후 여유분 확보), 없으면 3개 바로 수집
+    candidate_count = 12 if has_custom_prompt else 3
     print(f"[1/5] 뉴스 후보 {candidate_count}개 수집 중...")
     news_candidates = fetch_top_news(active_sources, candidate_count)
     if not news_candidates:
