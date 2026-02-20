@@ -11,39 +11,13 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          python3 - <<'EOF'
-import urllib.request
-import json
-import os
-import sys
-
-token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
-if not token:
-    print("오류: SUPABASE_ACCESS_TOKEN secret이 없습니다.")
-    sys.exit(1)
-
-project_ref = "unuvbdqjgiypxfvlplpd"
-
-sql = """
-ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
-ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
-"""
-
-payload = json.dumps({"query": sql}).encode()
-req = urllib.request.Request(
-    f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
-    data=payload,
-    headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    },
-    method="POST",
-)
-try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read().decode())
-        print(f"완료: {result}")
-except urllib.error.HTTPError as e:
-    print(f"오류 ({e.code}): {e.read().decode()}", file=sys.stderr)
-    sys.exit(1)
-EOF
+          SQL="ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT ''; ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\": \"$SQL\"}" \
+            "https://api.supabase.com/v1/projects/unuvbdqjgiypxfvlplpd/database/query")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "HTTP $HTTP_CODE: $BODY"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && echo "완료" || exit 1
