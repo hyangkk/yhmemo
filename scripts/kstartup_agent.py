@@ -578,9 +578,33 @@ def send_telegram(
         return False
 
 
-# ---------------------------------------------------------------------------
-# 메인
-# ---------------------------------------------------------------------------
+def send_telegram_summary(token: str, chat_id: str, message: str) -> None:
+    """간단한 요약 메시지를 텔레그램으로 발송."""
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print("  텔레그램 요약 발송 완료")
+            else:
+                print(f"  텔레그램 요약 실패: {result}", file=sys.stderr)
+    except Exception as e:
+        print(f"  텔레그램 요약 오류: {e}", file=sys.stderr)
+
+
+
 
 def main():
     print("=== K-Startup 사업공고 모니터링 에이전트 시작 ===\n")
@@ -611,6 +635,29 @@ def main():
     # 4. 새 공고 분석
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+    if not all_anns:
+        msg = (
+            f"<b>📢 K-Startup 모니터링 결과</b>\n\n"
+            f"⚠️ 사이트에서 공고를 수집하지 못했습니다.\n"
+            f"K-Startup 사이트 구조가 변경되었거나 일시적 오류일 수 있습니다."
+        )
+        if token and chat_id:
+            send_telegram_summary(token, chat_id, msg)
+        print("\nK-Startup에서 공고를 가져오지 못했습니다. 종료합니다.")
+        return
+
+    if not new_anns:
+        msg = (
+            f"<b>📢 K-Startup 모니터링 결과</b>\n\n"
+            f"✅ 에이전트 정상 실행 완료\n"
+            f"전체 공고: {len(all_anns)}개 | 새 공고: 0개\n"
+            f"(모두 이미 처리된 공고입니다)"
+        )
+        if token and chat_id:
+            send_telegram_summary(token, chat_id, msg)
+        print("\n새로운 공고가 없습니다. 종료합니다.")
+        return
 
     print(f"\n[4/5] 새 공고 {len(new_anns)}개 분석 중...")
 
@@ -656,6 +703,15 @@ def main():
 
     print(f"\n[5/5] 완료")
     print(f"  처리: {len(new_anns)}개 | 지원 가능: {eligible_count}개")
+
+    if token and chat_id:
+        summary_msg = (
+            f"<b>📊 K-Startup 분석 완료</b>\n\n"
+            f"전체 공고: {len(all_anns)}개\n"
+            f"새 공고: {len(new_anns)}개 처리\n"
+            f"지원 가능: {eligible_count}개"
+        )
+        send_telegram_summary(token, chat_id, summary_msg)
 
 
 if __name__ == "__main__":
