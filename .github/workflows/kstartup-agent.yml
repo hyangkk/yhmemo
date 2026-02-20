@@ -2,8 +2,8 @@ name: K-Startup 사업공고 모니터링
 
 on:
   schedule:
-    # 매일 오전 9시 KST = 자정 UTC
-    - cron: '0 0 * * *'
+    # 매 시간 실행 (설정에 따라 스킵)
+    - cron: '0 * * * *'
   workflow_dispatch:
     # 수동 실행 (Actions 탭 → Run workflow)
 

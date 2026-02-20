@@ -95,6 +95,23 @@ def _supabase_post(path: str, data: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 0. 에이전트 설정 로드
+# ---------------------------------------------------------------------------
+
+def fetch_settings() -> dict:
+    """Supabase agent_settings(id=1)에서 K-Startup 설정 로드."""
+    default = {"kstartup_enabled": True, "kstartup_run_every_hours": 24}
+    rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
+    if rows:
+        s = rows[0]
+        return {
+            "kstartup_enabled": s.get("kstartup_enabled", True),
+            "kstartup_run_every_hours": int(s.get("kstartup_run_every_hours", 24)),
+        }
+    return default
+
+
+# ---------------------------------------------------------------------------
 # 1. 사용자 프로필 로드
 # ---------------------------------------------------------------------------
 
@@ -525,6 +542,23 @@ def send_telegram_summary(token: str, chat_id: str, message: str) -> None:
 
 def main():
     print("=== K-Startup 사업공고 모니터링 에이전트 시작 ===\n")
+
+    # 0. 설정 로드 및 실행 여부 판단
+    settings = fetch_settings()
+    if not settings["kstartup_enabled"]:
+        print("K-Startup 에이전트가 비활성화되어 있습니다. 종료합니다.")
+        return
+
+    run_every = settings["kstartup_run_every_hours"]
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if run_every > 1 and not is_manual:
+        current_hour_utc = datetime.now(timezone.utc).hour
+        if current_hour_utc % run_every != 0:
+            print(f"현재 {current_hour_utc}시 (UTC) — {run_every}시간 간격 미해당. 건너뜀.")
+            return
+    if is_manual:
+        print("수동 실행 — 시간 간격 체크 건너뜀.")
+    print(f"실행 주기: {run_every}시간\n")
 
     # 1. 사용자 프로필
     print("[1/5] 사용자 프로필 로드 중...")

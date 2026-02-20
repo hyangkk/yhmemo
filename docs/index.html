@@ -335,7 +335,7 @@
       <div class="agent-card-header kstartup">
         <div>
           <span class="agent-name">K-Startup 모니터링</span>
-          <span class="agent-badge badge-kstartup">매일 오전 9시</span>
+          <span class="agent-badge badge-kstartup" id="kstartup-schedule-badge">매일 1회</span>
         </div>
         <label class="switch" title="에이전트 활성화/비활성화">
           <input type="checkbox" id="kstartup-enabled">
@@ -344,6 +344,22 @@
       </div>
 
       <div class="agent-card-body">
+
+        <!-- 실행 주기 -->
+        <div class="section-label">실행 주기</div>
+        <div class="field">
+          <select id="kstartup-run-every-hours">
+            <option value="1">매 시간 (1시간)</option>
+            <option value="2">2시간마다</option>
+            <option value="3">3시간마다</option>
+            <option value="6">6시간마다</option>
+            <option value="12">12시간마다</option>
+            <option value="24">하루 1회 (자정 UTC)</option>
+          </select>
+          <p class="hint">GitHub Actions는 매 시간 체크하며, 설정한 간격에 맞지 않으면 건너뜁니다</p>
+        </div>
+
+        <div class="section-divider"></div>
 
         <!-- 기업 프로필 -->
         <div class="section-label">내 기업 프로필 (자격요건 대조용)</div>
@@ -489,6 +505,7 @@
           active_sources: SOURCES,
           prompt_template: '',
           kstartup_enabled: true,
+          kstartup_run_every_hours: 24,
         }),
       });
       return loadNewsSettings();
@@ -499,6 +516,10 @@
     document.getElementById('run-every-hours').value = s.run_every_hours || 1;
     document.getElementById('prompt-template').value = s.prompt_template || '';
     buildSourceList(s.active_sources || SOURCES);
+    const kEvery = parseInt(s.kstartup_run_every_hours || 24);
+    document.getElementById('kstartup-run-every-hours').value = kEvery;
+    const kBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+    document.getElementById('kstartup-schedule-badge').textContent = kBadgeMap[kEvery] || `${kEvery}시간마다`;
   }
 
   async function loadProfile() {
@@ -556,9 +577,11 @@
   }
 
   async function saveKstartupSettings() {
-    // kstartup_enabled 토글 저장
+    const kEvery = parseInt(document.getElementById('kstartup-run-every-hours').value);
+    // kstartup_enabled + run_every_hours 저장
     const togglePayload = {
       kstartup_enabled: document.getElementById('kstartup-enabled').checked,
+      kstartup_run_every_hours: kEvery,
       updated_at: new Date().toISOString(),
     };
     // 프로필 저장
@@ -587,6 +610,8 @@
           body: JSON.stringify(profilePayload),
         }),
       ]);
+      const kBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+      document.getElementById('kstartup-schedule-badge').textContent = kBadgeMap[kEvery] || `${kEvery}시간마다`;
       toast('K-Startup 설정 저장 완료!');
     } catch (e) {
       toast('저장 실패: ' + e.message, true);
