@@ -7,41 +7,40 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     steps:
-      - name: Python 3.11 설정
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: psycopg2 설치
-        run: pip install psycopg2-binary
-
       - name: 마이그레이션 실행
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           python3 - <<'EOF'
-import psycopg2
+import urllib.request
+import json
 import os
+import sys
 
-db_url = os.environ.get("SUPABASE_DB_URL", "")
-if not db_url:
-    print("오류: SUPABASE_DB_URL secret이 없습니다.")
-    exit(1)
+token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
+if not token:
+    print("오류: SUPABASE_ACCESS_TOKEN secret이 없습니다.")
+    sys.exit(1)
 
-sql_statements = [
-    "ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;",
-]
+project_ref = "unuvbdqjgiypxfvlplpd"
 
-conn = psycopg2.connect(db_url)
-conn.autocommit = True
-cur = conn.cursor()
+sql = "ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;"
 
-for sql in sql_statements:
-    print(f"실행: {sql[:80]}...")
-    cur.execute(sql)
-    print("  완료")
-
-cur.close()
-conn.close()
-print("마이그레이션 완료!")
+payload = json.dumps({"query": sql}).encode()
+req = urllib.request.Request(
+    f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
+    data=payload,
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    },
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode())
+        print(f"완료: {result}")
+except urllib.error.HTTPError as e:
+    print(f"오류 ({e.code}): {e.read().decode()}", file=sys.stderr)
+    sys.exit(1)
 EOF
