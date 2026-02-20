@@ -1,0 +1,34 @@
+name: 생각일기 알림 에이전트
+
+on:
+  schedule:
+    # 매일 오전 7시 KST 실행 (= 전날 22:00 UTC)
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+    # 수동 실행 (Actions 탭 → Run workflow)
+
+jobs:
+  send-diary-summary:
+    name: 생각일기 요약 & 텔레그램 발송
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install anthropic
+
+      - name: 생각일기 알림 에이전트 실행
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/notion_diary_agent.py
