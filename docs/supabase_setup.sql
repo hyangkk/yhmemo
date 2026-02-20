@@ -27,6 +27,14 @@ INSERT INTO user_profile (id) VALUES (1)
 ON CONFLICT (id) DO NOTHING;
 
 
+-- ============================================================
+-- agent_settings 테이블 업데이트
+--   kstartup_enabled 컬럼 추가 (기존 테이블에 없는 경우)
+-- ============================================================
+ALTER TABLE agent_settings
+  ADD COLUMN IF NOT EXISTS kstartup_enabled BOOLEAN DEFAULT TRUE;
+
+
 -- 2. K-Startup 공고 처리 기록 테이블
 --    새 공고 감지 및 분석 결과 저장
 -- ============================================================

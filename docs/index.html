@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>뉴스 아이디어 에이전트 설정</title>
+  <title>에이전트 설정</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -15,15 +15,12 @@
       padding: 32px 16px;
     }
 
-    .container { max-width: 640px; margin: 0 auto; }
+    .container { max-width: 660px; margin: 0 auto; }
 
-    h1 {
-      font-size: 22px;
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
     .subtitle { font-size: 14px; color: #666; margin-bottom: 28px; }
 
+    /* 공통 카드 */
     .card {
       background: #fff;
       border-radius: 16px;
@@ -33,14 +30,66 @@
     }
 
     .card-title {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: .05em;
-      color: #888;
+      letter-spacing: .06em;
+      color: #999;
       margin-bottom: 16px;
     }
 
+    /* 에이전트 카드 */
+    .agent-card {
+      background: #fff;
+      border-radius: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .agent-card-header.news  { border-top: 4px solid #0071e3; }
+    .agent-card-header.kstartup { border-top: 4px solid #30b94a; }
+
+    .agent-name {
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .agent-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .badge-news { background: #e8f0fe; color: #0071e3; }
+    .badge-kstartup { background: #e6f8ea; color: #1d8a32; }
+
+    .agent-card-body { padding: 20px 24px; }
+
+    .section-divider {
+      height: 1px;
+      background: #f0f0f0;
+      margin: 20px 0;
+    }
+
+    .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: #bbb;
+      margin-bottom: 12px;
+    }
+
+    /* 폼 */
     label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
 
     input[type="text"], input[type="password"], select, textarea {
@@ -59,21 +108,21 @@
       border-color: #0071e3;
       background: #fff;
     }
+    textarea { resize: vertical; min-height: 140px; font-family: inherit; line-height: 1.6; }
 
-    textarea { resize: vertical; min-height: 160px; font-family: inherit; line-height: 1.6; }
-
-    .field { margin-bottom: 16px; }
+    .field { margin-bottom: 14px; }
     .field:last-child { margin-bottom: 0; }
 
-    /* 토글 스위치 */
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* 토글 */
     .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 0;
     }
-    .toggle-label { font-size: 15px; font-weight: 500; }
-    .toggle-desc { font-size: 13px; color: #888; margin-top: 2px; }
+    .toggle-label { font-size: 14px; font-weight: 500; }
+    .toggle-desc { font-size: 12px; color: #999; margin-top: 2px; }
 
     .switch { position: relative; width: 48px; height: 28px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
@@ -97,13 +146,13 @@
     input:checked + .slider { background: #34c759; }
     input:checked + .slider::before { transform: translateX(20px); }
 
-    /* 소스 체크박스 */
-    .source-list { display: flex; flex-direction: column; gap: 10px; }
+    /* 소스 리스트 */
+    .source-list { display: flex; flex-direction: column; gap: 8px; }
     .source-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 14px;
+      padding: 9px 14px;
       background: #f5f5f7;
       border-radius: 10px;
     }
@@ -114,31 +163,43 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 11px 24px;
+      gap: 6px;
+      padding: 11px 20px;
       border-radius: 10px;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       border: none;
       transition: opacity .15s, transform .1s;
     }
     .btn:active { transform: scale(.97); }
-    .btn-primary { background: #0071e3; color: #fff; width: 100%; }
-    .btn-primary:hover { opacity: .9; }
-    .btn-secondary {
-      background: transparent;
-      color: #0071e3;
-      border: 1px solid #0071e3;
-      width: 100%;
+    .btn-primary { background: #0071e3; color: #fff; }
+    .btn-primary:hover { opacity: .88; }
+    .btn-run-news { background: #0071e3; color: #fff; opacity: .85; }
+    .btn-run-news:hover { opacity: 1; }
+    .btn-run-kstartup { background: #30b94a; color: #fff; }
+    .btn-run-kstartup:hover { opacity: .88; }
+    .btn-secondary { background: transparent; color: #0071e3; border: 1px solid #0071e3; }
+    .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn-full { width: 100%; }
+
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid #f0f0f0;
     }
-    .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; width: 100%; }
-    .btn-run { background: #ff9500; color: #fff; width: 100%; }
-    .btn-run:hover { opacity: .9; }
-    .btn-run:disabled { opacity: .5; cursor: not-allowed; }
 
-    .btn-row { display: flex; gap: 10px; }
+    .bottom-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
 
-    /* 알림 */
+    /* 토스트 */
     .toast {
       position: fixed;
       bottom: 24px; left: 50%;
@@ -170,8 +231,8 @@
 </head>
 <body>
 <div class="container">
-  <h1>뉴스 아이디어 에이전트</h1>
-  <p class="subtitle">설정 페이지 — 변경사항은 Supabase에 저장됩니다</p>
+  <h1>에이전트 설정</h1>
+  <p class="subtitle">변경사항은 Supabase에 저장됩니다</p>
 
   <!-- 연결 설정 -->
   <div id="setup-card" class="card hidden">
@@ -190,7 +251,7 @@
       <input type="password" id="gh-token" placeholder="ghp_...">
       <p class="hint">GitHub → Settings → Developer settings → Personal access tokens → <b>workflow</b> 권한 필요</p>
     </div>
-    <button class="btn btn-primary" onclick="connect()">연결하기</button>
+    <button class="btn btn-primary btn-full" onclick="connect()">연결하기</button>
   </div>
 
   <div id="loading">불러오는 중...</div>
@@ -198,51 +259,49 @@
   <!-- 설정 패널 -->
   <div id="settings-panel" class="hidden">
 
-    <!-- 전체 ON/OFF -->
-    <div class="card">
-      <div class="card-title">전체 기능</div>
-      <div class="toggle-row">
+    <!-- ───────────────────────────── 뉴스 에이전트 ───────────────────────────── -->
+    <div class="agent-card">
+      <div class="agent-card-header news">
         <div>
-          <div class="toggle-label">에이전트 활성화</div>
-          <div class="toggle-desc">꺼두면 GitHub Actions에서 실행이 중단됩니다</div>
+          <span class="agent-name">뉴스 아이디어 에이전트</span>
+          <span class="agent-badge badge-news">매 시간</span>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="enabled">
+        <label class="switch" title="에이전트 활성화/비활성화">
+          <input type="checkbox" id="news-enabled">
           <span class="slider"></span>
         </label>
       </div>
-    </div>
 
-    <!-- 실행 주기 -->
-    <div class="card">
-      <div class="card-title">실행 주기</div>
-      <div class="field">
-        <label>몇 시간마다 실행할까요?</label>
-        <select id="run-every-hours">
-          <option value="1">매 시간 (1시간)</option>
-          <option value="2">2시간마다</option>
-          <option value="3">3시간마다</option>
-          <option value="6">6시간마다</option>
-          <option value="12">12시간마다</option>
-          <option value="24">하루 1회 (자정 UTC)</option>
-        </select>
-        <p class="hint">GitHub Actions는 매 시간 실행되지만, 설정한 간격에 맞지 않으면 건너뜁니다</p>
-      </div>
-    </div>
+      <div class="agent-card-body">
 
-    <!-- 뉴스 소스 -->
-    <div class="card">
-      <div class="card-title">뉴스 소스</div>
-      <div class="source-list" id="source-list"></div>
-    </div>
+        <!-- 실행 주기 -->
+        <div class="section-label">실행 주기</div>
+        <div class="field">
+          <select id="run-every-hours">
+            <option value="1">매 시간 (1시간)</option>
+            <option value="2">2시간마다</option>
+            <option value="3">3시간마다</option>
+            <option value="6">6시간마다</option>
+            <option value="12">12시간마다</option>
+            <option value="24">하루 1회 (자정 UTC)</option>
+          </select>
+          <p class="hint">GitHub Actions는 매 시간 체크하며, 설정한 간격에 맞지 않으면 건너뜁니다</p>
+        </div>
 
-    <!-- 프롬프트 -->
-    <div class="card">
-      <div class="card-title">AI 프롬프트 템플릿</div>
-      <div class="field">
-        <textarea id="prompt-template" placeholder="비워두면 기본 프롬프트를 사용합니다.
+        <div class="section-divider"></div>
 
-뉴스 내용이 들어갈 위치를 지정하려면 {news_block}을 사용하세요.
+        <!-- 뉴스 소스 -->
+        <div class="section-label">뉴스 소스</div>
+        <div class="source-list" id="source-list"></div>
+
+        <div class="section-divider"></div>
+
+        <!-- 프롬프트 -->
+        <div class="section-label">AI 프롬프트 템플릿</div>
+        <div class="field">
+          <textarea id="prompt-template" placeholder="비워두면 기본 프롬프트를 사용합니다.
+
+{news_block} 위치에 수집된 뉴스가 삽입됩니다.
 예시:
 당신은 스타트업 투자자입니다.
 아래 뉴스를 보고 투자 기회를 찾아주세요.
@@ -250,72 +309,99 @@
 {news_block}
 
 투자 관점에서 분석해주세요."></textarea>
-        <p class="hint">{news_block} 위치에 수집된 뉴스가 삽입됩니다. 비워두면 기본 프롬프트 사용</p>
+          <p class="hint">{news_block} 위치에 수집된 뉴스가 삽입됩니다. 비워두면 기본 프롬프트 사용</p>
+        </div>
+
+        <!-- 뉴스 에이전트 액션 -->
+        <div class="action-row">
+          <button class="btn btn-primary" onclick="saveNewsSettings()">설정 저장</button>
+          <button class="btn btn-run-news" id="news-run-btn" onclick="runNewsNow()">▶ 지금 실행</button>
+        </div>
+
       </div>
     </div>
 
-    <!-- K-Startup 프로필 -->
-    <div class="card">
-      <div class="card-title">K-Startup 내 프로필</div>
-      <p class="hint" style="margin-bottom:16px">자격요건 대조에 사용되는 기업/개인 정보입니다</p>
-      <div class="field">
-        <label>기업명</label>
-        <input type="text" id="company-name" placeholder="(주)예시기업">
+    <!-- ───────────────────────────── K-Startup 에이전트 ───────────────────────────── -->
+    <div class="agent-card">
+      <div class="agent-card-header kstartup">
+        <div>
+          <span class="agent-name">K-Startup 모니터링</span>
+          <span class="agent-badge badge-kstartup">매일 오전 9시</span>
+        </div>
+        <label class="switch" title="에이전트 활성화/비활성화">
+          <input type="checkbox" id="kstartup-enabled">
+          <span class="slider"></span>
+        </label>
       </div>
-      <div class="field">
-        <label>사업자 유형</label>
-        <select id="company-type">
-          <option value="">선택</option>
-          <option value="법인">법인</option>
-          <option value="개인사업자">개인사업자</option>
-          <option value="해당없음">해당없음</option>
-        </select>
+
+      <div class="agent-card-body">
+
+        <!-- 기업 프로필 -->
+        <div class="section-label">내 기업 프로필 (자격요건 대조용)</div>
+
+        <div class="field">
+          <label>기업명</label>
+          <input type="text" id="company-name" placeholder="(주)예시기업">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>사업자 유형</label>
+            <select id="company-type">
+              <option value="">선택</option>
+              <option value="법인">법인</option>
+              <option value="개인사업자">개인사업자</option>
+              <option value="해당없음">해당없음</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>설립 연도</label>
+            <input type="text" id="founded-year" placeholder="2021">
+          </div>
+        </div>
+        <div class="field">
+          <label>업종 / 산업 분야</label>
+          <input type="text" id="industry" placeholder="AI, 핀테크, 제조 등">
+        </div>
+        <div class="field">
+          <label>주요 제품 / 서비스</label>
+          <textarea id="main-product" style="min-height:72px" placeholder="AI 기반 문서 자동화 SaaS 서비스"></textarea>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>직원 수</label>
+            <input type="text" id="employees" placeholder="5">
+          </div>
+          <div class="field">
+            <label>연간 매출 (만원)</label>
+            <input type="text" id="annual-revenue" placeholder="15000">
+          </div>
+        </div>
+        <div class="field">
+          <label>사업장 소재지</label>
+          <input type="text" id="location" placeholder="서울 강남구">
+        </div>
+        <div class="field">
+          <label>보유 인증</label>
+          <input type="text" id="certifications" placeholder="벤처기업, 이노비즈, ISO9001 등">
+        </div>
+        <div class="field">
+          <label>기타 (수상, 특허, 투자 유치 등)</label>
+          <textarea id="notes" style="min-height:72px" placeholder="2023년 TIPS 선정, 특허 2건 보유"></textarea>
+        </div>
+
+        <!-- K-Startup 에이전트 액션 -->
+        <div class="action-row">
+          <button class="btn btn-primary" onclick="saveKstartupSettings()">설정 저장</button>
+          <button class="btn btn-run-kstartup" id="kstartup-run-btn" onclick="runKstartupNow()">▶ 지금 실행</button>
+        </div>
+
       </div>
-      <div class="field">
-        <label>설립 연도</label>
-        <input type="text" id="founded-year" placeholder="2021">
-      </div>
-      <div class="field">
-        <label>업종 / 산업 분야</label>
-        <input type="text" id="industry" placeholder="AI, 핀테크, 제조 등">
-      </div>
-      <div class="field">
-        <label>주요 제품 / 서비스</label>
-        <textarea id="main-product" style="min-height:80px" placeholder="AI 기반 문서 자동화 SaaS 서비스"></textarea>
-      </div>
-      <div class="field">
-        <label>직원 수</label>
-        <input type="text" id="employees" placeholder="5">
-      </div>
-      <div class="field">
-        <label>연간 매출액 (만원)</label>
-        <input type="text" id="annual-revenue" placeholder="15000">
-        <p class="hint">1억 5천만원이면 15000 입력</p>
-      </div>
-      <div class="field">
-        <label>사업장 소재지</label>
-        <input type="text" id="location" placeholder="서울 강남구">
-      </div>
-      <div class="field">
-        <label>보유 인증</label>
-        <input type="text" id="certifications" placeholder="벤처기업, 이노비즈, ISO9001 등">
-      </div>
-      <div class="field">
-        <label>기타 (수상, 특허, 투자 유치 등)</label>
-        <textarea id="notes" style="min-height:80px" placeholder="2023년 TIPS 선정, 특허 2건 보유"></textarea>
-      </div>
-      <button class="btn btn-primary" onclick="saveProfile()">프로필 저장</button>
     </div>
 
-    <!-- 저장 -->
-    <div class="card">
-      <button class="btn btn-primary" onclick="saveSettings()" style="margin-bottom:10px">뉴스 에이전트 설정 저장</button>
-      <button class="btn btn-run" onclick="runNow()" style="margin-bottom:10px" id="run-btn">뉴스 에이전트 지금 실행</button>
-      <button class="btn btn-run" onclick="runKstartupNow()" style="margin-bottom:10px;background:#30b94a" id="kstartup-run-btn">K-Startup 지금 실행</button>
-      <div class="btn-row">
-        <button class="btn btn-secondary" onclick="loadSettings()">새로고침</button>
-        <button class="btn btn-danger" onclick="disconnect()">연결 해제</button>
-      </div>
+    <!-- 하단 공통 -->
+    <div class="bottom-row">
+      <button class="btn btn-secondary" onclick="loadAll()">새로고침</button>
+      <button class="btn btn-danger" onclick="disconnect()">연결 해제</button>
     </div>
 
   </div>
@@ -336,7 +422,6 @@
 
   async function sbFetch(path, options = {}) {
     const { url, key } = getSB();
-    // ASCII 범위 외 문자 제거 (HTTP 헤더 ISO-8859-1 제한 대응)
     const safeKey = key.replace(/[^\x20-\x7E]/g, '');
     const res = await fetch(`${url}/rest/v1/${path}`, {
       ...options,
@@ -377,28 +462,51 @@
     });
   }
 
-  async function loadSettings() {
+  async function loadNewsSettings() {
+    const data = await sbFetch('agent_settings?id=eq.1');
+    if (!data || data.length === 0) {
+      await sbFetch('agent_settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: 1,
+          enabled: true,
+          run_every_hours: 1,
+          active_sources: SOURCES,
+          prompt_template: '',
+          kstartup_enabled: true,
+        }),
+      });
+      return loadNewsSettings();
+    }
+    const s = data[0];
+    document.getElementById('news-enabled').checked = s.enabled !== false;
+    document.getElementById('kstartup-enabled').checked = s.kstartup_enabled !== false;
+    document.getElementById('run-every-hours').value = s.run_every_hours || 1;
+    document.getElementById('prompt-template').value = s.prompt_template || '';
+    buildSourceList(s.active_sources || SOURCES);
+  }
+
+  async function loadProfile() {
+    const data = await sbFetch('user_profile?id=eq.1');
+    if (!data || data.length === 0) return;
+    const p = data[0];
+    document.getElementById('company-name').value = p.company_name || '';
+    document.getElementById('company-type').value = p.company_type || '';
+    document.getElementById('founded-year').value = p.founded_year || '';
+    document.getElementById('industry').value = p.industry || '';
+    document.getElementById('main-product').value = p.main_product || '';
+    document.getElementById('employees').value = p.employees || '';
+    document.getElementById('annual-revenue').value = p.annual_revenue || '';
+    document.getElementById('location').value = p.location || '';
+    document.getElementById('certifications').value = p.certifications || '';
+    document.getElementById('notes').value = p.notes || '';
+  }
+
+  async function loadAll() {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('settings-panel').classList.add('hidden');
     try {
-      const data = await sbFetch('agent_settings?id=eq.1');
-      if (!data || data.length === 0) {
-        // 첫 실행: 기본값으로 레코드 생성
-        await sbFetch('agent_settings', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: 1,
-            enabled: true,
-            run_every_hours: 1,
-            active_sources: SOURCES,
-            prompt_template: '',
-          }),
-        });
-        return loadSettings();
-      }
-      const s = data[0];
-      document.getElementById('enabled').checked = s.enabled;
-      document.getElementById('run-every-hours').value = s.run_every_hours;
-      document.getElementById('prompt-template').value = s.prompt_template || '';
-      buildSourceList(s.active_sources || SOURCES);
+      await Promise.all([loadNewsSettings(), loadProfile()]);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('settings-panel').classList.remove('hidden');
     } catch (e) {
@@ -408,26 +516,63 @@
     }
   }
 
-  async function saveSettings() {
+  async function saveNewsSettings() {
     const activeSources = SOURCES.filter(name => {
       const cb = document.querySelector(`[data-source="${name}"]`);
       return cb && cb.checked;
     });
-
     const payload = {
-      enabled: document.getElementById('enabled').checked,
+      enabled: document.getElementById('news-enabled').checked,
+      kstartup_enabled: document.getElementById('kstartup-enabled').checked,
       run_every_hours: parseInt(document.getElementById('run-every-hours').value),
       active_sources: activeSources,
       prompt_template: document.getElementById('prompt-template').value.trim(),
       updated_at: new Date().toISOString(),
     };
-
     try {
       await sbFetch('agent_settings?id=eq.1', {
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
-      toast('저장 완료!');
+      toast('뉴스 에이전트 설정 저장 완료!');
+    } catch (e) {
+      toast('저장 실패: ' + e.message, true);
+    }
+  }
+
+  async function saveKstartupSettings() {
+    // kstartup_enabled 토글 저장
+    const togglePayload = {
+      kstartup_enabled: document.getElementById('kstartup-enabled').checked,
+      updated_at: new Date().toISOString(),
+    };
+    // 프로필 저장
+    const profilePayload = {
+      company_name:   document.getElementById('company-name').value.trim(),
+      company_type:   document.getElementById('company-type').value,
+      founded_year:   parseInt(document.getElementById('founded-year').value) || null,
+      industry:       document.getElementById('industry').value.trim(),
+      main_product:   document.getElementById('main-product').value.trim(),
+      employees:      parseInt(document.getElementById('employees').value) || null,
+      annual_revenue: parseInt(document.getElementById('annual-revenue').value) || null,
+      location:       document.getElementById('location').value.trim(),
+      certifications: document.getElementById('certifications').value.trim(),
+      notes:          document.getElementById('notes').value.trim(),
+      updated_at:     new Date().toISOString(),
+    };
+    try {
+      await Promise.all([
+        sbFetch('agent_settings?id=eq.1', {
+          method: 'PATCH',
+          body: JSON.stringify(togglePayload),
+        }),
+        sbFetch('user_profile?id=eq.1', {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify(profilePayload),
+        }),
+      ]);
+      toast('K-Startup 설정 저장 완료!');
     } catch (e) {
       toast('저장 실패: ' + e.message, true);
     }
@@ -442,17 +587,13 @@
     localStorage.setItem('sb-key', key);
     if (ghToken) localStorage.setItem('gh-token', ghToken);
     document.getElementById('setup-card').classList.add('hidden');
-    document.getElementById('loading').classList.remove('hidden');
-    loadSettings();
+    loadAll();
   }
 
-  async function runNow() {
+  async function runNewsNow() {
     const { ghToken } = getSB();
-    if (!ghToken) {
-      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
-      return;
-    }
-    const btn = document.getElementById('run-btn');
+    if (!ghToken) { toast('GitHub 토큰이 없습니다. 연결 해제 후 다시 입력해주세요.', true); return; }
+    const btn = document.getElementById('news-run-btn');
     btn.disabled = true;
     btn.textContent = '실행 중...';
     try {
@@ -461,79 +602,29 @@
         {
           method: 'POST',
           headers: {
-            'Accept': 'application/vnd.github+json',
+            Accept: 'application/vnd.github+json',
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${ghToken}`,
+            Authorization: `Bearer ${ghToken}`,
           },
           body: JSON.stringify({ ref: 'main' }),
         }
       );
       if (res.status === 204) {
-        toast('실행 요청 완료! 약 1분 후 텔레그램을 확인하세요.');
+        toast('뉴스 에이전트 실행 요청 완료! 약 1분 후 텔레그램 확인');
       } else {
-        const msg = await res.text();
-        toast('실행 실패 (' + res.status + '): ' + msg, true);
+        toast('실행 실패 (' + res.status + '): ' + await res.text(), true);
       }
     } catch (e) {
       toast('오류: ' + e.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = '지금 실행하기';
-    }
-  }
-
-  async function loadProfile() {
-    try {
-      const data = await sbFetch('user_profile?id=eq.1');
-      if (!data || data.length === 0) return;
-      const p = data[0];
-      document.getElementById('company-name').value = p.company_name || '';
-      document.getElementById('company-type').value = p.company_type || '';
-      document.getElementById('founded-year').value = p.founded_year || '';
-      document.getElementById('industry').value = p.industry || '';
-      document.getElementById('main-product').value = p.main_product || '';
-      document.getElementById('employees').value = p.employees || '';
-      document.getElementById('annual-revenue').value = p.annual_revenue || '';
-      document.getElementById('location').value = p.location || '';
-      document.getElementById('certifications').value = p.certifications || '';
-      document.getElementById('notes').value = p.notes || '';
-    } catch (e) {
-      console.warn('프로필 로드 실패:', e.message);
-    }
-  }
-
-  async function saveProfile() {
-    const payload = {
-      company_name:   document.getElementById('company-name').value.trim(),
-      company_type:   document.getElementById('company-type').value,
-      founded_year:   parseInt(document.getElementById('founded-year').value) || null,
-      industry:       document.getElementById('industry').value.trim(),
-      main_product:   document.getElementById('main-product').value.trim(),
-      employees:      parseInt(document.getElementById('employees').value) || null,
-      annual_revenue: parseInt(document.getElementById('annual-revenue').value) || null,
-      location:       document.getElementById('location').value.trim(),
-      certifications: document.getElementById('certifications').value.trim(),
-      notes:          document.getElementById('notes').value.trim(),
-      updated_at:     new Date().toISOString(),
-    };
-    try {
-      await sbFetch('user_profile?id=eq.1', {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify(payload),
-      });
-      toast('프로필 저장 완료!');
-    } catch (e) {
-      toast('저장 실패: ' + e.message, true);
+      btn.textContent = '▶ 지금 실행';
     }
   }
 
   async function runKstartupNow() {
     const { ghToken } = getSB();
-    if (!ghToken) {
-      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
-      return;
-    }
+    if (!ghToken) { toast('GitHub 토큰이 없습니다. 연결 해제 후 다시 입력해주세요.', true); return; }
     const btn = document.getElementById('kstartup-run-btn');
     btn.disabled = true;
     btn.textContent = '실행 중...';
@@ -543,30 +634,30 @@
         {
           method: 'POST',
           headers: {
-            'Accept': 'application/vnd.github+json',
+            Accept: 'application/vnd.github+json',
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${ghToken}`,
+            Authorization: `Bearer ${ghToken}`,
           },
           body: JSON.stringify({ ref: 'main' }),
         }
       );
       if (res.status === 204) {
-        toast('K-Startup 실행 요청 완료! 잠시 후 텔레그램을 확인하세요.');
+        toast('K-Startup 실행 요청 완료! 잠시 후 텔레그램 확인');
       } else {
-        const msg = await res.text();
-        toast('실행 실패 (' + res.status + '): ' + msg, true);
+        toast('실행 실패 (' + res.status + '): ' + await res.text(), true);
       }
     } catch (e) {
       toast('오류: ' + e.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'K-Startup 지금 실행';
+      btn.textContent = '▶ 지금 실행';
     }
   }
 
   function disconnect() {
     localStorage.removeItem('sb-url');
     localStorage.removeItem('sb-key');
+    localStorage.removeItem('gh-token');
     document.getElementById('settings-panel').classList.add('hidden');
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('setup-card').classList.remove('hidden');
@@ -576,8 +667,7 @@
   (function init() {
     const { url, key } = getSB();
     if (url && key) {
-      loadSettings();
-      loadProfile();
+      loadAll();
     } else {
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('setup-card').classList.remove('hidden');
