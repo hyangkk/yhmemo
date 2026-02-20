@@ -13,6 +13,7 @@ import re
 import sys
 import json
 import socket
+import hashlib
 import feedparser
 import anthropic
 import urllib.request
@@ -44,6 +45,8 @@ ALL_SOURCES = {
     "매일경제": "https://www.mk.co.kr/rss/30000001/",
     "한국경제": "https://www.hankyung.com/feed/all-news",
     "머니투데이": "https://rss.mt.co.kr/rss/mt_news.xml",
+    # 스타트업
+    "케이스타트업": "https://www.k-startup.go.kr/web/contents/rss/startupnews.do",
 }
 
 # GitHub Actions 환경에서도 항상 접근 가능한 보장 소스
@@ -126,6 +129,13 @@ def fetch_settings() -> dict:
 # 1. 뉴스 수집
 # ---------------------------------------------------------------------------
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 def _extract_image_url(entry) -> str:
     """RSS 항목에서 실제 이미지 URL 추출 (media_thumbnail → media_content → enclosures 순)."""
     for thumb in entry.get("media_thumbnail", []):
@@ -139,6 +149,124 @@ def _extract_image_url(entry) -> str:
         if "image" in enc.get("type", "") and (enc.get("href") or enc.get("url")):
             return enc.get("href") or enc.get("url", "")
     return ""
+
+
+def _resolve_google_news_url(url: str) -> str:
+    """Google News URL → 실제 기사 URL (HTTP 리디렉션 추적, 실패 시 원본 반환)."""
+    if "news.google.com" not in url:
+        return url
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            final = resp.url
+            return final if "news.google.com" not in final else url
+    except Exception as e:
+        print(f"    Google URL 변환 실패: {e}", file=sys.stderr)
+        return url
+
+
+def _download_image(image_url: str) -> tuple:
+    """이미지 URL에서 바이너리 데이터 다운로드. (bytes, content_type) 반환. 실패 시 (b'', '')."""
+    if not image_url:
+        return b"", ""
+    try:
+        req = urllib.request.Request(image_url, headers={"User-Agent": _BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            ct = resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+            if not ct.startswith("image/"):
+                return b"", ""
+            return resp.read(), ct
+    except Exception as e:
+        print(f"    이미지 다운로드 실패 ({image_url[:70]}): {e}", file=sys.stderr)
+        return b"", ""
+
+
+def _ensure_supabase_bucket(bucket: str) -> bool:
+    """Supabase Storage 버킷이 없으면 public 버킷으로 생성."""
+    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supa_url or not key:
+        return False
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    try:
+        req = urllib.request.Request(f"{supa_url}/storage/v1/bucket/{bucket}", headers=headers)
+        urllib.request.urlopen(req, timeout=10)
+        return True  # 이미 존재
+    except urllib.error.HTTPError as e:
+        if e.code not in (400, 404):
+            return False
+    except Exception:
+        return False
+    # 버킷 생성
+    payload = json.dumps({"id": bucket, "name": bucket, "public": True}).encode()
+    req2 = urllib.request.Request(
+        f"{supa_url}/storage/v1/bucket",
+        data=payload,
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req2, timeout=10)
+        print(f"  Supabase 버킷 '{bucket}' 생성 완료")
+        return True
+    except Exception as e:
+        print(f"  Supabase 버킷 생성 실패: {e}", file=sys.stderr)
+        return False
+
+
+def _upload_image_to_supabase(image_data: bytes, filename: str, content_type: str) -> str:
+    """이미지를 Supabase Storage에 업로드하고 공개 URL 반환. 실패 시 빈 문자열."""
+    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supa_url or not key:
+        return ""
+    bucket = "news-images"
+    req = urllib.request.Request(
+        f"{supa_url}/storage/v1/object/{bucket}/{filename}",
+        data=image_data,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": content_type,
+            "x-upsert": "true",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        public_url = f"{supa_url}/storage/v1/object/public/{bucket}/{filename}"
+        print(f"    이미지 업로드 완료: {filename}")
+        return public_url
+    except Exception as e:
+        print(f"    이미지 업로드 실패 ({filename}): {e}", file=sys.stderr)
+        return ""
+
+
+def process_news_images(news_items: list) -> None:
+    """각 뉴스 항목의 이미지를 다운로드하여 Supabase Storage에 업로드.
+    news_items[i]['image_url']을 Supabase 공개 URL로 교체 (실패 시 빈 문자열로 설정)."""
+    has_images = any(item.get("image_url") for item in news_items)
+    if not has_images:
+        print("  이미지 없음 — 건너뜀")
+        return
+
+    _ensure_supabase_bucket("news-images")
+    date_prefix = datetime.now(KST).strftime("%Y%m%d")
+    ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+
+    for i, item in enumerate(news_items):
+        raw_url = item.get("image_url", "")
+        if not raw_url:
+            continue
+        print(f"  [{i+1}] 이미지 처리 중: {raw_url[:70]}")
+        image_data, ct = _download_image(raw_url)
+        if not image_data:
+            item["image_url"] = ""
+            continue
+        ext = ext_map.get(ct, "jpg")
+        title_hash = hashlib.md5(item["title"].encode()).hexdigest()[:8]
+        filename = f"{date_prefix}/{i+1}_{title_hash}.{ext}"
+        item["image_url"] = _upload_image_to_supabase(image_data, filename, ct)
 
 
 def fetch_top_news(active_sources: list, count: int = 3) -> list:
@@ -201,6 +329,9 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                 title = entry.get("title", "").strip()
                 summary = entry.get("summary", entry.get("description", title)).strip()
                 link = entry.get("link", "")
+                # Google News 단축 URL → 실제 기사 URL 변환
+                if "news.google.com" in link:
+                    link = _resolve_google_news_url(link)
                 summary = re.sub(r"<[^>]+>", "", summary).strip()
                 if len(summary) > 500:
                     summary = summary[:497] + "..."
@@ -302,35 +433,37 @@ def save_to_supabase(news_items: list, idea: str, generated_at: datetime) -> boo
 # ---------------------------------------------------------------------------
 
 def _send_telegram_photos(token: str, chat_id: str, news_items: list) -> None:
-    """뉴스 이미지를 텔레그램 미디어 그룹으로 발송 (이미지 있는 항목만)."""
-    media = []
+    """뉴스 항목별 이미지를 텔레그램 sendPhoto로 개별 발송.
+    캡션에 제목 + 원문 링크 포함. Supabase Storage URL을 이미지로 사용."""
     for i, item in enumerate(news_items):
         img = item.get("image_url", "")
         if not img:
             continue
         pub = f" {item['published_at']}" if item.get('published_at') else ""
-        caption = f"{i + 1}. [{item['source']}]{pub} {item['title']}"
-        media.append({"type": "photo", "media": img, "caption": caption})
-
-    if not media:
-        return
-
-    payload = json.dumps({"chat_id": chat_id, "media": media[:10]}).encode("utf-8")
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMediaGroup",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode())
-            if result.get("ok"):
-                print(f"  텔레그램 이미지 {len(media)}개 발송 완료")
-            else:
-                print(f"  텔레그램 이미지 발송 실패: {result}", file=sys.stderr)
-    except Exception as e:
-        print(f"  텔레그램 이미지 발송 오류: {e}", file=sys.stderr)
+        link = item.get("link", "")
+        caption = f"[{item['source']}]{pub} {item['title']}"
+        if link:
+            caption += f"\n🔗 {link}"
+        payload = json.dumps({
+            "chat_id": chat_id,
+            "photo": img,
+            "caption": caption,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                result = json.loads(resp.read().decode())
+                if result.get("ok"):
+                    print(f"  [{i+1}] 이미지 발송 완료")
+                else:
+                    print(f"  [{i+1}] 이미지 발송 실패: {result.get('description')}", file=sys.stderr)
+        except Exception as e:
+            print(f"  [{i+1}] 이미지 발송 오류: {e}", file=sys.stderr)
 
 
 def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> bool:
@@ -421,20 +554,24 @@ def main():
     prompt_template = settings.get("prompt_template", "")
     print(f"활성 소스: {active_sources} | 실행 주기: {run_every}시간\n")
 
-    print("[1/3] 주요 뉴스 수집 중...")
+    print("[1/4] 주요 뉴스 수집 중...")
     news_items = fetch_top_news(active_sources, 3)
     if not news_items:
         print("오류: 뉴스를 수집하지 못했습니다.", file=sys.stderr)
         sys.exit(1)
     print(f"수집 완료: {len(news_items)}개\n")
 
-    print("[2/3] Claude AI로 아이디어 생성 중...")
+    print("[2/4] 뉴스 이미지 처리 중 (다운로드 → Supabase Storage)...")
+    process_news_images(news_items)
+    print()
+
+    print("[3/4] Claude AI로 아이디어 생성 중...")
     idea = generate_idea(news_items, prompt_template)
     print("생성 완료\n")
 
     generated_at = datetime.now(KST)
 
-    print("[3/3] 결과 저장 & 발송 중...")
+    print("[4/4] 결과 저장 & 발송 중...")
     supabase_ok = save_to_supabase(news_items, idea, generated_at)
     telegram_ok = send_to_telegram(news_items, idea, generated_at)
 
