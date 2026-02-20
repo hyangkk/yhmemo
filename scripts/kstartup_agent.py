@@ -32,7 +32,10 @@ KST = timezone(timedelta(hours=9))
 
 KSTARTUP_BASE = "https://www.k-startup.go.kr"
 KSTARTUP_LIST_URL = f"{KSTARTUP_BASE}/web/contents/bizpbanc-ongoing.do"
-KSTARTUP_API_URL = f"{KSTARTUP_BASE}/web/contents/bizpbanc-ongoing-ajax.do"
+KSTARTUP_OPEN_API_URL = (
+    "https://apis.data.go.kr/B552735/kisedKstartupService01"
+    "/getAnnouncementInformation01"
+)
 
 SESSION_HEADERS = {
     "User-Agent": (
@@ -116,208 +119,92 @@ def get_seen_ids() -> set:
 
 
 # ---------------------------------------------------------------------------
-# 3. K-Startup 공고 목록 수집
+# 3. K-Startup 공고 목록 수집 (공공데이터포털 공식 API)
 # ---------------------------------------------------------------------------
 
 def fetch_announcements() -> list:
-    """K-Startup 진행 중 사업공고 목록 수집."""
-    announcements = []
+    """공공데이터포털 공식 API로 K-Startup 진행 중 사업공고 수집."""
+    api_key = os.environ.get("KSTARTUP_API_KEY", "")
+    if not api_key:
+        print("  오류: KSTARTUP_API_KEY 환경 변수가 없습니다.", file=sys.stderr)
+        return []
 
-    # 방법 A: AJAX API 시도
-    announcements = _try_ajax_api()
-
-    # 방법 B: HTML 파싱 fallback
-    if not announcements:
-        announcements = _try_html_parse()
-
-    return announcements
-
-
-def _make_session() -> requests.Session:
-    """세션 쿠키 확보를 위해 메인 페이지 먼저 방문 후 세션 반환."""
-    session = requests.Session()
-    session.headers.update(SESSION_HEADERS)
-    try:
-        session.get(KSTARTUP_LIST_URL, timeout=20)
-        print("  세션 쿠키 획득 완료")
-    except Exception as e:
-        print(f"  세션 초기화 실패 (계속 시도): {e}", file=sys.stderr)
-    return session
-
-
-def _try_ajax_api() -> list:
-    """AJAX API로 공고 목록 수집 시도 (세션 쿠키 사용)."""
     results = []
-    params = {
-        "pbancEndYn": "N",
-        "pageIndex": "1",
-        "pageUnit": "50",
-        "orderby": "REG_DT_DESC",
-    }
+    page = 1
+    per_page = 100
 
-    session = _make_session()
-
-    for url in [KSTARTUP_API_URL, KSTARTUP_LIST_URL]:
+    while page <= 5:  # 최대 500개 조회
+        params = {
+            "serviceKey": api_key,
+            "page": str(page),
+            "perPage": str(per_page),
+            "returnType": "json",
+        }
         try:
-            resp = session.post(
-                url,
-                data=params,
-                headers={"X-Requested-With": "XMLHttpRequest"},
-                timeout=20,
-            )
-            print(f"  POST {url} → status {resp.status_code}, size {len(resp.content)}B")
+            resp = requests.get(KSTARTUP_OPEN_API_URL, params=params, timeout=30)
+            print(f"  API 페이지 {page} → status {resp.status_code}, size {len(resp.content)}B")
             if resp.status_code != 200:
-                continue
+                print(f"  API 오류 응답: {resp.text[:200]}", file=sys.stderr)
+                break
 
-            # JSON 응답 시도
-            try:
-                data = resp.json()
-                items = (
-                    data.get("list") or data.get("data") or
-                    data.get("resultList") or data.get("pbancList") or
-                    data.get("items") or []
+            data = resp.json()
+            items = data.get("data", [])
+            if not items:
+                break
+
+            for item in items:
+                if item.get("rcrt_prgs_yn") != "Y":
+                    continue
+                ann_id = str(item.get("pbanc_sn", ""))
+                if not ann_id:
+                    continue
+
+                # 마감일 YYYYMMDD → YYYY-MM-DD
+                raw_dl = item.get("pbanc_rcpt_end_dt", "")
+                deadline = (
+                    f"{raw_dl[:4]}-{raw_dl[4:6]}-{raw_dl[6:]}"
+                    if raw_dl and len(raw_dl) == 8 else raw_dl
                 )
-                if items:
-                    for item in items:
-                        ann = _parse_dict_item(item)
-                        if ann:
-                            results.append(ann)
-                    if results:
-                        print(f"  AJAX API에서 {len(results)}개 수집 (JSON)")
-                        return results
-            except ValueError:
-                pass
 
-            # HTML 응답 시도 (확장된 셀렉터)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            html_selectors = [
-                "li.card-item", "li[data-pbanc-sn]", ".biz-card",
-                ".list-wrap li", ".board-list li", "ul.list li",
-                "table tbody tr", ".result-list li",
-            ]
-            for sel in html_selectors:
-                items = soup.select(sel)
-                if items:
-                    for item in items:
-                        ann = _parse_html_item(item)
-                        if ann:
-                            results.append(ann)
-                    if results:
-                        print(f"  AJAX에서 {len(results)}개 수집 (HTML/{sel})")
-                        return results
+                detail_url = item.get("detl_pg_url") or f"{KSTARTUP_LIST_URL}?pbancSn={ann_id}"
+
+                results.append({
+                    "announcement_id": ann_id,
+                    "title": item.get("biz_pbanc_nm", "").strip(),
+                    "url": detail_url,
+                    "deadline": deadline,
+                    "api_content": _build_api_content(item),
+                })
+
+            total = data.get("totalCount", 0)
+            if page * per_page >= total:
+                break
+            page += 1
 
         except Exception as e:
-            print(f"  AJAX 시도 실패 ({url}): {e}", file=sys.stderr)
+            print(f"  API 호출 실패 (page {page}): {e}", file=sys.stderr)
+            break
 
+    print(f"  공식 API에서 진행 중 공고 {len(results)}개 수집")
     return results
 
 
-def _try_html_parse() -> list:
-    """메인 목록 페이지 HTML 파싱 (세션 쿠키 사용)."""
-    results = []
-    try:
-        session = _make_session()
-        resp = session.get(KSTARTUP_LIST_URL, timeout=20)
-        print(f"  GET {KSTARTUP_LIST_URL} → status {resp.status_code}, size {len(resp.content)}B")
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        selectors = [
-            "li.card-item", "li[data-pbanc-sn]", ".biz-card",
-            ".list-wrap li", ".board-list li", "ul.list li",
-            "table tbody tr", ".result-list li",
-        ]
-        for sel in selectors:
-            items = soup.select(sel)
-            if items:
-                for item in items:
-                    ann = _parse_html_item(item)
-                    if ann:
-                        results.append(ann)
-                if results:
-                    print(f"  HTML({sel})에서 {len(results)}개 수집")
-                    break
-        else:
-            # 디버그용: 페이지 일부 출력
-            print(f"  HTML 셀렉터 모두 실패. 페이지 앞 500자: {resp.text[:500]}", file=sys.stderr)
-
-    except Exception as e:
-        print(f"  HTML 파싱 실패: {e}", file=sys.stderr)
-
-    return results
-
-
-def _parse_dict_item(item: dict) -> dict | None:
-    """JSON 딕셔너리에서 공고 정보 파싱."""
-    ann_id = (
-        str(item.get("pbancSn") or item.get("PBANC_SN") or
-            item.get("id") or item.get("ID") or "")
-    )
-    if not ann_id:
-        return None
-
-    title = (
-        item.get("pbancNm") or item.get("PBANC_NM") or
-        item.get("title") or item.get("TITLE") or ""
-    )
-    deadline = (
-        item.get("pbancRqstEndDe") or item.get("PBANC_RQST_END_DE") or
-        item.get("endDate") or ""
-    )
-
-    return {
-        "announcement_id": ann_id,
-        "title": title.strip(),
-        "url": f"{KSTARTUP_LIST_URL}?pbancSn={ann_id}",
-        "deadline": deadline,
-    }
-
-
-def _parse_html_item(item) -> dict | None:
-    """BeautifulSoup 요소에서 공고 정보 파싱."""
-    # ID 추출
-    ann_id = item.get("data-pbanc-sn") or item.get("data-seq") or ""
-
-    if not ann_id:
-        link = item.find("a", href=True)
-        if link:
-            href = link["href"]
-            m = re.search(r"pbancSn=(\d+)", href)
-            if m:
-                ann_id = m.group(1)
-            else:
-                m2 = re.search(r"[?&](?:seq|id|sn)=(\d+)", href, re.I)
-                if m2:
-                    ann_id = m2.group(1)
-
-    if not ann_id:
-        # onclick에서 ID 추출 시도
-        elem = item.find(attrs={"onclick": True})
-        if elem:
-            m = re.search(r"(\d{4,})", elem.get("onclick", ""))
-            if m:
-                ann_id = m.group(1)
-
-    if not ann_id:
-        return None
-
-    # 제목
-    title_elem = (
-        item.find(class_=re.compile(r"title|subject|name|tit", re.I)) or
-        item.find("strong") or
-        item.find("a")
-    )
-    title = title_elem.get_text(strip=True) if title_elem else item.get_text(strip=True)[:80]
-
-    # 마감일
-    date_elems = item.find_all(class_=re.compile(r"date|period|end|due", re.I))
-    deadline = date_elems[-1].get_text(strip=True) if date_elems else ""
-
-    return {
-        "announcement_id": str(ann_id),
-        "title": title,
-        "url": f"{KSTARTUP_LIST_URL}?pbancSn={ann_id}",
-        "deadline": deadline,
-    }
+def _build_api_content(item: dict) -> str:
+    """API 응답 항목에서 공고 내용 텍스트 구성."""
+    parts = []
+    if item.get("supt_biz_clsfc"):
+        parts.append(f"지원 분류: {item['supt_biz_clsfc']}")
+    if item.get("supt_regin"):
+        parts.append(f"지원 지역: {item['supt_regin']}")
+    if item.get("aply_trgt"):
+        parts.append(f"신청 대상: {item['aply_trgt']}")
+    if item.get("aply_trgt_ctnt"):
+        parts.append(f"신청 자격:\n{item['aply_trgt_ctnt'][:2000]}")
+    if item.get("aply_excl_trgt_ctnt"):
+        parts.append(f"신청 제외 대상:\n{item['aply_excl_trgt_ctnt'][:1000]}")
+    if item.get("pbanc_ctnt"):
+        parts.append(f"공고 내용:\n{item['pbanc_ctnt'][:2000]}")
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +552,8 @@ def main():
     if not all_anns:
         msg = (
             f"<b>📢 K-Startup 모니터링 결과</b>\n\n"
-            f"⚠️ 사이트에서 공고를 수집하지 못했습니다.\n"
-            f"K-Startup 사이트 구조가 변경되었거나 일시적 오류일 수 있습니다."
+            f"⚠️ 공식 API에서 공고를 수집하지 못했습니다.\n"
+            f"KSTARTUP_API_KEY 확인 또는 일시적 API 오류일 수 있습니다."
         )
         if token and chat_id:
             send_telegram_summary(token, chat_id, msg)
@@ -702,9 +589,10 @@ def main():
             if t:
                 pdf_text += t + "\n\n"
 
-        # 적합성 분석
+        # 적합성 분석 (API 내용 + 상세페이지 내용 + PDF 순으로 우선)
+        page_content = detail["content"] or ann.get("api_content", "")
         print("    적합성 분석 중...")
-        analysis = analyze_eligibility(ann, pdf_text, detail["content"], user_profile)
+        analysis = analyze_eligibility(ann, pdf_text, page_content, user_profile)
         eligible = analysis.get("eligible")
         label = "지원 가능 ✅" if eligible is True else "지원 불가 ❌" if eligible is False else "검토 필요 ❓"
         print(f"    결과: {label}")
