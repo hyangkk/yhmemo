@@ -139,8 +139,13 @@ def get_seen_ids() -> set:
 # 3. K-Startup 공고 목록 수집 (공공데이터포털 공식 API)
 # ---------------------------------------------------------------------------
 
-def fetch_announcements() -> list:
-    """공공데이터포털 공식 API로 K-Startup 진행 중 사업공고 수집."""
+def fetch_announcements(seen_ids: set = None, max_new: int = 10) -> list:
+    """공공데이터포털 공식 API로 K-Startup 진행 중 사업공고 수집.
+
+    seen_ids에 없는 신규 공고만 수집하며, max_new개 도달 시 즉시 중단.
+    """
+    if seen_ids is None:
+        seen_ids = set()
     api_key = os.environ.get("KSTARTUP_API_KEY", "")
     if not api_key:
         print("  오류: KSTARTUP_API_KEY 환경 변수가 없습니다.", file=sys.stderr)
@@ -173,7 +178,7 @@ def fetch_announcements() -> list:
                 if item.get("rcrt_prgs_yn") != "Y":
                     continue
                 ann_id = str(item.get("pbanc_sn", ""))
-                if not ann_id:
+                if not ann_id or ann_id in seen_ids:
                     continue
 
                 # 마감일 YYYYMMDD → YYYY-MM-DD
@@ -193,6 +198,10 @@ def fetch_announcements() -> list:
                     "api_content": _build_api_content(item),
                 })
 
+                if len(results) >= max_new:
+                    print(f"  신규 공고 {max_new}개 도달 — 수집 중단")
+                    return results
+
             total = data.get("totalCount", 0)
             if page * per_page >= total:
                 break
@@ -202,7 +211,7 @@ def fetch_announcements() -> list:
             print(f"  API 호출 실패 (page {page}): {e}", file=sys.stderr)
             break
 
-    print(f"  공식 API에서 진행 중 공고 {len(results)}개 수집")
+    print(f"  신규 공고 {len(results)}개 수집 완료")
     return results
 
 
@@ -571,20 +580,16 @@ def main():
     seen_ids = get_seen_ids()
     print(f"  기존 처리 공고: {len(seen_ids)}개")
 
-    # 3. 새 공고 수집
+    # 3. 새 공고 수집 (최대 10개, seen_ids 제외하며 조기 중단)
     print("\n[3/5] K-Startup 사업공고 수집 중...")
-    all_anns = fetch_announcements()
-    print(f"  수집된 공고: {len(all_anns)}개")
-
-    new_anns = [a for a in all_anns if a["announcement_id"] not in seen_ids]
-    new_anns = new_anns[:10]
-    print(f"  새 공고: {len(new_anns)}개 (최대 10개 제한)")
+    new_anns = fetch_announcements(seen_ids=seen_ids, max_new=10)
+    print(f"  새 공고: {len(new_anns)}개")
 
     # 4. 텔레그램 토큰 설정
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-    if not all_anns:
+    if not new_anns and not seen_ids:
         msg = (
             f"<b>📢 K-Startup 모니터링 결과</b>\n\n"
             f"⚠️ 공식 API에서 공고를 수집하지 못했습니다.\n"
@@ -599,8 +604,7 @@ def main():
         msg = (
             f"<b>📢 K-Startup 모니터링 결과</b>\n\n"
             f"✅ 에이전트 정상 실행 완료\n"
-            f"전체 공고: {len(all_anns)}개 | 새 공고: 0개\n"
-            f"(모두 이미 처리된 공고입니다)"
+            f"새 공고: 0개 (모두 이미 처리된 공고입니다)"
         )
         if token and chat_id:
             send_telegram_summary(token, chat_id, msg)
@@ -656,7 +660,6 @@ def main():
     if token and chat_id:
         summary_msg = (
             f"<b>📊 K-Startup 분석 완료</b>\n\n"
-            f"전체 공고: {len(all_anns)}개\n"
             f"새 공고: {len(new_anns)}개 처리\n"
             f"지원 가능: {eligible_count}개"
         )
