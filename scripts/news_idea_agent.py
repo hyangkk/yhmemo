@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import json
+import socket
 import feedparser
 import anthropic
 import urllib.request
@@ -100,27 +101,43 @@ def fetch_settings() -> dict:
 # ---------------------------------------------------------------------------
 
 def fetch_top_news(active_sources: list, count: int = 3) -> list:
-    """활성화된 RSS 피드에서 최신 24시간 이내 뉴스 1개씩 수집."""
-    import time as _time
+    """활성화된 RSS 피드에서 최신 뉴스 수집. 소스별로 순환하며 count개 수집."""
     news_items = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=3)
 
     feeds = [(name, url) for name, url in ALL_SOURCES.items() if name in active_sources]
+
+    # 일부 한국 뉴스 사이트는 봇 User-Agent 차단 → 브라우저처럼 위장
+    ua_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    }
 
     for source_name, feed_url in feeds:
         if len(news_items) >= count:
             break
         try:
             print(f"  [{source_name}] 수집 중...")
-            feed = feedparser.parse(feed_url)
 
+            # 타임아웃 15초 설정 (무한 대기 방지)
+            prev_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(15)
+            try:
+                feed = feedparser.parse(feed_url, request_headers=ua_headers)
+            finally:
+                socket.setdefaulttimeout(prev_timeout)
+
+            # 네트워크/파싱 오류로 항목이 없는 경우
             if not feed.entries:
-                print(f"  [{source_name}] 항목 없음, 건너뜀")
+                reason = str(getattr(feed, "bozo_exception", "항목 없음"))
+                print(f"  [{source_name}] 건너뜀 — {reason}", file=sys.stderr)
                 continue
 
             found = None
             for entry in feed.entries:
-                # published_parsed 또는 updated_parsed로 날짜 확인
                 parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
                 if parsed_time:
                     pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
@@ -133,8 +150,7 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                     break
 
             if not found:
-                # 24시간 이내 뉴스 없으면 최신 기사로 fallback
-                print(f"  [{source_name}] 24시간 이내 뉴스 없음 → 최신 기사 사용")
+                print(f"  [{source_name}] 최근 뉴스 없음 → 최신 기사 사용")
                 found = feed.entries[0]
 
             title = found.get("title", "").strip()
