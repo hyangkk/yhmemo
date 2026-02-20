@@ -628,11 +628,7 @@ def main():
     new_anns = [a for a in all_anns if a["announcement_id"] not in seen_ids]
     print(f"  새 공고: {len(new_anns)}개")
 
-    if not new_anns:
-        print("\n새로운 공고가 없습니다. 종료합니다.")
-        return
-
-    # 4. 새 공고 분석
+    # 4. 텔레그램 토큰 설정
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
