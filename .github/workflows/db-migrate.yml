@@ -1,0 +1,47 @@
+name: DB 마이그레이션
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: psycopg2 설치
+        run: pip install psycopg2-binary
+
+      - name: 마이그레이션 실행
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          python3 - <<'EOF'
+import psycopg2
+import os
+
+db_url = os.environ.get("SUPABASE_DB_URL", "")
+if not db_url:
+    print("오류: SUPABASE_DB_URL secret이 없습니다.")
+    exit(1)
+
+sql_statements = [
+    "ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;",
+]
+
+conn = psycopg2.connect(db_url)
+conn.autocommit = True
+cur = conn.cursor()
+
+for sql in sql_statements:
+    print(f"실행: {sql[:80]}...")
+    cur.execute(sql)
+    print("  완료")
+
+cur.close()
+conn.close()
+print("마이그레이션 완료!")
+EOF
