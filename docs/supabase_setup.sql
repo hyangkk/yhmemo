@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
 INSERT INTO user_profile (id) VALUES (1)
 ON CONFLICT (id) DO NOTHING;
 
+-- RLS 비활성화 (설정 페이지에서 service_role 키로 직접 읽기/쓰기)
+ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
+
 
 -- ============================================================
 -- agent_settings 테이블 업데이트
@@ -36,6 +39,9 @@ ALTER TABLE agent_settings
 
 ALTER TABLE agent_settings
   ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;
+
+ALTER TABLE agent_settings
+  ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
 
 
 -- 2. K-Startup 공고 처리 기록 테이블

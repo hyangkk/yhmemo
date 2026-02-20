@@ -361,6 +361,15 @@
 
         <div class="section-divider"></div>
 
+        <!-- 관심 키워드 -->
+        <div class="section-label">관심 키워드 (우선 알림)</div>
+        <div class="field">
+          <input type="text" id="kstartup-keywords" placeholder="AI, 소셜벤처, 청년창업, 기술창업 등 (쉼표로 구분)">
+          <p class="hint">입력한 키워드가 공고 제목/내용에 포함된 경우 우선적으로 분석·알림됩니다. 비워두면 전체 신규 공고 대상.</p>
+        </div>
+
+        <div class="section-divider"></div>
+
         <!-- 기업 프로필 -->
         <div class="section-label">내 기업 프로필 (자격요건 대조용)</div>
 
@@ -518,6 +527,7 @@
     buildSourceList(s.active_sources || SOURCES);
     const kEvery = parseInt(s.kstartup_run_every_hours || 24);
     document.getElementById('kstartup-run-every-hours').value = kEvery;
+    document.getElementById('kstartup-keywords').value = s.kstartup_keywords || '';
     const kBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
     document.getElementById('kstartup-schedule-badge').textContent = kBadgeMap[kEvery] || `${kEvery}시간마다`;
   }
@@ -582,6 +592,7 @@
     const togglePayload = {
       kstartup_enabled: document.getElementById('kstartup-enabled').checked,
       kstartup_run_every_hours: kEvery,
+      kstartup_keywords: document.getElementById('kstartup-keywords').value.trim(),
       updated_at: new Date().toISOString(),
     };
     // 프로필 저장
@@ -604,10 +615,10 @@
           method: 'PATCH',
           body: JSON.stringify(togglePayload),
         }),
-        sbFetch('user_profile?id=eq.1', {
-          method: 'PATCH',
-          headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify(profilePayload),
+        sbFetch('user_profile?on_conflict=id', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ id: 1, ...profilePayload }),
         }),
       ]);
       const kBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
