@@ -440,10 +440,7 @@ def _send_telegram_photos(token: str, chat_id: str, news_items: list) -> None:
         if not img:
             continue
         pub = f" {item['published_at']}" if item.get('published_at') else ""
-        link = item.get("link", "")
         caption = f"[{item['source']}]{pub} {item['title']}"
-        if link:
-            caption += f"\n🔗 {link}"
         payload = json.dumps({
             "chat_id": chat_id,
             "photo": img,
@@ -479,6 +476,12 @@ def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> boo
     _send_telegram_photos(token, chat_id, news_items)
 
     timestamp = generated_at.strftime("%Y년 %m월 %d일 %H시 (KST)")
+
+    # idea 후처리: 깨진 URL 및 이미지 없음 텍스트 제거
+    idea = re.sub(r'\(https?://[^\)]+\)', '', idea)  # [원문 링크](url) → [원문 링크]
+    idea = re.sub(r'🖼️[^\n]*이미지[^\n]*없음[^\n]*\n?', '', idea)
+    idea = re.sub(r'🖼️[^\n]*\n?', '', idea)
+    idea = re.sub(r'\n{3,}', '\n\n', idea).strip()
 
     # 뉴스 목록: 게시 시각 + 제목 + 실제 원문 링크
     news_lines = "\n".join(
