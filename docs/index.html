@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>뉴스 아이디어 에이전트 설정</title>
+  <title>에이전트 설정</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -159,6 +159,26 @@
 
     .hint { font-size: 12px; color: #aaa; margin-top: 5px; }
 
+    .section-header {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 28px 0 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e5e5ea;
+      color: #1d1d1f;
+    }
+    .section-header:first-child { margin-top: 0; }
+
+    .info-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 14px;
+    }
+    .info-label { color: #888; }
+    .info-value { font-weight: 500; }
+
     #loading {
       text-align: center;
       padding: 48px;
@@ -170,8 +190,8 @@
 </head>
 <body>
 <div class="container">
-  <h1>뉴스 아이디어 에이전트</h1>
-  <p class="subtitle">설정 페이지 — 변경사항은 Supabase에 저장됩니다</p>
+  <h1>에이전트 설정</h1>
+  <p class="subtitle">변경사항은 Supabase에 저장됩니다</p>
 
   <!-- 연결 설정 -->
   <div id="setup-card" class="card hidden">
@@ -197,6 +217,8 @@
 
   <!-- 설정 패널 -->
   <div id="settings-panel" class="hidden">
+
+    <div class="section-header">뉴스 아이디어 에이전트</div>
 
     <!-- 전체 ON/OFF -->
     <div class="card">
@@ -262,6 +284,28 @@
         <button class="btn btn-secondary" onclick="loadSettings()">새로고침</button>
         <button class="btn btn-danger" onclick="disconnect()">연결 해제</button>
       </div>
+    </div>
+
+    <!-- ── 생각일기 알림 에이전트 ── -->
+    <div class="section-header">생각일기 알림 에이전트</div>
+
+    <!-- 스케줄 정보 -->
+    <div class="card">
+      <div class="card-title">실행 일정</div>
+      <div class="info-row">
+        <span class="info-label">실행 시각</span>
+        <span class="info-value">매일 오전 7:00 (KST)</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">데이터 범위</span>
+        <span class="info-value">최근 48시간 생성 + 상단 고정 기간 유효 항목</span>
+      </div>
+      <p class="hint" style="margin-top:10px">설정은 GitHub Secrets(NOTION_API_KEY, NOTION_DATABASE_ID)로 관리됩니다</p>
+    </div>
+
+    <!-- 지금 실행 -->
+    <div class="card">
+      <button class="btn btn-run" onclick="runDiaryNow()" id="diary-run-btn">지금 실행하기</button>
     </div>
 
   </div>
@@ -412,6 +456,42 @@
             'Authorization': `Bearer ${ghToken}`,
           },
           body: JSON.stringify({ ref: 'main' }),
+        }
+      );
+      if (res.status === 204) {
+        toast('실행 요청 완료! 약 1분 후 텔레그램을 확인하세요.');
+      } else {
+        const msg = await res.text();
+        toast('실행 실패 (' + res.status + '): ' + msg, true);
+      }
+    } catch (e) {
+      toast('오류: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '지금 실행하기';
+    }
+  }
+
+  async function runDiaryNow() {
+    const { ghToken } = getSB();
+    if (!ghToken) {
+      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
+      return;
+    }
+    const btn = document.getElementById('diary-run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/notion-diary-agent.yml/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ghToken}`,
+          },
+          body: JSON.stringify({ ref: 'master' }),
         }
       );
       if (res.status === 204) {
