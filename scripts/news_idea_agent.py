@@ -72,8 +72,8 @@ DEFAULT_PROMPT_TEMPLATE = """당신은 창의적인 아이디어 기획자입니
 (이 아이디어가 가져올 변화와 가치)
 
 [주의사항]
-- 이미지 설명, 원문 링크, URL은 절대 포함하지 마세요.
 - 표(테이블) 형식을 사용하지 말고 글 형식으로 작성하세요.
+- 뉴스 원문 링크와 이미지는 시스템에서 자동으로 첨부됩니다. 직접 링크나 이미지 설명을 추가하지 마세요.
 - 위의 5개 섹션만 작성하세요."""
 
 KST = timezone(timedelta(hours=9))
@@ -125,6 +125,21 @@ def fetch_settings() -> dict:
 # ---------------------------------------------------------------------------
 # 1. 뉴스 수집
 # ---------------------------------------------------------------------------
+
+def _extract_image_url(entry) -> str:
+    """RSS 항목에서 실제 이미지 URL 추출 (media_thumbnail → media_content → enclosures 순)."""
+    for thumb in entry.get("media_thumbnail", []):
+        if thumb.get("url"):
+            return thumb["url"]
+    for media in entry.get("media_content", []):
+        url = media.get("url", "")
+        if url and "image" in media.get("type", "image"):
+            return url
+    for enc in entry.get("enclosures", []):
+        if "image" in enc.get("type", "") and (enc.get("href") or enc.get("url")):
+            return enc.get("href") or enc.get("url", "")
+    return ""
+
 
 def fetch_top_news(active_sources: list, count: int = 3) -> list:
     """활성화된 RSS 피드에서 최신 뉴스 수집. 소스별로 순환하며 count개 수집."""
@@ -197,6 +212,7 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
                     "summary": summary,
                     "link": link,
                     "published_at": pub_time_str,
+                    "image_url": _extract_image_url(entry),
                 })
                 collected += 1
 
@@ -285,6 +301,38 @@ def save_to_supabase(news_items: list, idea: str, generated_at: datetime) -> boo
 # 4. 텔레그램 발송
 # ---------------------------------------------------------------------------
 
+def _send_telegram_photos(token: str, chat_id: str, news_items: list) -> None:
+    """뉴스 이미지를 텔레그램 미디어 그룹으로 발송 (이미지 있는 항목만)."""
+    media = []
+    for i, item in enumerate(news_items):
+        img = item.get("image_url", "")
+        if not img:
+            continue
+        pub = f" {item['published_at']}" if item.get('published_at') else ""
+        caption = f"{i + 1}. [{item['source']}]{pub} {item['title']}"
+        media.append({"type": "photo", "media": img, "caption": caption})
+
+    if not media:
+        return
+
+    payload = json.dumps({"chat_id": chat_id, "media": media[:10]}).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMediaGroup",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print(f"  텔레그램 이미지 {len(media)}개 발송 완료")
+            else:
+                print(f"  텔레그램 이미지 발송 실패: {result}", file=sys.stderr)
+    except Exception as e:
+        print(f"  텔레그램 이미지 발송 오류: {e}", file=sys.stderr)
+
+
 def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> bool:
     """텔레그램 봇으로 결과 메시지 발송."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -294,12 +342,17 @@ def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> boo
         print("경고: TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID가 없습니다.", file=sys.stderr)
         return False
 
+    # 실제 이미지가 있으면 먼저 이미지 그룹으로 전송
+    _send_telegram_photos(token, chat_id, news_items)
+
     timestamp = generated_at.strftime("%Y년 %m월 %d일 %H시 (KST)")
 
+    # 뉴스 목록: 게시 시각 + 제목 + 실제 원문 링크
     news_lines = "\n".join(
         f"{i + 1}. [{item['source']}]"
         + (f" {item['published_at']}" if item.get('published_at') else "")
         + f" {item['title']}"
+        + (f"\n   <a href=\"{item['link']}\">원문 보기</a>" if item.get('link') else "")
         for i, item in enumerate(news_items)
     )
 
