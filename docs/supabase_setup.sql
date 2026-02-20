@@ -34,6 +34,9 @@ ON CONFLICT (id) DO NOTHING;
 ALTER TABLE agent_settings
   ADD COLUMN IF NOT EXISTS kstartup_enabled BOOLEAN DEFAULT TRUE;
 
+ALTER TABLE agent_settings
+  ADD COLUMN IF NOT EXISTS kstartup_run_every_hours INTEGER DEFAULT 24;
+
 
 -- 2. K-Startup 공고 처리 기록 테이블
 --    새 공고 감지 및 분석 결과 저장
