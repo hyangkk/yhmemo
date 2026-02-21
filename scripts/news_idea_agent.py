@@ -364,20 +364,85 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 2. 키워드 기반 뉴스 필터링
+# 2. 키워드 기반 뉴스 수집 / 제외 필터
 # ---------------------------------------------------------------------------
 
-def filter_news_by_keywords(news_candidates: list, interest_keywords: str, exclude_keywords: str) -> list:
-    """관심/제외 키워드로 뉴스 후보 필터링 및 정렬.
+def fetch_news_by_interest_keywords(interest_keywords: str, count: int = 12) -> list:
+    """관심 키워드별로 Google News 검색 RSS를 직접 호출하여 뉴스 수집.
 
-    - 제외 키워드: 해당 키워드가 제목/요약에 포함된 뉴스 제거
-    - 관심 키워드: 매칭 수 기준으로 앞으로 정렬 (매칭 많은 것 우선)
-    키워드가 모두 비어있으면 원본 리스트 그대로 반환.
+    키워드가 여러 개면 각각 검색 후 합쳐서 최신순 정렬, 중복 제거.
     """
-    interest_kws = [k.strip().lower() for k in interest_keywords.split(",") if k.strip()] if interest_keywords else []
-    exclude_kws = [k.strip().lower() for k in exclude_keywords.split(",") if k.strip()] if exclude_keywords else []
+    keywords = [k.strip() for k in interest_keywords.split(",") if k.strip()]
+    if not keywords:
+        return []
 
-    if not interest_kws and not exclude_kws:
+    ua_headers = {"User-Agent": _BROWSER_UA}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+    per_kw = max(4, (count + len(keywords) - 1) // len(keywords))  # 키워드당 수집 목표
+
+    all_items: list = []
+    seen_titles: set = set()
+
+    for keyword in keywords:
+        encoded = urllib.parse.quote(keyword)
+        search_url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+        print(f"  [검색] '{keyword}' ...")
+        try:
+            prev_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(15)
+            try:
+                feed = feedparser.parse(search_url, request_headers=ua_headers)
+            finally:
+                socket.setdefaulttimeout(prev_timeout)
+
+            collected = 0
+            for entry in feed.entries:
+                if collected >= per_kw:
+                    break
+                title = entry.get("title", "").strip()
+                if not title or title in seen_titles:
+                    continue
+                parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
+                pub_dt = None
+                pub_time_str = ""
+                if parsed_time:
+                    pub_dt = datetime(*parsed_time[:6], tzinfo=timezone.utc)
+                    if pub_dt < cutoff:
+                        continue
+                    pub_time_str = pub_dt.astimezone(KST).strftime("%m/%d %H:%M")
+                summary = entry.get("summary", entry.get("description", title)).strip()
+                link = entry.get("link", "")
+                if "news.google.com" in link:
+                    link = _resolve_google_news_url(link)
+                summary = re.sub(r"<[^>]+>", "", summary).strip()
+                if len(summary) > 500:
+                    summary = summary[:497] + "..."
+                seen_titles.add(title)
+                all_items.append({
+                    "source": f"구글뉴스({keyword})",
+                    "title": title,
+                    "summary": summary,
+                    "link": link,
+                    "published_at": pub_time_str,
+                    "image_url": _extract_image_url(entry),
+                    "_pub_dt": pub_dt or datetime.min.replace(tzinfo=timezone.utc),
+                })
+                collected += 1
+            print(f"    → {collected}개 수집")
+        except Exception as e:
+            print(f"    검색 실패: {e}", file=sys.stderr)
+
+    # 최신순 정렬 후 임시 필드 제거
+    all_items.sort(key=lambda x: x["_pub_dt"], reverse=True)
+    for item in all_items:
+        item.pop("_pub_dt", None)
+    return all_items[:count]
+
+
+def apply_exclude_filter(news_candidates: list, exclude_keywords: str) -> list:
+    """제외 키워드가 제목/요약에 포함된 뉴스를 제거."""
+    exclude_kws = [k.strip().lower() for k in exclude_keywords.split(",") if k.strip()] if exclude_keywords else []
+    if not exclude_kws:
         return news_candidates
 
     result = []
@@ -386,20 +451,10 @@ def filter_news_by_keywords(news_candidates: list, interest_keywords: str, exclu
         text = (item["title"] + " " + item["summary"]).lower()
         if any(kw in text for kw in exclude_kws):
             excluded_count += 1
-            continue
-        result.append(item)
-
+        else:
+            result.append(item)
     if excluded_count:
         print(f"  제외 키워드로 {excluded_count}개 뉴스 제거")
-
-    if interest_kws:
-        def score(item):
-            text = (item["title"] + " " + item["summary"]).lower()
-            return sum(1 for kw in interest_kws if kw in text)
-        result.sort(key=score, reverse=True)
-        matched = sum(1 for item in result if score(item) > 0)
-        print(f"  관심 키워드 매칭: {matched}개")
-
     return result
 
 
@@ -668,19 +723,27 @@ def main():
         print(f"제외 키워드: {exclude_keywords}")
     print()
 
-    # 커스텀 프롬프트 또는 키워드 필터가 있으면 후보를 12개 수집 (여유분 확보), 없으면 3개 바로 수집
-    candidate_count = 12 if (has_custom_prompt or has_keywords) else 3
-    print(f"[1/6] 뉴스 후보 {candidate_count}개 수집 중...")
-    news_candidates = fetch_top_news(active_sources, candidate_count)
+    # [1/6] 뉴스 수집: 관심 키워드가 있으면 Google News 검색으로 직접 수집, 없으면 일반 RSS
+    candidate_count = 12 if (has_custom_prompt or exclude_keywords) else 3
+    if interest_keywords:
+        print(f"[1/6] 관심 키워드 검색으로 뉴스 수집 중...")
+        news_candidates = fetch_news_by_interest_keywords(interest_keywords, count=12)
+        if not news_candidates:
+            print("  검색 결과 없음 — 일반 RSS로 대체 수집합니다.", file=sys.stderr)
+            news_candidates = fetch_top_news(active_sources, candidate_count)
+    else:
+        print(f"[1/6] 뉴스 후보 {candidate_count}개 수집 중...")
+        news_candidates = fetch_top_news(active_sources, candidate_count)
+
     if not news_candidates:
         print("오류: 뉴스를 수집하지 못했습니다.", file=sys.stderr)
         sys.exit(1)
     print(f"수집 완료: {len(news_candidates)}개\n")
 
-    print("[2/6] 키워드 기반 필터링 중...")
-    news_candidates = filter_news_by_keywords(news_candidates, interest_keywords, exclude_keywords)
+    print("[2/6] 제외 키워드 필터링 중...")
+    news_candidates = apply_exclude_filter(news_candidates, exclude_keywords)
     if not news_candidates:
-        print("경고: 키워드 필터링 후 뉴스가 없습니다. 필터 없이 재수집합니다.", file=sys.stderr)
+        print("경고: 제외 필터링 후 뉴스가 없습니다. 필터 없이 재수집합니다.", file=sys.stderr)
         news_candidates = fetch_top_news(active_sources, 3)
     print(f"필터링 완료: {len(news_candidates)}개\n")
 
