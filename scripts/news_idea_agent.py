@@ -102,6 +102,8 @@ def fetch_settings() -> dict:
         "run_every_hours": 1,
         "active_sources": list(ALL_SOURCES.keys()),
         "prompt_template": "",
+        "news_interest_keywords": "",
+        "news_exclude_keywords": "",
     }
 
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -362,7 +364,47 @@ def fetch_top_news(active_sources: list, count: int = 3) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 2. 프롬프트 기반 뉴스 선별
+# 2. 키워드 기반 뉴스 필터링
+# ---------------------------------------------------------------------------
+
+def filter_news_by_keywords(news_candidates: list, interest_keywords: str, exclude_keywords: str) -> list:
+    """관심/제외 키워드로 뉴스 후보 필터링 및 정렬.
+
+    - 제외 키워드: 해당 키워드가 제목/요약에 포함된 뉴스 제거
+    - 관심 키워드: 매칭 수 기준으로 앞으로 정렬 (매칭 많은 것 우선)
+    키워드가 모두 비어있으면 원본 리스트 그대로 반환.
+    """
+    interest_kws = [k.strip().lower() for k in interest_keywords.split(",") if k.strip()] if interest_keywords else []
+    exclude_kws = [k.strip().lower() for k in exclude_keywords.split(",") if k.strip()] if exclude_keywords else []
+
+    if not interest_kws and not exclude_kws:
+        return news_candidates
+
+    result = []
+    excluded_count = 0
+    for item in news_candidates:
+        text = (item["title"] + " " + item["summary"]).lower()
+        if any(kw in text for kw in exclude_kws):
+            excluded_count += 1
+            continue
+        result.append(item)
+
+    if excluded_count:
+        print(f"  제외 키워드로 {excluded_count}개 뉴스 제거")
+
+    if interest_kws:
+        def score(item):
+            text = (item["title"] + " " + item["summary"]).lower()
+            return sum(1 for kw in interest_kws if kw in text)
+        result.sort(key=score, reverse=True)
+        matched = sum(1 for item in result if score(item) > 0)
+        print(f"  관심 키워드 매칭: {matched}개")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 3. 프롬프트 기반 뉴스 선별 (키워드 필터링 이후 적용)
 # ---------------------------------------------------------------------------
 
 def filter_news_by_prompt(news_candidates: list, prompt_template: str, count: int = 3) -> list:
@@ -421,7 +463,7 @@ selected는 1부터 시작하는 번호 배열이며 정확히 {count}개여야 
 
 
 # ---------------------------------------------------------------------------
-# 3. AI 아이디어 생성
+# 4. AI 아이디어 생성
 # ---------------------------------------------------------------------------
 
 def generate_idea(news_items: list, prompt_template: str = "") -> str:
@@ -452,7 +494,7 @@ def generate_idea(news_items: list, prompt_template: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# 4. Supabase 저장
+# 5. Supabase 저장
 # ---------------------------------------------------------------------------
 
 def save_to_supabase(news_items: list, idea: str, generated_at: datetime) -> bool:
@@ -488,7 +530,7 @@ def save_to_supabase(news_items: list, idea: str, generated_at: datetime) -> boo
 
 
 # ---------------------------------------------------------------------------
-# 5. 텔레그램 발송
+# 6. 텔레그램 발송
 # ---------------------------------------------------------------------------
 
 def _send_telegram_photos(token: str, chat_id: str, news_items: list) -> None:
@@ -614,34 +656,49 @@ def main():
 
     active_sources = settings["active_sources"]
     prompt_template = settings.get("prompt_template", "")
+    interest_keywords = settings.get("news_interest_keywords", "")
+    exclude_keywords = settings.get("news_exclude_keywords", "")
     has_custom_prompt = bool(prompt_template and prompt_template.strip())
+    has_keywords = bool(interest_keywords or exclude_keywords)
     print(f"활성 소스: {active_sources} | 실행 주기: {run_every}시간")
-    print(f"커스텀 프롬프트: {'있음' if has_custom_prompt else '없음 (기본값 사용)'}\n")
+    print(f"커스텀 프롬프트: {'있음' if has_custom_prompt else '없음 (기본값 사용)'}")
+    if interest_keywords:
+        print(f"관심 키워드: {interest_keywords}")
+    if exclude_keywords:
+        print(f"제외 키워드: {exclude_keywords}")
+    print()
 
-    # 커스텀 프롬프트가 있으면 후보를 12개 수집 후 선별 (금지 규칙 적용 후 여유분 확보), 없으면 3개 바로 수집
-    candidate_count = 12 if has_custom_prompt else 3
-    print(f"[1/5] 뉴스 후보 {candidate_count}개 수집 중...")
+    # 커스텀 프롬프트 또는 키워드 필터가 있으면 후보를 12개 수집 (여유분 확보), 없으면 3개 바로 수집
+    candidate_count = 12 if (has_custom_prompt or has_keywords) else 3
+    print(f"[1/6] 뉴스 후보 {candidate_count}개 수집 중...")
     news_candidates = fetch_top_news(active_sources, candidate_count)
     if not news_candidates:
         print("오류: 뉴스를 수집하지 못했습니다.", file=sys.stderr)
         sys.exit(1)
     print(f"수집 완료: {len(news_candidates)}개\n")
 
-    print("[2/5] 프롬프트 기반 뉴스 선별 중...")
+    print("[2/6] 키워드 기반 필터링 중...")
+    news_candidates = filter_news_by_keywords(news_candidates, interest_keywords, exclude_keywords)
+    if not news_candidates:
+        print("경고: 키워드 필터링 후 뉴스가 없습니다. 필터 없이 재수집합니다.", file=sys.stderr)
+        news_candidates = fetch_top_news(active_sources, 3)
+    print(f"필터링 완료: {len(news_candidates)}개\n")
+
+    print("[3/6] 프롬프트 기반 뉴스 선별 중...")
     news_items = filter_news_by_prompt(news_candidates, prompt_template, count=3)
     print(f"선별 완료: {len(news_items)}개\n")
 
-    print("[3/5] 뉴스 이미지 처리 중 (다운로드 → Supabase Storage)...")
+    print("[4/6] 뉴스 이미지 처리 중 (다운로드 → Supabase Storage)...")
     process_news_images(news_items)
     print()
 
-    print("[4/5] Claude AI로 아이디어 생성 중...")
+    print("[5/6] Claude AI로 아이디어 생성 중...")
     idea = generate_idea(news_items, prompt_template)
     print("생성 완료\n")
 
     generated_at = datetime.now(KST)
 
-    print("[5/5] 결과 저장 & 발송 중...")
+    print("[6/6] 결과 저장 & 발송 중...")
     supabase_ok = save_to_supabase(news_items, idea, generated_at)
     telegram_ok = send_to_telegram(news_items, idea, generated_at)
 
