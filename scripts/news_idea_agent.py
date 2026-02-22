@@ -640,6 +640,13 @@ def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> boo
     idea = re.sub(r'^#{1,6}\s+', '', idea, flags=re.MULTILINE)   # ## 제목 → 제목
     idea = re.sub(r'\*\*(.+?)\*\*', r'\1', idea)                 # **굵게** → 굵게
     idea = re.sub(r'\*(.+?)\*', r'\1', idea)                     # *기울임* → 기울임
+    # 예상치 못한 섹션 헤더 제거 (5개 라벨 외의 짧은 `:` 줄)
+    idea = re.sub(
+        r'^(?!(아이디어 이름|핵심 통찰|아이디어 설명|실현 방안|기대 효과):).{1,40}:\s*$',
+        '',
+        idea,
+        flags=re.MULTILINE,
+    )
     idea = re.sub(
         r'^(아이디어 이름|핵심 통찰|아이디어 설명|실현 방안|기대 효과):',
         r'<b>\1</b>',
