@@ -676,7 +676,7 @@ def send_to_telegram(news_items: list, idea: str, generated_at: datetime) -> boo
 
     message = (
         f"<b>뉴스 아이디어 리포트</b>  {timestamp}\n\n"
-        f"<b>수집된 뉴스</b>\n\n"
+        f"<b>오늘의 뉴스 브리핑</b>\n\n"
         f"{news_block}\n\n"
         f"——\n\n"
         f"{idea[:2000]}"
