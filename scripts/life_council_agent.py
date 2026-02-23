@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import json
+import uuid
 import socket
 import feedparser
 import anthropic
@@ -265,6 +266,7 @@ def generate_agenda(news_items: list) -> dict:
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
+        metadata={"user_id": str(uuid.uuid4())},
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -323,6 +325,7 @@ def run_board_discussion(agenda: dict) -> list:
                 model="claude-haiku-4-5-20251001",
                 max_tokens=500,
                 system=member["system_prompt"],
+                metadata={"user_id": str(uuid.uuid4())},
                 messages=[{"role": "user", "content": prompt}],
             )
             text = message.content[0].text.strip()
@@ -387,6 +390,7 @@ def derive_options_and_vote(agenda: dict, discussion: list) -> dict:
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=500,
+            metadata={"user_id": str(uuid.uuid4())},
             messages=[{"role": "user", "content": options_prompt}],
         )
         text = message.content[0].text.strip()
@@ -434,6 +438,7 @@ def derive_options_and_vote(agenda: dict, discussion: list) -> dict:
                 model="claude-haiku-4-5-20251001",
                 max_tokens=200,
                 system=member["system_prompt"],
+                metadata={"user_id": str(uuid.uuid4())},
                 messages=[{"role": "user", "content": vote_prompt}],
             )
             text = message.content[0].text.strip()
