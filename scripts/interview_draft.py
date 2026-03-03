@@ -62,8 +62,8 @@ def main():
         )
         print("  Supabase에 대본 저장 완료")
 
-        # 2) 노션에 저장
-        page_id = sync_to_notion(settings, target, all_qa, content)
+        # 2) 노션에 새 페이지로 저장
+        page_id = sync_to_notion(settings, target, all_qa, content, force_new_page=True)
 
         # 3) 텔레그램에 노션 링크만 발송
         if page_id:
