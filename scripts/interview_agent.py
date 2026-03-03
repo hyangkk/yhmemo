@@ -323,8 +323,13 @@ def _notion_request(method, url, data=None):
     if data is not None:
         kwargs["data"] = json.dumps(data).encode()
     req = urllib.request.Request(url, **kwargs)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        print(f"  Notion API 오류 ({e.code}): {body[:500]}", file=sys.stderr)
+        raise
 
 
 def _text_block(text, block_type="paragraph"):
