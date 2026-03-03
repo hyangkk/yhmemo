@@ -116,10 +116,10 @@ def load_settings() -> dict:
     if not rows:
         return default
     s = rows[0]
-    # 생각일기 DB: 환경변수(GitHub Secret) 우선, Supabase 설정은 fallback
+    # 생각일기 DB: Supabase 설정 우선, 환경변수는 fallback
     diary_db = (
-        os.environ.get("NOTION_DATABASE_ID")
-        or s.get("diary_notion_database_id")
+        s.get("diary_notion_database_id")
+        or os.environ.get("NOTION_DATABASE_ID")
         or ""
     )
     return {
