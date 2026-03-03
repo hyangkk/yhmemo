@@ -52,19 +52,21 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          # 텔레그램 명령어는 소문자 영문+숫자+언더스코어만 허용 (한글 불가)
+          # 한글 명령어(/생각일기 등)는 웹훅에서 직접 처리하므로 계속 동작함
           RESPONSE=$(curl -s -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" \
             -H "Content-Type: application/json" \
             -d '{
               "commands": [
-                {"command": "생각일기",  "description": "이사회 분석 (예: /생각일기 3시간)"},
-                {"command": "이사회",    "description": "이사회 분석 (예: /이사회 6시간)"},
-                {"command": "명령어",    "description": "전체 명령어 도움말"},
-                {"command": "주제",      "description": "인터뷰 주제 목록"},
-                {"command": "인터뷰",    "description": "인터뷰 에이전트 상태"},
-                {"command": "주기",      "description": "질문 주기 확인/변경"},
-                {"command": "대본",      "description": "유튜브 대본 생성"},
-                {"command": "건너뛰기",  "description": "현재 질문 건너뛰기"}
+                {"command": "board",     "description": "생각일기 이사회 분석 (예: /board 3)"},
+                {"command": "help",      "description": "전체 명령어 도움말 (/명령어)"},
+                {"command": "topics",    "description": "인터뷰 주제 목록 (/주제)"},
+                {"command": "interview", "description": "인터뷰 에이전트 상태 (/인터뷰)"},
+                {"command": "interval",  "description": "질문 주기 확인/변경 (/주기)"},
+                {"command": "ask",       "description": "지금 바로 질문 받기 (/질문줘)"},
+                {"command": "draft",     "description": "유튜브 대본 생성 (/대본)"},
+                {"command": "skip",      "description": "현재 질문 건너뛰기 (/건너뛰기)"}
               ]
             }')
           echo "$RESPONSE"
