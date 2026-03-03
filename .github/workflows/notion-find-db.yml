@@ -1,0 +1,14 @@
+name: Notion DB 검색 (1회용)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Notion 데이터베이스 검색
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_API_KEY }}
+        run: python scripts/notion_find_db.py
