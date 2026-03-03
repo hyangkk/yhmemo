@@ -22,6 +22,7 @@ from interview_agent import (
     tg_send,
     sb_get,
     sb_patch,
+    _notion_page_url,
 )
 
 
@@ -80,9 +81,16 @@ def main():
 
     # 3) 노션 페이지 업데이트 (수정된 메시지 + 수정된 대본으로)
     updated_qa = get_topic_messages(target["id"], limit=200)
-    sync_to_notion(settings, target, updated_qa, draft)
+    page_id = sync_to_notion(settings, target, updated_qa, draft)
 
-    tg_send(f"'{find_text}' → '{replace_text}' 수정 완료! 노션도 업데이트되었습니다.")
+    if page_id:
+        url = _notion_page_url(page_id)
+        tg_send(
+            f"'{find_text}' → '{replace_text}' 수정 완료!\n\n"
+            f'<a href="{url}">노션에서 확인</a>'
+        )
+    else:
+        tg_send(f"'{find_text}' → '{replace_text}' 수정 완료!")
     print("\n=== 수정 완료 ===")
 
 
