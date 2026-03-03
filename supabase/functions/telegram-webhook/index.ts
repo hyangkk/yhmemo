@@ -271,14 +271,30 @@ async function handleCommand(
   if (["/대본", "/draft"].includes(cmd)) {
     const draftParts = text.trim().split(/\s+(.+)/);
     const topicKeyword = draftParts.length > 1 ? draftParts[1].trim() : "";
-    const msg = topicKeyword
-      ? `'${topicKeyword}' 대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...`
-      : "대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...";
-    await tgSend(msg);
-    const inputs = topicKeyword ? { topic_name: topicKeyword } : undefined;
-    const triggered = await triggerWorkflow("interview-draft.yml", inputs);
-    if (!triggered) {
-      await tgSend("대본 생성 워크플로우 트리거에 실패했습니다.");
+
+    if (topicKeyword) {
+      // 키워드 있으면 바로 실행
+      await tgSend(`'${topicKeyword}' 대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...`);
+      const triggered = await triggerWorkflow("interview-draft.yml", { topic_name: topicKeyword });
+      if (!triggered) await tgSend("대본 생성 워크플로우 트리거에 실패했습니다.");
+    } else {
+      // 키워드 없으면 주제 목록 보여주고 선택 대기
+      const topics = await getActiveTopics();
+      if (topics.length === 0) {
+        await tgSend("활성화된 주제가 없습니다.");
+      } else {
+        const lines = ["<b>어떤 주제의 대본을 생성할까요?</b>\n"];
+        for (const t of topics) {
+          lines.push(`  • ${t.name}`);
+        }
+        lines.push("\n주제 키워드를 입력하거나, <b>전체</b>를 입력하면 모든 주제의 대본을 생성합니다.");
+        await tgSend(lines.join("\n"));
+        // 선택 대기 상태 저장
+        await sb
+          .from("agent_settings")
+          .update({ draft_pending_at: new Date().toISOString() })
+          .eq("id", 1);
+      }
     }
     return true;
   }
@@ -394,6 +410,38 @@ Deno.serve(async (req: Request) => {
     if (text.startsWith("/")) {
       await handleCommand(text, settings);
       return new Response("OK", { status: 200 });
+    }
+
+    // 대본 주제 선택 대기 중인지 확인
+    const draftPendingAt = settings.draft_pending_at as string | null;
+    if (draftPendingAt) {
+      const pendingTime = new Date(draftPendingAt).getTime();
+      const now = Date.now();
+      // 5분 이내의 요청만 유효
+      if (now - pendingTime < 5 * 60 * 1000) {
+        // 대기 상태 해제
+        await sb
+          .from("agent_settings")
+          .update({ draft_pending_at: null })
+          .eq("id", 1);
+
+        const choice = text.trim();
+        if (choice === "전체") {
+          await tgSend("전체 주제의 대본을 생성합니다. 잠시 후 결과가 전송됩니다...");
+          const triggered = await triggerWorkflow("interview-draft.yml", { topic_name: "__all__" });
+          if (!triggered) await tgSend("대본 생성 워크플로우 트리거에 실패했습니다.");
+        } else {
+          await tgSend(`'${choice}' 대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...`);
+          const triggered = await triggerWorkflow("interview-draft.yml", { topic_name: choice });
+          if (!triggered) await tgSend("대본 생성 워크플로우 트리거에 실패했습니다.");
+        }
+        return new Response("OK", { status: 200 });
+      }
+      // 5분 지났으면 대기 상태 해제하고 일반 답변으로 처리
+      await sb
+        .from("agent_settings")
+        .update({ draft_pending_at: null })
+        .eq("id", 1);
     }
 
     // 일반 텍스트 → 답변 저장
