@@ -535,6 +535,7 @@ def handle_command(text, settings):
             "  /주기 — 질문 주기 확인/변경\n"
             "  /대본 — 유튜브 대본 생성\n"
             "  /대본 주제명 — 특정 주제 대본 생성\n"
+            "  /질문줘 — 지금 바로 질문 받기\n"
             "  /건너뛰기 — 현재 질문 건너뛰기\n"
             "\n"
             "<b>뉴스 에이전트</b>\n"
@@ -633,6 +634,47 @@ def handle_command(text, settings):
                 tg_send(f"<b>[{target['name']}]</b> 대본이 생성되었습니다. (노션 동기화 실패)")
         except Exception as e:
             tg_send(f"대본 생성 실패: {e}")
+        return True
+
+    if cmd in ("/질문줘", "/질문", "/ask"):
+        topics = get_active_topics()
+        if not topics:
+            tg_send("활성화된 주제가 없습니다.")
+            return True
+
+        pending = get_pending_question()
+        if pending:
+            tg_send("아직 답변하지 않은 질문이 있습니다!\n답변을 보내거나 /건너뛰기 후 다시 시도해주세요.")
+            return True
+
+        topic = pick_next_topic(topics)
+        prev_qa = get_topic_messages(topic["id"])
+
+        tg_send(f"'{topic['name']}' 주제로 질문 생성 중...")
+        try:
+            question = generate_question(topic, prev_qa)
+            q_num = (topic.get("total_questions", 0) or 0) + 1
+            label = (
+                f"<b>[{topic['name']}]</b> (Q{q_num})\n\n"
+                f"{question}\n\n"
+                f"<i>답변을 입력해주세요. /건너뛰기 로 건너뛸 수 있습니다.</i>"
+            )
+            msg_id = tg_send(label)
+            if msg_id:
+                sb_post("interview_messages", {
+                    "topic_id": topic["id"],
+                    "role": "agent",
+                    "content": question,
+                    "telegram_message_id": msg_id,
+                })
+                sb_patch("agent_settings?id=eq.1", {
+                    "interview_last_question_at": datetime.now(timezone.utc).isoformat(),
+                })
+                sb_patch(f"interview_topics?id=eq.{topic['id']}", {
+                    "total_questions": q_num,
+                })
+        except Exception as e:
+            tg_send(f"질문 생성 실패: {e}")
         return True
 
     if cmd in ("/건너뛰기", "/skip"):
