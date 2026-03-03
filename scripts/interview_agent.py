@@ -519,6 +519,7 @@ def handle_command(text, settings):
             "<b>인터뷰 에이전트</b>\n"
             "  /주제 — 인터뷰 주제 목록\n"
             "  /인터뷰 — 에이전트 상태 확인\n"
+            "  /주기 — 질문 주기 확인/변경\n"
             "  /대본 — 유튜브 대본 생성\n"
             "  /대본 주제명 — 특정 주제 대본 생성\n"
             "  /건너뛰기 — 현재 질문 건너뛰기\n"
@@ -609,6 +610,48 @@ def handle_command(text, settings):
             tg_send(f"대본 생성 실패: {e}")
         return True
 
+    if cmd in ("/주기", "/interval"):
+        parts = text.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            current = _get_interval_minutes(settings)
+            tg_send(
+                f"<b>현재 질문 주기:</b> {_format_interval(current)}\n\n"
+                f"변경하려면:\n"
+                f"  /주기 30분\n"
+                f"  /주기 1시간 30분\n"
+                f"  /주기 2시간\n"
+                f"  /주기 45분"
+            )
+            return True
+
+        raw = parts[1].strip()
+        total_minutes = 0
+        # "1시간 30분", "2시간", "45분", "90분" 등 파싱
+        import re as _re
+        h_match = _re.search(r"(\d+)\s*시간", raw)
+        m_match = _re.search(r"(\d+)\s*분", raw)
+        if h_match:
+            total_minutes += int(h_match.group(1)) * 60
+        if m_match:
+            total_minutes += int(m_match.group(1))
+        # 숫자만 입력한 경우 분으로 해석
+        if not h_match and not m_match:
+            try:
+                total_minutes = int(raw)
+            except ValueError:
+                tg_send("주기를 인식할 수 없습니다.\n예: /주기 45분, /주기 2시간, /주기 1시간 30분")
+                return True
+
+        if total_minutes < 15:
+            tg_send("최소 주기는 15분입니다. (GitHub Actions 실행 간격)")
+            return True
+
+        sb_patch("agent_settings?id=eq.1", {
+            "interview_interval_minutes": total_minutes,
+        })
+        tg_send(f"질문 주기가 <b>{_format_interval(total_minutes)}</b>으로 변경되었습니다!")
+        return True
+
     if cmd in ("/건너뛰기", "/skip"):
         pending = get_pending_question()
         if pending:
@@ -623,7 +666,53 @@ def handle_command(text, settings):
             tg_send("건너뛸 질문이 없습니다.")
         return True
 
+    if cmd in ("/주기", "/interval"):
+        parts = text.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            current = _get_interval_minutes(settings)
+            tg_send(
+                f"<b>현재 질문 주기:</b> {_format_interval(current)}\n\n"
+                "<b>변경 예시:</b>\n"
+                "  /주기 45분\n"
+                "  /주기 1시간 30분\n"
+                "  /주기 2시간\n"
+                "  /주기 90  (숫자만 쓰면 분 단위)"
+            )
+            return True
+
+        raw = parts[1].strip()
+        minutes = _parse_interval(raw)
+        if minutes is None or minutes < 15:
+            tg_send("주기를 인식할 수 없거나 15분 미만입니다.\n예: /주기 45분, /주기 2시간, /주기 1시간 30분")
+            return True
+
+        sb_patch("agent_settings?id=eq.1", {"interview_interval_minutes": minutes})
+        tg_send(f"질문 주기가 <b>{_format_interval(minutes)}</b>(으)로 변경되었습니다.")
+        return True
+
     return False
+
+
+def _parse_interval(text):
+    """자연어 주기 텍스트를 분(int)으로 변환. 실패 시 None."""
+    text = text.strip()
+
+    # 순수 숫자 → 분으로 해석
+    if text.isdigit():
+        return int(text)
+
+    total = 0
+    # "1시간 30분", "2시간", "45분", "1.5시간" 등 파싱
+    h_match = re.search(r"(\d+(?:\.\d+)?)\s*시간", text)
+    m_match = re.search(r"(\d+)\s*분", text)
+
+    if h_match:
+        hours = float(h_match.group(1))
+        total += int(hours * 60)
+    if m_match:
+        total += int(m_match.group(1))
+
+    return total if total > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +726,24 @@ def pick_next_topic(topics):
     return min(topics, key=lambda t: t.get("total_questions", 0) or 0)
 
 
+def _get_interval_minutes(settings):
+    """설정에서 질문 주기(분)를 가져온다. interview_interval_minutes 우선, 없으면 hours 변환."""
+    mins = settings.get("interview_interval_minutes")
+    if mins is not None and int(mins) > 0:
+        return int(mins)
+    return int(settings.get("interview_interval_hours", 3)) * 60
+
+
+def _format_interval(minutes):
+    """분 → 사람이 읽기 좋은 형식."""
+    if minutes < 60:
+        return f"{minutes}분"
+    hours = minutes / 60
+    if hours == int(hours):
+        return f"{int(hours)}시간"
+    return f"{int(hours)}시간 {minutes % 60}분"
+
+
 def should_ask_now(settings):
     """설정된 주기에 따라 지금 질문을 보낼 시간인지 확인."""
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
@@ -647,11 +754,11 @@ def should_ask_now(settings):
     if not last_asked:
         return True
 
-    interval = int(settings.get("interview_interval_hours", 3))
+    interval_min = _get_interval_minutes(settings)
     try:
         last_dt = datetime.fromisoformat(last_asked.replace("Z", "+00:00"))
         elapsed = datetime.now(timezone.utc) - last_dt
-        return elapsed >= timedelta(hours=interval)
+        return elapsed >= timedelta(minutes=interval_min)
     except Exception:
         return True
 
