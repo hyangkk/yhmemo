@@ -187,16 +187,106 @@
     .btn-run-interview:hover { opacity: .88; }
     .btn-run-board  { background: #ff9500; color: #fff; }
     .btn-run-board:hover  { opacity: .88; }
-    .member-row {
+
+    /* 이사회 멤버 */
+    .member-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+    .member-card {
+      background: #f5f5f7;
+      border-radius: 12px;
+      padding: 14px 16px;
+      border: 1px solid #e8e8ed;
+    }
+    .member-card-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      background: #f5f5f7;
-      border-radius: 8px;
+      gap: 8px;
+      margin-bottom: 10px;
     }
-    .member-name { font-size: 14px; font-weight: 500; }
-    .member-role { font-size: 12px; color: #aaa; }
+    .member-card-header input[type="text"] {
+      flex: 1;
+      border: 1px solid #d1d1d6;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 14px;
+      font-weight: 600;
+      background: #fff;
+    }
+    .member-card-header .member-role-input {
+      width: 130px;
+      font-size: 13px;
+      font-weight: 400;
+    }
+    .member-card textarea {
+      width: 100%;
+      border: 1px solid #d1d1d6;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      background: #fff;
+      resize: vertical;
+      min-height: 60px;
+      box-sizing: border-box;
+    }
+    .member-card textarea.personality-field {
+      background: #fffbf0;
+      color: #555;
+      font-size: 12px;
+      min-height: 50px;
+    }
+    .member-card-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 4px;
+      margin-top: 8px;
+    }
+    .member-card-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .btn-member-save {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid #ff9500;
+      background: #fff8ee;
+      color: #ff9500;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-member-save:hover { background: #fff0d0; }
+    .btn-member-del {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #ff3b30;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-member-del:hover { background: #fff0f0; }
+    .add-member-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .add-member-row input { flex: 1; margin-bottom: 0; }
+    .btn-add-member {
+      padding: 10px 16px;
+      border-radius: 10px;
+      border: 1px solid #ff9500;
+      background: #fff8ee;
+      color: #ff9500;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-add-member:hover { background: #fff0d0; }
     .btn-secondary { background: transparent; color: #0071e3; border: 1px solid #0071e3; }
     .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; }
     .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
@@ -639,12 +729,14 @@
         <div class="section-divider"></div>
 
         <!-- 이사회 멤버 -->
-        <div class="section-label">이사회 멤버 (5인 고정)</div>
-        <div class="info-row"><span>💰 냉정한 이익주의자</span><span class="info-val">ROI · 데이터</span></div>
-        <div class="info-row"><span>🌈 낭만 긍정주의자</span><span class="info-val">가능성 · 도전</span></div>
-        <div class="info-row"><span>🛡️ 보수적 조심주의자</span><span class="info-val">리스크 · 안전</span></div>
-        <div class="info-row"><span>🧘 내면 평온주의자</span><span class="info-val">감정 · 균형추</span></div>
-        <div class="info-row" style="margin-bottom:4px"><span>🚀 도전과 발전주의자</span><span class="info-val">성장 · 돌파</span></div>
+        <div class="section-label">이사회 멤버</div>
+        <div class="member-list" id="board-member-list"></div>
+        <div class="add-member-row">
+          <input type="text" id="new-member-name" placeholder="이름 (예: 💡 창의적 혁신주의자)">
+          <input type="text" id="new-member-role" placeholder="역할 (예: 혁신 · 창의)">
+          <button class="btn-add-member" onclick="addBoardMember()">+ 추가</button>
+        </div>
+        <p class="hint" style="margin-top:8px">각 이사의 특성 설명을 입력하면 AI가 해당 관점으로 의견을 생성합니다. 이사회 진행 후 AI가 personality를 자동 업데이트합니다.</p>
 
         <div class="action-row">
           <button class="btn btn-primary" onclick="saveBoardSettings()">설정 저장</button>
@@ -961,7 +1053,7 @@
       // 뉴스 설정 로드는 Supabase 연결 확인 역할 — 실패 시 연결 설정 화면 표시
       await loadNewsSettings();
       // 나머지는 테이블이 아직 없을 수 있으므로 개별 실패 허용
-      await Promise.allSettled([loadProfile(), loadInterviewSettings(), loadTopics()]);
+      await Promise.allSettled([loadProfile(), loadInterviewSettings(), loadTopics(), loadBoardMembers()]);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('settings-panel').classList.remove('hidden');
     } catch (e) {
@@ -1204,8 +1296,87 @@
       toast('오류: ' + e.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = '지금 실행하기';
+      btn.textContent = '▶ 지금 실행';
     }
+  }
+
+  // ─── 이사회 멤버 관리 ───
+
+  function buildMemberCard(m) {
+    const div = document.createElement('div');
+    div.className = 'member-card';
+    div.dataset.id = m.id;
+    div.dataset.key = m.key;
+    div.innerHTML = `
+      <div class="member-card-header">
+        <input type="text" class="member-name-input" value="${m.name || ''}" placeholder="이름 (예: 💰 냉정한 이익주의자)">
+        <input type="text" class="member-role-input" value="${m.role || ''}" placeholder="역할 태그 (예: ROI · 데이터)">
+      </div>
+      <div class="member-card-label">특성 설명</div>
+      <textarea class="member-desc-input" placeholder="이 이사의 관점과 판단 방식을 설명해주세요">${m.description || ''}</textarea>
+      <div class="member-card-label">🤖 AI가 파악한 personality <span style="font-weight:400;text-transform:none;letter-spacing:0">(이사회 진행 시 자동 업데이트)</span></div>
+      <textarea class="personality-field member-personality-input" placeholder="아직 이사회가 진행되지 않았습니다">${m.personality || ''}</textarea>
+      <div class="member-card-actions">
+        <button class="btn-member-del" onclick="deleteBoardMember(this)">삭제</button>
+        <button class="btn-member-save" onclick="saveBoardMember(this)">저장</button>
+      </div>
+    `;
+    return div;
+  }
+
+  async function loadBoardMembers() {
+    const data = await sbFetch('board_members?enabled=eq.true&order=sort_order.asc');
+    const list = document.getElementById('board-member-list');
+    list.innerHTML = '';
+    if (!data || data.length === 0) return;
+    data.forEach(m => list.appendChild(buildMemberCard(m)));
+  }
+
+  async function saveBoardMember(btn) {
+    const card = btn.closest('.member-card');
+    const id = card.dataset.id;
+    const payload = {
+      name:        card.querySelector('.member-name-input').value.trim(),
+      role:        card.querySelector('.member-role-input').value.trim(),
+      description: card.querySelector('.member-desc-input').value.trim(),
+      updated_at:  new Date().toISOString(),
+    };
+    if (!payload.name) { toast('이름을 입력해주세요', true); return; }
+    try {
+      await sbFetch(`board_members?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      toast('저장 완료!');
+    } catch (e) { toast('저장 실패: ' + e.message, true); }
+  }
+
+  async function deleteBoardMember(btn) {
+    if (!confirm('이 이사를 삭제할까요?')) return;
+    const card = btn.closest('.member-card');
+    const id = card.dataset.id;
+    try {
+      await sbFetch(`board_members?id=eq.${id}`, { method: 'DELETE' });
+      card.remove();
+      toast('삭제 완료');
+    } catch (e) { toast('삭제 실패: ' + e.message, true); }
+  }
+
+  async function addBoardMember() {
+    const name = document.getElementById('new-member-name').value.trim();
+    const role = document.getElementById('new-member-role').value.trim();
+    if (!name) { toast('이름을 입력해주세요', true); return; }
+    const key = 'member_' + Date.now();
+    const list = document.getElementById('board-member-list');
+    const sortOrder = list.children.length + 1;
+    try {
+      const rows = await sbFetch('board_members', {
+        method: 'POST',
+        body: JSON.stringify({ key, name, role, description: '', personality: '', sort_order: sortOrder, enabled: true }),
+      });
+      document.getElementById('new-member-name').value = '';
+      document.getElementById('new-member-role').value = '';
+      // reload to get the new id
+      await loadBoardMembers();
+      toast('이사 추가 완료!');
+    } catch (e) { toast('추가 실패: ' + e.message, true); }
   }
 
   function disconnect() {
