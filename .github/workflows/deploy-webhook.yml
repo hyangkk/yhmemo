@@ -48,6 +48,29 @@ jobs:
           echo "$RESPONSE" | jq -e '.ok == true' || exit 1
           echo "웹훅 설정 완료: $WEBHOOK_URL"
 
+      - name: 텔레그램 명령어 목록 등록
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "commands": [
+                {"command": "생각일기",  "description": "이사회 분석 (예: /생각일기 3시간)"},
+                {"command": "이사회",    "description": "이사회 분석 (예: /이사회 6시간)"},
+                {"command": "명령어",    "description": "전체 명령어 도움말"},
+                {"command": "주제",      "description": "인터뷰 주제 목록"},
+                {"command": "인터뷰",    "description": "인터뷰 에이전트 상태"},
+                {"command": "주기",      "description": "질문 주기 확인/변경"},
+                {"command": "대본",      "description": "유튜브 대본 생성"},
+                {"command": "건너뛰기",  "description": "현재 질문 건너뛰기"}
+              ]
+            }')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | jq -e '.ok == true' || exit 1
+          echo "명령어 목록 등록 완료"
+
       - name: 웹훅 상태 확인
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
