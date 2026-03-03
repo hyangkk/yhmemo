@@ -37,6 +37,7 @@ jobs:
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_last_update_id BIGINT DEFAULT 0;
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_last_question_at TIMESTAMPTZ;
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_notion_database_id TEXT DEFAULT '';
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_interval_minutes INTEGER DEFAULT 0;
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_interest_keywords TEXT DEFAULT '';
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_exclude_keywords TEXT DEFAULT '';
