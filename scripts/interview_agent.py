@@ -256,13 +256,29 @@ def generate_organized_content(topic, all_qa):
         label = "질문" if msg["role"] == "agent" else "답변"
         qa_text += f"{label}: {msg['content']}\n\n"
 
+    # 이전 대본이 있으면 비교 요약 요청
+    prev_draft = topic.get("draft") or ""
+    diff_instruction = ""
+    if prev_draft:
+        diff_instruction = f"""
+---
+수정 요약
+
+아래는 이전에 생성된 대본입니다. 새 대본과 비교하여 달라진 점을 대본 최상단에 "수정 요약" 섹션으로 간결하게 적어주세요.
+- 새로 추가된 내용, 삭제된 내용, 구조 변경 등을 2~5줄로 요약
+- 이전 대본이 있을 때만 이 섹션을 작성하세요
+
+[이전 대본]
+{prev_draft[:3000]}
+"""
+
     prompt = f"""당신은 유튜브 콘텐츠 전문가이자 구성작가입니다.
 아래는 "{topic['name']}" 주제로 진행된 인터뷰 전체 내용입니다.
 
 {qa_text}
 
-위 인터뷰 내용을 바탕으로 아래 두 가지를 작성해주세요.
-
+위 인터뷰 내용을 바탕으로 아래 내용을 작성해주세요.
+{diff_instruction}
 ---
 핵심 내용 정리
 
