@@ -6,6 +6,7 @@
 가장 Q&A가 많은 주제의 대본을 생성하여 Supabase + 노션 + 텔레그램에 전송합니다.
 """
 
+import os
 import sys
 from datetime import datetime, timezone, timedelta
 
@@ -36,8 +37,21 @@ def main():
         print("활성 주제 없음")
         return
 
-    # 가장 Q&A가 많은 주제 선택
-    target = max(topics, key=lambda t: t.get("total_questions", 0) or 0)
+    # 환경변수로 주제 키워드가 전달되면 해당 주제만 선택
+    topic_keyword = os.environ.get("TOPIC_NAME", "").strip()
+    if topic_keyword:
+        target = None
+        for t in topics:
+            if topic_keyword in t["name"]:
+                target = t
+                break
+        if not target:
+            tg_send(f"'{topic_keyword}' 주제를 찾을 수 없습니다.")
+            print(f"주제 '{topic_keyword}' 없음")
+            return
+    else:
+        # 키워드 없으면 Q&A가 가장 많은 주제 선택
+        target = max(topics, key=lambda t: t.get("total_questions", 0) or 0)
     print(f"대상 주제: {target['name']}")
 
     all_qa = get_topic_messages(target["id"], limit=200)

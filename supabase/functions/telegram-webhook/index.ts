@@ -115,9 +115,14 @@ function parseInterval(text: string): number | null {
 }
 
 // ─── GitHub Actions 트리거 ───
-async function triggerWorkflow(workflowFile: string): Promise<boolean> {
+async function triggerWorkflow(
+  workflowFile: string,
+  inputs?: Record<string, string>
+): Promise<boolean> {
   if (!GITHUB_TOKEN) return false;
   try {
+    const body: Record<string, unknown> = { ref: "main" };
+    if (inputs) body.inputs = inputs;
     const resp = await fetch(
       `https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/${workflowFile}/dispatches`,
       {
@@ -126,7 +131,7 @@ async function triggerWorkflow(workflowFile: string): Promise<boolean> {
           Authorization: `Bearer ${GITHUB_TOKEN}`,
           Accept: "application/vnd.github.v3+json",
         },
-        body: JSON.stringify({ ref: "main" }),
+        body: JSON.stringify(body),
       }
     );
     return resp.ok;
@@ -264,11 +269,16 @@ async function handleCommand(
 
   // /대본 — AI 필요 → GitHub Actions 트리거
   if (["/대본", "/draft"].includes(cmd)) {
-    await tgSend("대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...");
-    // 대본 생성은 Claude API가 필요하므로 GitHub Actions로 위임
-    const triggered = await triggerWorkflow("interview-draft.yml");
+    const draftParts = text.trim().split(/\s+(.+)/);
+    const topicKeyword = draftParts.length > 1 ? draftParts[1].trim() : "";
+    const msg = topicKeyword
+      ? `'${topicKeyword}' 대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...`
+      : "대본 생성을 요청했습니다. 잠시 후 결과가 전송됩니다...";
+    await tgSend(msg);
+    const inputs = topicKeyword ? { topic_name: topicKeyword } : undefined;
+    const triggered = await triggerWorkflow("interview-draft.yml", inputs);
     if (!triggered) {
-      await tgSend("대본 생성 워크플로우 트리거에 실패했습니다. GitHub Actions에서 수동 실행해주세요.");
+      await tgSend("대본 생성 워크플로우 트리거에 실패했습니다.");
     }
     return true;
   }

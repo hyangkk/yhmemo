@@ -2,6 +2,11 @@ name: 인터뷰 대본 생성
 
 on:
   workflow_dispatch:
+    inputs:
+      topic_name:
+        description: '대본 생성할 주제 키워드 (빈 값이면 Q&A가 가장 많은 주제)'
+        required: false
+        default: ''
 
 concurrency:
   group: interview-draft
@@ -33,4 +38,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NOTION_TOKEN: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          TOPIC_NAME: ${{ github.event.inputs.topic_name }}
         run: python scripts/interview_draft.py
