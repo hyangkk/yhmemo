@@ -59,6 +59,26 @@ jobs:
           );
           ALTER TABLE board_reports DISABLE ROW LEVEL SECURITY;
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_notion_db_id TEXT DEFAULT '';
+          CREATE TABLE IF NOT EXISTS board_members (
+            id          SERIAL PRIMARY KEY,
+            key         TEXT NOT NULL UNIQUE,
+            name        TEXT NOT NULL,
+            role        TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            personality TEXT NOT NULL DEFAULT '',
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ DEFAULT NOW()
+          );
+          ALTER TABLE board_members DISABLE ROW LEVEL SECURITY;
+          INSERT INTO board_members (key, name, role, description, sort_order) VALUES
+            ('roi',          '💰 냉정한 이익주의자', 'ROI · 데이터',    'ROI와 데이터를 중심으로 냉철하게 판단하는 분석가', 1),
+            ('romantic',     '🌈 낭만 긍정주의자',   '가능성 · 도전',   '가능성과 설렘에 집중하며 도전을 응원하는 꿈꾸는 사람', 2),
+            ('conservative', '🛡️ 보수적 조심주의자', '리스크 · 안전',   '리스크와 안전을 최우선으로 검토하는 신중한 이', 3),
+            ('zen',          '🧘 내면 평온주의자',   '감정 · 균형추',   '감정과 내면의 균형을 중시하며 삶의 질을 살피는 이', 4),
+            ('challenger',   '🚀 도전과 발전주의자', '성장 · 돌파',     '성장과 돌파를 추구하며 현실에 안주하지 않는 불굴의 도전가', 5)
+          ON CONFLICT (key) DO NOTHING;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
