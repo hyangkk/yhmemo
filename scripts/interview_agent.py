@@ -465,16 +465,22 @@ def build_content_blocks(organized_content):
     return blocks
 
 
+def _notion_page_url(page_id):
+    """노션 페이지 ID → URL 변환."""
+    clean_id = page_id.replace("-", "")
+    return f"https://www.notion.so/{clean_id}"
+
+
 def sync_to_notion(settings, topic, all_qa, organized_content=None):
-    """주제의 인터뷰 내용을 노션에 동기화."""
+    """주제의 인터뷰 내용을 노션에 동기화. 성공 시 page_id 반환."""
     if not _notion_available():
         print("  노션 토큰 없음 — 동기화 건너뜀")
-        return
+        return None
 
     db_id = _notion_db_id(settings)
     if not db_id:
         print("  노션 데이터베이스 ID 없음 — 동기화 건너뜀")
-        return
+        return None
 
     # 전체 블록 구성
     blocks = build_qa_blocks(all_qa)
@@ -491,7 +497,7 @@ def sync_to_notion(settings, topic, all_qa, organized_content=None):
         try:
             notion_clear_and_rewrite(page_id, blocks)
             print(f"  노션 업데이트 완료: {topic['name']}")
-            return
+            return page_id
         except Exception as e:
             print(f"  노션 업데이트 실패 (새로 생성): {e}", file=sys.stderr)
 
@@ -505,8 +511,10 @@ def sync_to_notion(settings, topic, all_qa, organized_content=None):
             {"notion_page_id": new_id},
         )
         print(f"  노션 페이지 생성 완료: {topic['name']} ({new_id})")
+        return new_id
     except Exception as e:
         print(f"  노션 페이지 생성 실패: {e}", file=sys.stderr)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -613,12 +621,16 @@ def handle_command(text, settings):
                 },
             )
             # 노션에 저장
-            sync_to_notion(settings, target, all_qa, content)
-            # 텔레그램에 요약 발송 (4096자 제한)
-            preview = content[:3500]
-            if len(content) > 3500:
-                preview += "\n\n... (전체 내용은 노션에서 확인)"
-            tg_send(f"<b>[{target['name']}] 대본 초안</b>\n\n{preview}")
+            page_id = sync_to_notion(settings, target, all_qa, content)
+            # 텔레그램에 노션 링크 발송
+            if page_id:
+                url = _notion_page_url(page_id)
+                tg_send(
+                    f"<b>[{target['name']}] 대본이 생성되었습니다.</b>\n\n"
+                    f'<a href="{url}">노션에서 보기</a>'
+                )
+            else:
+                tg_send(f"<b>[{target['name']}]</b> 대본이 생성되었습니다. (노션 동기화 실패)")
         except Exception as e:
             tg_send(f"대본 생성 실패: {e}")
         return True

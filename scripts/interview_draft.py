@@ -19,6 +19,7 @@ from interview_agent import (
     sync_to_notion,
     tg_send,
     sb_patch,
+    _notion_page_url,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -62,13 +63,17 @@ def main():
         print("  Supabase에 대본 저장 완료")
 
         # 2) 노션에 저장
-        sync_to_notion(settings, target, all_qa, content)
+        page_id = sync_to_notion(settings, target, all_qa, content)
 
-        # 3) 텔레그램에 요약 발송 (4096자 제한)
-        preview = content[:3500]
-        if len(content) > 3500:
-            preview += "\n\n... (전체 내용은 노션에서 확인)"
-        tg_send(f"<b>[{target['name']}] 대본 초안</b>\n\n{preview}")
+        # 3) 텔레그램에 노션 링크만 발송
+        if page_id:
+            url = _notion_page_url(page_id)
+            tg_send(
+                f"<b>[{target['name']}] 대본이 생성되었습니다.</b>\n\n"
+                f'<a href="{url}">노션에서 보기</a>'
+            )
+        else:
+            tg_send(f"<b>[{target['name']}]</b> 대본이 생성되었습니다. (노션 동기화 실패)")
         print("대본 전송 완료")
     except Exception as e:
         tg_send(f"대본 생성 실패: {e}")
