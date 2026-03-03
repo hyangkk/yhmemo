@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""
+인터뷰 대본 생성 (독립 실행)
+
+텔레그램 /대본 명령어로 트리거되며,
+가장 Q&A가 많은 주제의 대본을 생성하여 텔레그램 + 노션에 전송합니다.
+"""
+
+import sys
+
+# 기존 interview_agent 모듈의 함수들을 재사용
+sys.path.insert(0, "scripts")
+from interview_agent import (
+    fetch_settings,
+    get_active_topics,
+    get_topic_messages,
+    generate_organized_content,
+    sync_to_notion,
+    tg_send,
+)
+
+
+def main():
+    print("=== 대본 생성 시작 ===\n")
+
+    settings = fetch_settings()
+    topics = get_active_topics()
+
+    if not topics:
+        tg_send("활성화된 주제가 없습니다.")
+        print("활성 주제 없음")
+        return
+
+    # 가장 Q&A가 많은 주제 선택
+    target = max(topics, key=lambda t: t.get("total_questions", 0) or 0)
+    print(f"대상 주제: {target['name']}")
+
+    all_qa = get_topic_messages(target["id"], limit=200)
+    user_answers = [m for m in all_qa if m["role"] == "user"]
+
+    if len(user_answers) < 3:
+        tg_send(
+            f"'{target['name']}' 주제의 답변이 아직 {len(user_answers)}개뿐입니다.\n"
+            f"최소 3개 이상의 답변이 필요합니다."
+        )
+        return
+
+    print("Claude로 대본 생성 중...")
+    try:
+        content = generate_organized_content(target, all_qa)
+        # 노션에 저장
+        sync_to_notion(settings, target, all_qa, content)
+        # 텔레그램에 요약 발송 (4096자 제한)
+        preview = content[:3500]
+        if len(content) > 3500:
+            preview += "\n\n... (전체 내용은 노션에서 확인)"
+        tg_send(f"<b>[{target['name']}] 대본 초안</b>\n\n{preview}")
+        print("대본 전송 완료")
+    except Exception as e:
+        tg_send(f"대본 생성 실패: {e}")
+        print(f"대본 생성 실패: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("\n=== 대본 생성 완료 ===")
+
+
+if __name__ == "__main__":
+    main()
