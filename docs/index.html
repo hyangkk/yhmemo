@@ -685,15 +685,19 @@
   // ─── 인터뷰 에이전트 ───
 
   async function loadInterviewSettings() {
-    const data = await sbFetch('agent_settings?id=eq.1');
-    if (!data || data.length === 0) return;
-    const s = data[0];
-    document.getElementById('interview-enabled').checked = s.interview_enabled !== false;
-    const iEvery = parseInt(s.interview_interval_hours || 3);
-    document.getElementById('interview-interval-hours').value = iEvery;
-    document.getElementById('interview-notion-db-id').value = s.interview_notion_database_id || '';
-    const iBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
-    document.getElementById('interview-schedule-badge').textContent = iBadgeMap[iEvery] || `${iEvery}시간마다`;
+    try {
+      const data = await sbFetch('agent_settings?id=eq.1');
+      if (!data || data.length === 0) return;
+      const s = data[0];
+      document.getElementById('interview-enabled').checked = s.interview_enabled !== false;
+      const iEvery = parseInt(s.interview_interval_hours || 3);
+      document.getElementById('interview-interval-hours').value = iEvery;
+      document.getElementById('interview-notion-db-id').value = s.interview_notion_database_id || '';
+      const iBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+      document.getElementById('interview-schedule-badge').textContent = iBadgeMap[iEvery] || `${iEvery}시간마다`;
+    } catch (e) {
+      console.warn('인터뷰 설정 로드 실패 (무시):', e);
+    }
   }
 
   async function loadTopics() {
@@ -832,7 +836,10 @@
     document.getElementById('loading').classList.remove('hidden');
     document.getElementById('settings-panel').classList.add('hidden');
     try {
-      await Promise.all([loadNewsSettings(), loadProfile(), loadInterviewSettings(), loadTopics()]);
+      // 뉴스 설정 로드는 Supabase 연결 확인 역할 — 실패 시 연결 설정 화면 표시
+      await loadNewsSettings();
+      // 나머지는 테이블이 아직 없을 수 있으므로 개별 실패 허용
+      await Promise.allSettled([loadProfile(), loadInterviewSettings(), loadTopics()]);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('settings-panel').classList.remove('hidden');
     } catch (e) {
