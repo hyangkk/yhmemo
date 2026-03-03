@@ -26,4 +26,7 @@ with urllib.request.urlopen(req, timeout=15) as resp:
         title = ""
         for t in db.get("title", []):
             title += t.get("plain_text", "")
-        print(f"ID: {db['id']}  Title: {title}")
+        print(f"\nID: {db['id']}  Title: {title}")
+        props = db.get("properties", {})
+        for prop_name, prop_data in props.items():
+            print(f"  Property: {prop_name} ({prop_data.get('type', '?')})")
