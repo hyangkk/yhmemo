@@ -471,8 +471,11 @@ def _notion_page_url(page_id):
     return f"https://www.notion.so/{clean_id}"
 
 
-def sync_to_notion(settings, topic, all_qa, organized_content=None):
-    """주제의 인터뷰 내용을 노션에 동기화. 성공 시 page_id 반환."""
+def sync_to_notion(settings, topic, all_qa, organized_content=None, force_new_page=False):
+    """주제의 인터뷰 내용을 노션에 동기화. 성공 시 page_id 반환.
+
+    force_new_page=True이면 기존 페이지를 수정하지 않고 항상 새 페이지를 생성합니다.
+    """
     if not _notion_available():
         print("  노션 토큰 없음 — 동기화 건너뜀")
         return None
@@ -493,7 +496,8 @@ def sync_to_notion(settings, topic, all_qa, organized_content=None):
 
     page_id = topic.get("notion_page_id") or ""
 
-    if page_id:
+    # 기존 페이지 업데이트 (force_new_page가 아닌 경우만)
+    if page_id and not force_new_page:
         try:
             notion_clear_and_rewrite(page_id, blocks)
             print(f"  노션 업데이트 완료: {topic['name']}")
@@ -503,13 +507,17 @@ def sync_to_notion(settings, topic, all_qa, organized_content=None):
 
     # 페이지 새로 생성
     try:
-        new_id = notion_create_page(
-            db_id, f"[인터뷰] {topic['name']}", blocks
-        )
-        sb_patch(
-            f"interview_topics?id=eq.{topic['id']}",
-            {"notion_page_id": new_id},
-        )
+        now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        if force_new_page:
+            title = f"[대본] {topic['name']} - {now_str}"
+        else:
+            title = f"[인터뷰] {topic['name']}"
+        new_id = notion_create_page(db_id, title, blocks)
+        if not force_new_page:
+            sb_patch(
+                f"interview_topics?id=eq.{topic['id']}",
+                {"notion_page_id": new_id},
+            )
         print(f"  노션 페이지 생성 완료: {topic['name']} ({new_id})")
         return new_id
     except Exception as e:
@@ -621,8 +629,8 @@ def handle_command(text, settings):
                     "draft_updated_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
-            # 노션에 저장
-            page_id = sync_to_notion(settings, target, all_qa, content)
+            # 노션에 새 페이지로 저장
+            page_id = sync_to_notion(settings, target, all_qa, content, force_new_page=True)
             # 텔레그램에 노션 링크 발송
             if page_id:
                 url = _notion_page_url(page_id)
