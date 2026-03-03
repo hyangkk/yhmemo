@@ -5,7 +5,7 @@
 - Notion '생각일기 DB'에서 최근 N시간 이내 항목 수집
 - Claude AI로 요약 + 5인 가상 이사회 의견 생성
 - 새 항목 없으면 발송 생략
-- 텔레그램으로 발송
+- 텔레그램으로 발송 + Notion 이사회DB + Supabase에 기록 저장
 """
 
 import os
@@ -21,7 +21,7 @@ KST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
-# 0. Supabase 설정 로드
+# 0. Supabase 헬퍼
 # ---------------------------------------------------------------------------
 
 def _supabase_get(path: str) -> list:
@@ -40,9 +40,38 @@ def _supabase_get(path: str) -> list:
         return []
 
 
+def _supabase_post(path: str, data: dict) -> bool:
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        return False
+    payload = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(
+        f"{url}{path}",
+        data=payload,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status in (200, 201)
+    except Exception as e:
+        print(f"Supabase 저장 오류: {e}", file=sys.stderr)
+        return False
+
+
 def load_settings() -> dict:
     """Supabase agent_settings(id=1)에서 이사회 설정 로드. 실패 시 기본값."""
-    default = {"board_enabled": True, "board_run_every_hours": 3}
+    default = {
+        "board_enabled": True,
+        "board_run_every_hours": 3,
+        "board_notion_db_id": os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
+    }
     rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
     if not rows:
         return default
@@ -50,6 +79,7 @@ def load_settings() -> dict:
     return {
         "board_enabled": s.get("board_enabled", True),
         "board_run_every_hours": int(s.get("board_run_every_hours", 3)),
+        "board_notion_db_id": s.get("board_notion_db_id") or os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
     }
 
 
@@ -64,7 +94,7 @@ BOARD_MEMBERS = [
 
 
 # ---------------------------------------------------------------------------
-# 1. Notion 조회
+# 1. Notion 생각일기 DB 조회
 # ---------------------------------------------------------------------------
 
 def notion_headers() -> dict:
@@ -218,7 +248,6 @@ def generate_board_report(entries: list) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # 파싱 실패 시 raw 텍스트를 summary에 담아 반환
         return {key: "" for key, _, _ in BOARD_MEMBERS} | {"summary": raw}
 
 
@@ -226,7 +255,7 @@ def generate_board_report(entries: list) -> dict:
 # 3. 텔레그램 발송
 # ---------------------------------------------------------------------------
 
-def send_to_telegram(report: dict, entry_count: int, now: datetime) -> bool:
+def send_to_telegram(report: dict, entry_count: int, run_every: int, now: datetime) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -236,7 +265,7 @@ def send_to_telegram(report: dict, entry_count: int, now: datetime) -> bool:
     time_str = now.strftime("%m/%d %H:%M")
     lines = [
         f"<b>📋 생각일기 이사회 보고 · {time_str} KST</b>",
-        f"<i>최근 3시간 항목 {entry_count}개</i>\n",
+        f"<i>최근 {run_every}시간 항목 {entry_count}개</i>\n",
         f"<b>요약</b>\n{report.get('summary', '')}",
     ]
 
@@ -274,6 +303,121 @@ def send_to_telegram(report: dict, entry_count: int, now: datetime) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 4. Notion 이사회 DB 저장
+# ---------------------------------------------------------------------------
+
+def save_to_board_notion_db(report: dict, entry_count: int, run_every: int, now: datetime, db_id: str) -> bool:
+    """보고서를 Notion 이사회 DB에 새 페이지로 저장."""
+    if not db_id:
+        return False
+
+    title = f"이사회 보고 · {now.strftime('%Y/%m/%d %H:%M')} KST"
+
+    # 페이지 본문 블록 구성
+    children = [
+        {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "icon": {"type": "emoji", "emoji": "📋"},
+                "color": "gray_background",
+                "rich_text": [{"type": "text", "text": {
+                    "content": f"최근 {run_every}시간 항목 {entry_count}개 | {now.strftime('%Y-%m-%d %H:%M')} KST"
+                }}],
+            },
+        },
+        {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📝 요약"}}]},
+        },
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": report.get("summary", "")}}]},
+        },
+        {
+            "object": "block",
+            "type": "divider",
+            "divider": {},
+        },
+        {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🏛️ 이사회 의견"}}]},
+        },
+    ]
+
+    for key, label, _ in BOARD_MEMBERS:
+        opinion = report.get(key, "").strip()
+        if opinion:
+            children.append({
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {"rich_text": [{"type": "text", "text": {"content": label}}]},
+            })
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": opinion}}]},
+            })
+
+    page_data = {
+        "parent": {"database_id": db_id},
+        "properties": {
+            "title": {
+                "title": [{"type": "text", "text": {"content": title}}]
+            }
+        },
+        "children": children,
+    }
+
+    payload = json.dumps(page_data).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.notion.com/v1/pages",
+        data=payload,
+        headers=notion_headers(),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            page_url = result.get("url", "")
+            print(f"Notion 이사회 DB 저장 완료: {page_url}")
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"Notion 이사회 DB 저장 실패 ({e.code}): {body}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"Notion 이사회 DB 저장 오류: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# 5. Supabase board_reports 저장
+# ---------------------------------------------------------------------------
+
+def save_to_supabase(report: dict, entry_count: int, run_every: int, now: datetime) -> bool:
+    """보고서를 Supabase board_reports 테이블에 저장."""
+    data = {
+        "created_at": now.astimezone(timezone.utc).isoformat(),
+        "entry_count": entry_count,
+        "run_every_hours": run_every,
+        "summary": report.get("summary", ""),
+        "opinion_roi": report.get("roi", ""),
+        "opinion_romantic": report.get("romantic", ""),
+        "opinion_conservative": report.get("conservative", ""),
+        "opinion_zen": report.get("zen", ""),
+        "opinion_challenger": report.get("challenger", ""),
+    }
+    ok = _supabase_post("/rest/v1/board_reports", data)
+    if ok:
+        print("Supabase board_reports 저장 완료")
+    return ok
+
+
+# ---------------------------------------------------------------------------
 # 메인
 # ---------------------------------------------------------------------------
 
@@ -284,7 +428,6 @@ def main():
         print("오류: NOTION_API_KEY가 없습니다.", file=sys.stderr)
         sys.exit(1)
 
-    # Supabase 설정 확인
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     settings = load_settings()
     print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}\n")
@@ -312,10 +455,22 @@ def main():
     entries = collect_entries(pages)
     print(f"수집 항목: {len(entries)}개\n")
 
-    print("[3/3] 이사회 보고서 생성 및 텔레그램 발송 중...")
+    print("[3/3] 이사회 보고서 생성 중...")
     report = generate_board_report(entries)
     now = datetime.now(KST)
-    ok = send_to_telegram(report, len(entries), now)
+
+    print("텔레그램 발송 중...")
+    ok = send_to_telegram(report, len(entries), run_every, now)
+
+    board_db_id = settings.get("board_notion_db_id", "")
+    if board_db_id:
+        print("Notion 이사회 DB 저장 중...")
+        save_to_board_notion_db(report, len(entries), run_every, now, board_db_id)
+    else:
+        print("BOARD_NOTION_DATABASE_ID 미설정 — Notion 저장 생략")
+
+    print("Supabase 저장 중...")
+    save_to_supabase(report, len(entries), run_every, now)
 
     print("\n=== 완료 ===")
     if not ok:

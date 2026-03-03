@@ -81,3 +81,24 @@ UPDATE user_profile SET
     notes          = '2023년 TIPS 프로그램 선정, 특허 2건 보유'
 WHERE id = 1;
 */
+
+
+-- ============================================================
+-- 이사회 보고서 기록 테이블
+-- ============================================================
+CREATE TABLE IF NOT EXISTS board_reports (
+    id                   BIGSERIAL PRIMARY KEY,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    entry_count          INTEGER NOT NULL DEFAULT 0,
+    run_every_hours      INTEGER NOT NULL DEFAULT 3,
+    summary              TEXT,
+    opinion_roi          TEXT,
+    opinion_romantic     TEXT,
+    opinion_conservative TEXT,
+    opinion_zen          TEXT,
+    opinion_challenger   TEXT
+);
+
+-- agent_settings 테이블에 이사회 Notion DB ID 컬럼 추가
+ALTER TABLE agent_settings
+    ADD COLUMN IF NOT EXISTS board_notion_db_id TEXT DEFAULT '';

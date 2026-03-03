@@ -17,6 +17,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .env
+.claude/settings.local.json
 
 # Editor directories and files
 .vscode/*
