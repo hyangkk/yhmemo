@@ -752,7 +752,6 @@ def main():
     else:
         print(f"[1/6] 뉴스 후보 {candidate_count}개 수집 중...")
         news_candidates = fetch_top_news(active_sources, candidate_count)
-
     if not news_candidates:
         print("오류: 뉴스를 수집하지 못했습니다.", file=sys.stderr)
         sys.exit(1)
