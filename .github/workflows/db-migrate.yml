@@ -45,6 +45,20 @@ jobs:
           ALTER TABLE interview_topics ADD COLUMN IF NOT EXISTS draft_updated_at TIMESTAMPTZ;
           UPDATE agent_settings SET interview_notion_database_id = '1e21114e-6491-8101-8b67-ca52d78a8fb0' WHERE id = 1;
           ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
+          CREATE TABLE IF NOT EXISTS board_reports (
+            id                   BIGSERIAL PRIMARY KEY,
+            created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            entry_count          INTEGER NOT NULL DEFAULT 0,
+            run_every_hours      INTEGER NOT NULL DEFAULT 3,
+            summary              TEXT,
+            opinion_roi          TEXT,
+            opinion_romantic     TEXT,
+            opinion_conservative TEXT,
+            opinion_zen          TEXT,
+            opinion_challenger   TEXT
+          );
+          ALTER TABLE board_reports DISABLE ROW LEVEL SECURITY;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_notion_db_id TEXT DEFAULT '';
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')

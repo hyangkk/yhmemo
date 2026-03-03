@@ -628,14 +628,23 @@
 
         <div class="section-divider"></div>
 
-        <div class="section-label">이사회 멤버 (5인 고정)</div>
-        <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:4px;">
-          <div class="member-row"><span class="member-name">💰 냉정한 이익주의자</span><span class="member-role">ROI · 데이터</span></div>
-          <div class="member-row"><span class="member-name">🌈 낭만 긍정주의자</span><span class="member-role">가능성 · 도전</span></div>
-          <div class="member-row"><span class="member-name">🛡️ 보수적 조심주의자</span><span class="member-role">리스크 · 안전</span></div>
-          <div class="member-row"><span class="member-name">🧘 내면 평온주의자</span><span class="member-role">감정 · 균형추</span></div>
-          <div class="member-row"><span class="member-name">🚀 도전과 발전주의자</span><span class="member-role">성장 · 돌파</span></div>
+        <!-- 이사회 기록 DB -->
+        <div class="section-label">이사회 기록 저장</div>
+        <div class="field">
+          <label>Notion 이사회 DB ID</label>
+          <input type="text" id="board-notion-db-id" placeholder="3181114e649180dc8431f9ef1a89df67">
+          <p class="hint">보고서가 생성될 때마다 해당 Notion DB에 페이지를 자동 저장합니다. NOTION_API_KEY는 GitHub Secrets에 등록하세요.</p>
         </div>
+
+        <div class="section-divider"></div>
+
+        <!-- 이사회 멤버 -->
+        <div class="section-label">이사회 멤버 (5인 고정)</div>
+        <div class="info-row"><span>💰 냉정한 이익주의자</span><span class="info-val">ROI · 데이터</span></div>
+        <div class="info-row"><span>🌈 낭만 긍정주의자</span><span class="info-val">가능성 · 도전</span></div>
+        <div class="info-row"><span>🛡️ 보수적 조심주의자</span><span class="info-val">리스크 · 안전</span></div>
+        <div class="info-row"><span>🧘 내면 평온주의자</span><span class="info-val">감정 · 균형추</span></div>
+        <div class="info-row" style="margin-bottom:4px"><span>🚀 도전과 발전주의자</span><span class="info-val">성장 · 돌파</span></div>
 
         <div class="action-row">
           <button class="btn btn-primary" onclick="saveBoardSettings()">설정 저장</button>
@@ -752,6 +761,7 @@
           kstartup_run_every_hours: 24,
           board_enabled: true,
           board_run_every_hours: 3,
+          board_notion_db_id: '',
         }),
       });
       return loadNewsSettings();
@@ -775,6 +785,7 @@
     const bEvery = parseInt(s.board_run_every_hours || 3);
     document.getElementById('board-run-every-hours').value = bEvery;
     document.getElementById('board-schedule-badge').textContent = kBadgeMap[bEvery] || `${bEvery}시간마다`;
+    document.getElementById('board-notion-db-id').value = s.board_notion_db_id || '';
   }
 
   async function loadProfile() {
@@ -1137,7 +1148,7 @@
       toast('오류: ' + e.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = '지금 실행하기';
+      btn.textContent = '▶ 지금 실행';
     }
   }
 
@@ -1146,6 +1157,7 @@
     const payload = {
       board_enabled: document.getElementById('board-enabled').checked,
       board_run_every_hours: bEvery,
+      board_notion_db_id: document.getElementById('board-notion-db-id').value.trim(),
       updated_at: new Date().toISOString(),
     };
     try {
