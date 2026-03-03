@@ -14,7 +14,6 @@ from interview_agent import (
     fetch_settings,
     get_active_topics,
     get_topic_messages,
-    get_pending_question,
     pick_next_topic,
     generate_question,
     tg_send,
@@ -32,15 +31,6 @@ def main():
     if not topics:
         tg_send("활성화된 주제가 없습니다.")
         print("활성 주제 없음")
-        return
-
-    pending = get_pending_question()
-    if pending:
-        tg_send(
-            "아직 답변하지 않은 질문이 있습니다!\n"
-            "답변을 보내거나 /건너뛰기 후 다시 시도해주세요."
-        )
-        print("미답변 질문 존재 — 중단")
         return
 
     topic = pick_next_topic(topics)
