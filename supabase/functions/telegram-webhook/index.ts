@@ -153,6 +153,7 @@ async function handleCommand(
         "  /주기 — 질문 주기 확인/변경\n" +
         "  /대본 — 유튜브 대본 생성\n" +
         "  /대본 주제명 — 특정 주제 대본 생성\n" +
+        "  /질문줘 — 지금 바로 질문 받기\n" +
         "  /건너뛰기 — 현재 질문 건너뛰기\n" +
         "\n" +
         "<b>뉴스 에이전트</b>\n" +
@@ -241,6 +242,23 @@ async function handleCommand(
     await tgSend(
       `질문 주기가 <b>${formatInterval(minutes)}</b>(으)로 변경되었습니다.`
     );
+    return true;
+  }
+
+  // /질문줘 — AI 필요 → GitHub Actions 트리거
+  if (["/질문줘", "/질문", "/ask"].includes(cmd)) {
+    const pending = await getPendingQuestion();
+    if (pending) {
+      await tgSend(
+        "아직 답변하지 않은 질문이 있습니다!\n답변을 보내거나 /건너뛰기 후 다시 시도해주세요."
+      );
+      return true;
+    }
+    await tgSend("질문을 생성하고 있습니다. 잠시만 기다려주세요...");
+    const triggered = await triggerWorkflow("ask-question.yml");
+    if (!triggered) {
+      await tgSend("질문 생성 워크플로우 트리거에 실패했습니다.");
+    }
     return true;
   }
 
