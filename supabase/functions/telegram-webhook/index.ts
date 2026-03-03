@@ -157,6 +157,8 @@ async function handleCommand(
         "  /생각일기 — 최근 N시간 이사회 분석\n" +
         "  /생각일기 6시간 — 6시간 이사회 분석\n" +
         "  /이사회 — /생각일기와 동일\n" +
+        "  /생각분석 — 최근 1개월 종합 분석\n" +
+        "  /생각분석 24개월 — 24개월 종합 분석\n" +
         "\n" +
         "<b>🎙️ 인터뷰 에이전트</b>\n" +
         "  /주제 — 인터뷰 주제 목록\n" +
@@ -173,6 +175,32 @@ async function handleCommand(
         "<i>일반 텍스트를 보내면 현재 진행 중인\n" +
         "인터뷰 주제에 답변으로 기록됩니다.</i>"
     );
+    return true;
+  }
+
+  // /생각분석 — 장기 생각일기 종합 분석
+  if (cmd === "/생각분석" || cmd === "/analysis") {
+    const parts = text.trim().split(/\s+/);
+    let months = 1;
+    if (parts.length >= 2) {
+      const m = parts[1].match(/^(\d+)/);
+      if (m) months = parseInt(m[1], 10);
+    }
+    if (months < 1) months = 1;
+    if (months > 60) months = 60;
+
+    const triggered = await triggerWorkflow("diary-analysis-agent.yml", {
+      months: String(months),
+      msg_id: String(msgId),
+    });
+    if (triggered) {
+      await tgSend(
+        `🔍 최근 <b>${months}개월</b> 생각일기 종합 분석 중...\n항목이 많으면 시간이 걸릴 수 있습니다. 잠시만 기다려주세요.`,
+        msgId
+      );
+    } else {
+      await tgSend("⚠️ 분석 에이전트 실행에 실패했습니다. 잠시 후 다시 시도해주세요.", msgId);
+    }
     return true;
   }
 
