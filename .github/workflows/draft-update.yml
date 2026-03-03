@@ -1,0 +1,35 @@
+name: 대본 텍스트 수정
+
+on:
+  workflow_dispatch:
+    inputs:
+      find_text:
+        description: '찾을 텍스트'
+        required: true
+      replace_text:
+        description: '바꿀 텍스트'
+        required: true
+
+jobs:
+  update:
+    name: 대본 수정 & 노션 업데이트
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install anthropic
+
+      - name: 대본 수정 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          FIND_TEXT: ${{ github.event.inputs.find_text }}
+          REPLACE_TEXT: ${{ github.event.inputs.replace_text }}
+        run: python scripts/draft_update.py
