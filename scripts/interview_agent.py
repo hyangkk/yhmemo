@@ -599,6 +599,14 @@ def handle_command(text, settings):
         tg_send(f"'{target['name']}' 대본 생성 중... 잠시 기다려주세요.")
         try:
             content = generate_organized_content(target, all_qa)
+            # Supabase에 대본 저장
+            sb_patch(
+                f"interview_topics?id=eq.{target['id']}",
+                {
+                    "draft": content,
+                    "draft_updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             # 노션에 저장
             sync_to_notion(settings, target, all_qa, content)
             # 텔레그램에 요약 발송 (4096자 제한)
@@ -857,6 +865,15 @@ def process_notion_sync(settings, topics_updated):
             if answer_count >= 5 and answer_count % 5 == 0:
                 print(f"  [{topic['name']}] 답변 {answer_count}개 — 대본 자동 생성")
                 organized = generate_organized_content(topic, all_qa)
+                # Supabase에도 대본 저장
+                sb_patch(
+                    f"interview_topics?id=eq.{topic_id}",
+                    {
+                        "draft": organized,
+                        "draft_updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                print(f"  Supabase에 대본 저장 완료")
 
             sync_to_notion(settings, topic, all_qa, organized)
         except Exception as e:

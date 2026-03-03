@@ -41,6 +41,8 @@ jobs:
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_interest_keywords TEXT DEFAULT '';
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_exclude_keywords TEXT DEFAULT '';
+          ALTER TABLE interview_topics ADD COLUMN IF NOT EXISTS draft TEXT DEFAULT '';
+          ALTER TABLE interview_topics ADD COLUMN IF NOT EXISTS draft_updated_at TIMESTAMPTZ;
           ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)

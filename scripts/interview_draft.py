@@ -3,10 +3,11 @@
 인터뷰 대본 생성 (독립 실행)
 
 텔레그램 /대본 명령어로 트리거되며,
-가장 Q&A가 많은 주제의 대본을 생성하여 텔레그램 + 노션에 전송합니다.
+가장 Q&A가 많은 주제의 대본을 생성하여 Supabase + 노션 + 텔레그램에 전송합니다.
 """
 
 import sys
+from datetime import datetime, timezone, timedelta
 
 # 기존 interview_agent 모듈의 함수들을 재사용
 sys.path.insert(0, "scripts")
@@ -17,7 +18,10 @@ from interview_agent import (
     generate_organized_content,
     sync_to_notion,
     tg_send,
+    sb_patch,
 )
+
+KST = timezone(timedelta(hours=9))
 
 
 def main():
@@ -48,9 +52,19 @@ def main():
     print("Claude로 대본 생성 중...")
     try:
         content = generate_organized_content(target, all_qa)
-        # 노션에 저장
+
+        # 1) Supabase에 대본 저장
+        now = datetime.now(timezone.utc).isoformat()
+        sb_patch(
+            f"interview_topics?id=eq.{target['id']}",
+            {"draft": content, "draft_updated_at": now},
+        )
+        print("  Supabase에 대본 저장 완료")
+
+        # 2) 노션에 저장
         sync_to_notion(settings, target, all_qa, content)
-        # 텔레그램에 요약 발송 (4096자 제한)
+
+        # 3) 텔레그램에 요약 발송 (4096자 제한)
         preview = content[:3500]
         if len(content) > 3500:
             preview += "\n\n... (전체 내용은 노션에서 확인)"
