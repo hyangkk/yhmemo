@@ -209,13 +209,21 @@ def generate_question(topic, previous_qa):
             label = "Q" if msg["role"] == "agent" else "A"
             qa_history += f"{label}: {msg['content']}\n\n"
 
+    desc_line = f"주제 설명: {topic['description']}" if topic.get("description") else ""
+    history_block = f"지금까지의 인터뷰 내용:\n{qa_history}" if qa_history else "이번이 첫 질문입니다."
+    guide = (
+        "첫 질문이니 가볍게 시작하세요. 이 주제에 어떻게 관심을 갖게 되었는지, 시작하게 된 계기를 물어보세요."
+        if not previous_qa
+        else "이전 답변 내용을 기반으로 더 깊이 파고들거나, 아직 다루지 않은 새로운 측면에 대해 질문하세요."
+    )
+
     prompt = f"""당신은 유튜브 콘텐츠를 위한 전문 인터뷰어입니다.
 아래 주제에 대해 상대방을 인터뷰하고 있습니다.
 
 주제: {topic['name']}
-{f"주제 설명: {topic['description']}" if topic.get('description') else ""}
+{desc_line}
 
-{f"지금까지의 인터뷰 내용:\n{qa_history}" if qa_history else "이번이 첫 질문입니다."}
+{history_block}
 
 다음 규칙을 따라 질문을 하나 생성하세요:
 1. 이전에 이미 물어본 내용은 절대 반복하지 마세요.
@@ -225,7 +233,7 @@ def generate_question(topic, previous_qa):
 5. 한 번에 하나의 질문만 하세요.
 6. 질문만 출력하세요 (다른 설명 없이).
 
-{"첫 질문이니 가볍게 시작하세요. 이 주제에 어떻게 관심을 갖게 되었는지, 시작하게 된 계기를 물어보세요." if not previous_qa else "이전 답변 내용을 기반으로 더 깊이 파고들거나, 아직 다루지 않은 새로운 측면에 대해 질문하세요."}"""
+{guide}"""
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
