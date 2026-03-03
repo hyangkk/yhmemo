@@ -179,6 +179,8 @@
     .btn-run-news:hover { opacity: 1; }
     .btn-run-kstartup { background: #30b94a; color: #fff; }
     .btn-run-kstartup:hover { opacity: .88; }
+    .btn-run-board { background: #ff9500; color: #fff; }
+    .btn-run-board:hover { opacity: .88; }
     .btn-secondary { background: transparent; color: #0071e3; border: 1px solid #0071e3; }
     .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; }
     .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
@@ -495,6 +497,32 @@
       <button class="btn btn-run" onclick="runDiaryNow()" id="diary-run-btn">지금 실행하기</button>
     </div>
 
+    <!-- ── 생각일기 이사회 에이전트 ── -->
+    <div class="section-header">생각일기 이사회 에이전트</div>
+
+    <div class="card">
+      <div class="card-title">실행 일정 & 이사회 멤버</div>
+      <div class="info-row">
+        <span class="info-label">실행 주기</span>
+        <span class="info-value">매 3시간마다</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">데이터 범위</span>
+        <span class="info-value">최근 3시간 신규 항목 (없으면 생략)</span>
+      </div>
+      <div style="margin-top:14px; display:flex; flex-direction:column; gap:6px;">
+        <div style="font-size:13px;">💰 냉정한 이익주의자 <span style="color:#aaa;font-size:12px;">ROI · 데이터</span></div>
+        <div style="font-size:13px;">🌈 낭만 긍정주의자 <span style="color:#aaa;font-size:12px;">가능성 · 도전</span></div>
+        <div style="font-size:13px;">🛡️ 보수적 조심주의자 <span style="color:#aaa;font-size:12px;">리스크 · 안전</span></div>
+        <div style="font-size:13px;">🧘 내면 평온주의자 <span style="color:#aaa;font-size:12px;">감정 · 균형추</span></div>
+        <div style="font-size:13px;">🚀 도전과 발전주의자 <span style="color:#aaa;font-size:12px;">성장 · 돌파</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <button class="btn btn-run-board btn-full" onclick="runBoardNow()" id="board-run-btn">지금 실행하기</button>
+    </div>
+
   </div>
 </div>
 
@@ -793,6 +821,41 @@
       } else {
         const msg = await res.text();
         toast('실행 실패 (' + res.status + '): ' + msg, true);
+      }
+    } catch (e) {
+      toast('오류: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '지금 실행하기';
+    }
+  }
+
+  async function runBoardNow() {
+    const { ghToken } = getSB();
+    if (!ghToken) {
+      toast('GitHub 토큰이 없습니다. 연결 해제 후 토큰을 입력해주세요.', true);
+      return;
+    }
+    const btn = document.getElementById('board-run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/diary-board-agent.yml/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${ghToken}`,
+          },
+          body: JSON.stringify({ ref: 'main' }),
+        }
+      );
+      if (res.status === 204) {
+        toast('이사회 에이전트 실행 요청 완료! 약 1분 후 텔레그램 확인');
+      } else {
+        toast('실행 실패 (' + res.status + '): ' + await res.text(), true);
       }
     } catch (e) {
       toast('오류: ' + e.message, true);
