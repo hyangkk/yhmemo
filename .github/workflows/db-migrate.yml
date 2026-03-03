@@ -82,6 +82,9 @@ jobs:
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS diary_notion_database_id TEXT DEFAULT '';
           UPDATE agent_settings SET diary_notion_database_id = '784b53d2c7e6441f87ad6d677c994fcc' WHERE id = 1 AND (diary_notion_database_id IS NULL OR diary_notion_database_id = '');
           UPDATE agent_settings SET board_notion_db_id = '3181114e649180dc8431f9ef1a89df67' WHERE id = 1 AND (board_notion_db_id IS NULL OR board_notion_db_id = '');
+          ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS opinions    JSONB DEFAULT '{}'::jsonb;
+          ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS briefing    JSONB DEFAULT '{}'::jsonb;
+          ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS action_items JSONB DEFAULT '[]'::jsonb;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')

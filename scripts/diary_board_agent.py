@@ -504,16 +504,22 @@ def save_to_board_notion_db(report: dict, members: list, entry_count: int, run_e
 
 def save_to_supabase(report: dict, entry_count: int, run_every: int, now: datetime) -> bool:
     opinions = report.get("opinions", {})
+    briefing = report.get("briefing", {})
     data = {
         "created_at": now.astimezone(timezone.utc).isoformat(),
         "entry_count": entry_count,
         "run_every_hours": run_every,
-        "summary": report.get("briefing", {}).get("summary", ""),
-        "opinion_roi": opinions.get("roi", ""),
-        "opinion_romantic": opinions.get("romantic", ""),
+        "summary": briefing.get("summary", ""),
+        # 동적 멤버 지원: 모든 의견/브리핑/액션 아이템을 JSONB로 저장
+        "opinions":     opinions,
+        "briefing":     briefing,
+        "action_items": report.get("action_items", []),
+        # 기존 고정 컬럼 호환 유지 (기본 5인)
+        "opinion_roi":          opinions.get("roi", ""),
+        "opinion_romantic":     opinions.get("romantic", ""),
         "opinion_conservative": opinions.get("conservative", ""),
-        "opinion_zen": opinions.get("zen", ""),
-        "opinion_challenger": opinions.get("challenger", ""),
+        "opinion_zen":          opinions.get("zen", ""),
+        "opinion_challenger":   opinions.get("challenger", ""),
     }
     ok = _supabase_post("/rest/v1/board_reports", data)
     if ok:
