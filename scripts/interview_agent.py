@@ -380,7 +380,7 @@ def notion_create_page(db_id, title, blocks):
     payload = {
         "parent": {"database_id": db_id},
         "properties": {
-            "Name": {"title": [{"text": {"content": title}}]},
+            "이름": {"title": [{"text": {"content": title}}]},
         },
         "children": blocks[:100],  # Notion 한 번에 최대 100 블록
     }
