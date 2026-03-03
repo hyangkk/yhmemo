@@ -43,6 +43,7 @@ jobs:
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_exclude_keywords TEXT DEFAULT '';
           ALTER TABLE interview_topics ADD COLUMN IF NOT EXISTS draft TEXT DEFAULT '';
           ALTER TABLE interview_topics ADD COLUMN IF NOT EXISTS draft_updated_at TIMESTAMPTZ;
+          UPDATE agent_settings SET interview_notion_database_id = '1e21114e-6491-8101-8b67-ca52d78a8fb0' WHERE id = 1;
           ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
