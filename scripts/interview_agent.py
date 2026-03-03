@@ -512,6 +512,32 @@ def handle_command(text, settings):
     """텔레그램 봇 명령어 처리. 처리했으면 True, 아니면 False."""
     cmd = text.strip().split()[0].lower()
 
+    if cmd in ("/명령어", "/help", "/commands"):
+        help_text = (
+            "<b>전체 명령어 목록</b>\n"
+            "\n"
+            "<b>인터뷰 에이전트</b>\n"
+            "  /주제 — 인터뷰 주제 목록\n"
+            "  /인터뷰 — 에이전트 상태 확인\n"
+            "  /대본 — 유튜브 대본 생성\n"
+            "  /대본 주제명 — 특정 주제 대본 생성\n"
+            "  /건너뛰기 — 현재 질문 건너뛰기\n"
+            "\n"
+            "<b>뉴스 에이전트</b>\n"
+            "  자동 실행 (설정 주기마다)\n"
+            "\n"
+            "<b>K-Startup 에이전트</b>\n"
+            "  자동 실행 (설정 주기마다)\n"
+            "\n"
+            "<b>공통</b>\n"
+            "  /명령어 — 이 도움말 표시\n"
+            "\n"
+            "<i>일반 텍스트를 보내면 현재 진행 중인\n"
+            "인터뷰 주제에 답변으로 기록됩니다.</i>"
+        )
+        tg_send(help_text)
+        return True
+
     if cmd in ("/주제", "/topics"):
         topics = get_active_topics()
         if not topics:
@@ -661,10 +687,23 @@ def process_collect(settings):
             handle_command(text, settings)
             continue
 
-        # 현재 대기 중인 질문에 대한 답변으로 저장
+        # 일반 텍스트 → 현재 활성 주제에 답변으로 저장
+        # 대기 중인 질문 여부와 관계없이, 가장 최근 활성 주제에 기록
         pending = get_pending_question()
+        topic_id = None
+        topic_name = None
+
         if pending:
             topic_id = pending["topic_id"]
+        else:
+            topics = get_active_topics()
+            if topics:
+                # 가장 최근에 질문이 있었던 주제 선택
+                recent = max(topics, key=lambda t: t.get("total_questions", 0) or 0)
+                topic_id = recent["id"]
+                topic_name = recent["name"]
+
+        if topic_id:
             sb_post("interview_messages", {
                 "topic_id": topic_id,
                 "role": "user",
@@ -675,26 +714,7 @@ def process_collect(settings):
             print(f"  답변 저장 (topic_id={topic_id}): {text[:60]}...")
             tg_send("답변이 기록되었습니다!")
         else:
-            # 대기 중인 질문이 없으면 가장 최근 활성 주제에 추가
-            topics = get_active_topics()
-            if topics:
-                recent_topic = max(
-                    topics,
-                    key=lambda t: t.get("total_questions", 0) or 0,
-                )
-                sb_post("interview_messages", {
-                    "topic_id": recent_topic["id"],
-                    "role": "user",
-                    "content": text,
-                    "telegram_message_id": msg.get("message_id"),
-                })
-                topics_updated.add(recent_topic["id"])
-                print(f"  추가 답변 저장 ({recent_topic['name']}): {text[:60]}...")
-                tg_send(
-                    f"'{recent_topic['name']}' 주제에 내용이 추가되었습니다!"
-                )
-            else:
-                print(f"  활성 주제 없음, 메시지 무시: {text[:60]}...")
+            print(f"  활성 주제 없음, 메시지 무시: {text[:60]}...")
 
     # update_id 갱신
     if new_uid > last_uid:
@@ -708,11 +728,6 @@ def process_ask(settings):
     if not should_ask_now(settings):
         interval = settings.get("interview_interval_hours", 3)
         print(f"  아직 질문 시간 아님 (주기: {interval}시간)")
-        return
-
-    pending = get_pending_question()
-    if pending:
-        print("  미답변 질문 대기 중 — 새 질문 보류")
         return
 
     topics = get_active_topics()
