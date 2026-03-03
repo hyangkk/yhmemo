@@ -11,13 +11,47 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          SQL="ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT ''; ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_interest_keywords TEXT DEFAULT ''; ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_exclude_keywords TEXT DEFAULT ''; ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;"
+          cat <<'EOSQL' > /tmp/migrate.sql
+          CREATE TABLE IF NOT EXISTS interview_topics (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            enabled BOOLEAN DEFAULT TRUE,
+            total_questions INTEGER DEFAULT 0,
+            notion_page_id TEXT DEFAULT '',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          ALTER TABLE interview_topics DISABLE ROW LEVEL SECURITY;
+          CREATE TABLE IF NOT EXISTS interview_messages (
+            id BIGSERIAL PRIMARY KEY,
+            topic_id INTEGER REFERENCES interview_topics(id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK (role IN ('agent', 'user')),
+            content TEXT NOT NULL,
+            telegram_message_id INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          CREATE INDEX IF NOT EXISTS idx_interview_messages_topic ON interview_messages (topic_id, created_at);
+          ALTER TABLE interview_messages DISABLE ROW LEVEL SECURITY;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_enabled BOOLEAN DEFAULT TRUE;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_interval_hours INTEGER DEFAULT 3;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_last_update_id BIGINT DEFAULT 0;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_last_question_at TIMESTAMPTZ;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_notion_database_id TEXT DEFAULT '';
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS interview_interval_minutes INTEGER DEFAULT 0;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS kstartup_keywords TEXT DEFAULT '';
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_interest_keywords TEXT DEFAULT '';
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS news_exclude_keywords TEXT DEFAULT '';
+          ALTER TABLE user_profile DISABLE ROW LEVEL SECURITY;
+          EOSQL
+          SQL=$(cat /tmp/migrate.sql)
+          PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"query\": \"$SQL\"}" \
+            -d "$PAYLOAD" \
             "https://api.supabase.com/v1/projects/unuvbdqjgiypxfvlplpd/database/query")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -1)
-          echo "HTTP $HTTP_CODE: $BODY"
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY"
           [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && echo "완료" || exit 1

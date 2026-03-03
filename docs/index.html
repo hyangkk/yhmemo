@@ -53,9 +53,10 @@
       padding: 18px 24px;
       border-bottom: 1px solid #f0f0f0;
     }
-    .agent-card-header.news    { border-top: 4px solid #0071e3; }
-    .agent-card-header.kstartup { border-top: 4px solid #30b94a; }
-    .agent-card-header.board   { border-top: 4px solid #ff9500; }
+    .agent-card-header.news      { border-top: 4px solid #0071e3; }
+    .agent-card-header.kstartup  { border-top: 4px solid #30b94a; }
+    .agent-card-header.interview { border-top: 4px solid #af52de; }
+    .agent-card-header.board     { border-top: 4px solid #ff9500; }
 
     .agent-name {
       font-size: 16px;
@@ -70,9 +71,10 @@
       margin-left: 8px;
       vertical-align: middle;
     }
-    .badge-news { background: #e8f0fe; color: #0071e3; }
-    .badge-kstartup { background: #e6f8ea; color: #1d8a32; }
-    .badge-board    { background: #fff3e0; color: #ff9500; }
+    .badge-news      { background: #e8f0fe; color: #0071e3; }
+    .badge-kstartup  { background: #e6f8ea; color: #1d8a32; }
+    .badge-interview { background: #f3e8ff; color: #8b31b8; }
+    .badge-board     { background: #fff3e0; color: #ff9500; }
 
     .agent-card-body { padding: 20px 24px; }
 
@@ -179,8 +181,10 @@
     .btn-primary:hover { opacity: .88; }
     .btn-run-news { background: #0071e3; color: #fff; opacity: .85; }
     .btn-run-news:hover { opacity: 1; }
-    .btn-run-kstartup { background: #30b94a; color: #fff; }
+    .btn-run-kstartup  { background: #30b94a; color: #fff; }
     .btn-run-kstartup:hover { opacity: .88; }
+    .btn-run-interview { background: #af52de; color: #fff; }
+    .btn-run-interview:hover { opacity: .88; }
     .btn-run-board  { background: #ff9500; color: #fff; }
     .btn-run-board:hover  { opacity: .88; }
     .member-row {
@@ -234,6 +238,53 @@
 
     .hint { font-size: 12px; color: #aaa; margin-top: 5px; }
 
+    /* 주제 관리 (인터뷰 에이전트) */
+    .topic-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .topic-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #f5f5f7;
+      border-radius: 10px;
+    }
+    .topic-item .topic-info { flex: 1; min-width: 0; }
+    .topic-item .topic-name { font-size: 14px; font-weight: 600; }
+    .topic-item .topic-desc { font-size: 12px; color: #888; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topic-item .topic-stats { font-size: 11px; color: #af52de; font-weight: 500; }
+    .btn-icon {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #ff3b30;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .btn-icon:hover { background: #fff0f0; }
+    .add-topic-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .add-topic-row input { margin-bottom: 0; }
+    .btn-add {
+      padding: 10px 16px;
+      border-radius: 10px;
+      border: 1px solid #af52de;
+      background: #f9f0ff;
+      color: #af52de;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-add:hover { background: #f0e0ff; }
+
+    /* 생각일기 알림 에이전트 (정적 섹션) */
     .section-header {
       font-size: 18px;
       font-weight: 700;
@@ -243,7 +294,6 @@
       color: #1d1d1f;
     }
     .section-header:first-child { margin-top: 0; }
-
     .info-row {
       display: flex;
       align-items: center;
@@ -481,6 +531,73 @@
       </div>
     </div>
 
+    <!-- ───────────────────────────── 인터뷰 에이전트 ───────────────────────────── -->
+    <div class="agent-card">
+      <div class="agent-card-header interview">
+        <div>
+          <span class="agent-name">인터뷰 에이전트</span>
+          <span class="agent-badge badge-interview" id="interview-schedule-badge">3시간마다</span>
+        </div>
+        <label class="switch" title="에이전트 활성화/비활성화">
+          <input type="checkbox" id="interview-enabled">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="agent-card-body">
+
+        <!-- 실행 주기 -->
+        <div class="section-label">질문 주기</div>
+        <div class="field">
+          <select id="interview-interval-hours">
+            <option value="1">매 시간 (1시간)</option>
+            <option value="2">2시간마다</option>
+            <option value="3">3시간마다</option>
+            <option value="6">6시간마다</option>
+            <option value="12">12시간마다</option>
+            <option value="24">하루 1회</option>
+          </select>
+          <p class="hint">설정한 주기마다 텔레그램으로 인터뷰 질문을 보냅니다. 답변 수집은 15분마다 자동 실행.</p>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <!-- 주제 관리 -->
+        <div class="section-label">인터뷰 주제</div>
+        <div class="topic-list" id="topic-list"></div>
+        <div class="add-topic-row">
+          <div class="field">
+            <input type="text" id="new-topic-name" placeholder="주제명 (예: 공간대여 사업 썰)">
+          </div>
+          <div class="field">
+            <input type="text" id="new-topic-desc" placeholder="주제 설명 (선택사항)">
+          </div>
+          <button class="btn-add" onclick="addTopic()">+ 추가</button>
+        </div>
+        <p class="hint">텔레그램 명령어: /주제 (목록 보기) · /대본 (대본 생성) · /건너뛰기 (현재 질문 건너뛰기) · /인터뷰 (상태 확인)</p>
+
+        <div class="section-divider"></div>
+
+        <!-- 노션 연동 -->
+        <div class="section-label">노션 연동 (선택사항)</div>
+        <div class="field">
+          <label>Notion Database ID</label>
+          <input type="text" id="interview-notion-db-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+          <p class="hint">
+            노션에 데이터베이스를 만들고 ID를 입력하세요. "Name" 제목 속성이 필요합니다.<br>
+            NOTION_TOKEN은 GitHub Secrets에 등록하세요. 비워두면 노션 동기화를 건너뜁니다.
+          </p>
+        </div>
+
+        <!-- 인터뷰 에이전트 액션 -->
+        <div class="action-row">
+          <button class="btn btn-primary" onclick="saveInterviewSettings()">설정 저장</button>
+          <button class="btn btn-run-interview" id="interview-run-btn" onclick="runInterviewNow()">▶ 지금 실행</button>
+        </div>
+
+      </div>
+    </div>
+
     <!-- ───────────────────────────── 생각일기 이사회 에이전트 ───────────────────────────── -->
     <div class="agent-card">
       <div class="agent-card-header board">
@@ -676,11 +793,164 @@
     document.getElementById('notes').value = p.notes || '';
   }
 
+  // ─── 인터뷰 에이전트 ───
+
+  async function loadInterviewSettings() {
+    try {
+      const data = await sbFetch('agent_settings?id=eq.1');
+      if (!data || data.length === 0) return;
+      const s = data[0];
+      document.getElementById('interview-enabled').checked = s.interview_enabled !== false;
+      const iEvery = parseInt(s.interview_interval_hours || 3);
+      document.getElementById('interview-interval-hours').value = iEvery;
+      document.getElementById('interview-notion-db-id').value = s.interview_notion_database_id || '';
+      const iBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+      document.getElementById('interview-schedule-badge').textContent = iBadgeMap[iEvery] || `${iEvery}시간마다`;
+    } catch (e) {
+      console.warn('인터뷰 설정 로드 실패 (무시):', e);
+    }
+  }
+
+  async function loadTopics() {
+    try {
+      const topics = await sbFetch('interview_topics?order=id.asc');
+      buildTopicList(topics || []);
+    } catch (e) {
+      buildTopicList([]);
+    }
+  }
+
+  function buildTopicList(topics) {
+    const list = document.getElementById('topic-list');
+    list.innerHTML = '';
+    if (topics.length === 0) {
+      list.innerHTML = '<p style="color:#aaa;font-size:13px;padding:8px 0">주제가 없습니다. 아래에서 추가해주세요.</p>';
+      return;
+    }
+    topics.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'topic-item';
+      item.innerHTML = `
+        <label class="switch">
+          <input type="checkbox" data-topic-id="${t.id}" ${t.enabled ? 'checked' : ''} onchange="toggleTopic(${t.id}, this.checked)">
+          <span class="slider"></span>
+        </label>
+        <div class="topic-info">
+          <div class="topic-name">${t.name}</div>
+          ${t.description ? `<div class="topic-desc">${t.description}</div>` : ''}
+        </div>
+        <span class="topic-stats">Q${t.total_questions || 0}</span>
+        <button class="btn-icon" onclick="deleteTopic(${t.id}, '${t.name.replace(/'/g, "\\'")}')" title="삭제">&times;</button>`;
+      list.appendChild(item);
+    });
+  }
+
+  async function addTopic() {
+    const name = document.getElementById('new-topic-name').value.trim();
+    const desc = document.getElementById('new-topic-desc').value.trim();
+    if (!name) { toast('주제명을 입력해주세요', true); return; }
+    try {
+      await sbFetch('interview_topics', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc, enabled: true, total_questions: 0 }),
+      });
+      document.getElementById('new-topic-name').value = '';
+      document.getElementById('new-topic-desc').value = '';
+      await loadTopics();
+      toast(`'${name}' 주제가 추가되었습니다`);
+    } catch (e) {
+      toast('주제 추가 실패: ' + e.message, true);
+    }
+  }
+
+  async function toggleTopic(id, enabled) {
+    try {
+      await sbFetch(`interview_topics?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      });
+    } catch (e) {
+      toast('주제 토글 실패: ' + e.message, true);
+      await loadTopics();
+    }
+  }
+
+  async function deleteTopic(id, name) {
+    if (!confirm(`'${name}' 주제와 모든 인터뷰 기록을 삭제하시겠습니까?`)) return;
+    try {
+      // 메시지 먼저 삭제 (FK)
+      await sbFetch(`interview_messages?topic_id=eq.${id}`, { method: 'DELETE' });
+      await sbFetch(`interview_topics?id=eq.${id}`, { method: 'DELETE' });
+      await loadTopics();
+      toast(`'${name}' 삭제 완료`);
+    } catch (e) {
+      toast('삭제 실패: ' + e.message, true);
+    }
+  }
+
+  async function saveInterviewSettings() {
+    const iEvery = parseInt(document.getElementById('interview-interval-hours').value);
+    const payload = {
+      interview_enabled: document.getElementById('interview-enabled').checked,
+      interview_interval_hours: iEvery,
+      interview_notion_database_id: document.getElementById('interview-notion-db-id').value.trim(),
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      await sbFetch('agent_settings?id=eq.1', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      const iBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+      document.getElementById('interview-schedule-badge').textContent = iBadgeMap[iEvery] || `${iEvery}시간마다`;
+      toast('인터뷰 에이전트 설정 저장 완료!');
+    } catch (e) {
+      toast('저장 실패: ' + e.message, true);
+    }
+  }
+
+  async function runInterviewNow() {
+    const { ghToken } = getSB();
+    if (!ghToken) { toast('GitHub 토큰이 없습니다. 연결 해제 후 다시 입력해주세요.', true); return; }
+    const btn = document.getElementById('interview-run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hyangkk/yhmemo/actions/workflows/interview-agent.yml/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${ghToken}`,
+          },
+          body: JSON.stringify({ ref: 'main' }),
+        }
+      );
+      if (res.status === 204) {
+        toast('인터뷰 에이전트 실행 요청 완료! 잠시 후 텔레그램 확인');
+      } else {
+        toast('실행 실패 (' + res.status + '): ' + await res.text(), true);
+      }
+    } catch (e) {
+      toast('오류: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '▶ 지금 실행';
+    }
+  }
+
+  // ─── 공통 ───
+
   async function loadAll() {
     document.getElementById('loading').classList.remove('hidden');
     document.getElementById('settings-panel').classList.add('hidden');
     try {
-      await Promise.all([loadNewsSettings(), loadProfile()]);
+      // 뉴스 설정 로드는 Supabase 연결 확인 역할 — 실패 시 연결 설정 화면 표시
+      await loadNewsSettings();
+      // 나머지는 테이블이 아직 없을 수 있으므로 개별 실패 허용
+      await Promise.allSettled([loadProfile(), loadInterviewSettings(), loadTopics()]);
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('settings-panel').classList.remove('hidden');
     } catch (e) {
