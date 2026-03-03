@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 생각일기 이사회 에이전트
-- 매 3시간마다 GitHub Actions에 의해 자동 실행
-- Notion '생각일기 DB'에서 최근 3시간 이내 항목 수집
+- 매 시간 GitHub Actions에 의해 실행, Supabase 설정에 따라 간격 조절
+- Notion '생각일기 DB'에서 최근 N시간 이내 항목 수집
 - Claude AI로 요약 + 5인 가상 이사회 의견 생성
 - 새 항목 없으면 발송 생략
 - 텔레그램으로 발송
@@ -18,6 +18,40 @@ from datetime import datetime, timezone, timedelta
 import anthropic
 
 KST = timezone(timedelta(hours=9))
+
+
+# ---------------------------------------------------------------------------
+# 0. Supabase 설정 로드
+# ---------------------------------------------------------------------------
+
+def _supabase_get(path: str) -> list:
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        return []
+    req = urllib.request.Request(
+        f"{url}{path}",
+        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+
+def load_settings() -> dict:
+    """Supabase agent_settings(id=1)에서 이사회 설정 로드. 실패 시 기본값."""
+    default = {"board_enabled": True, "board_run_every_hours": 3}
+    rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
+    if not rows:
+        return default
+    s = rows[0]
+    return {
+        "board_enabled": s.get("board_enabled", True),
+        "board_run_every_hours": int(s.get("board_run_every_hours", 3)),
+    }
+
 
 # (json_key, 표시 이름, Claude에 전달할 역할 설명)
 BOARD_MEMBERS = [
@@ -250,12 +284,28 @@ def main():
         print("오류: NOTION_API_KEY가 없습니다.", file=sys.stderr)
         sys.exit(1)
 
-    print("[1/3] 최근 3시간 생각일기 조회 중...")
-    pages = fetch_recent_pages(hours=3)
+    # Supabase 설정 확인
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    settings = load_settings()
+    print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}\n")
+
+    if not settings["board_enabled"] and not is_manual:
+        print("이사회 에이전트 비활성화 상태. 종료.")
+        return
+
+    run_every = settings["board_run_every_hours"]
+    if run_every > 1 and not is_manual:
+        current_hour_utc = datetime.now(timezone.utc).hour
+        if current_hour_utc % run_every != 0:
+            print(f"현재 {current_hour_utc}시 (UTC) — {run_every}시간 간격 미해당. 건너뜀.")
+            return
+
+    print(f"[1/3] 최근 {run_every}시간 생각일기 조회 중...")
+    pages = fetch_recent_pages(hours=run_every)
     print(f"조회된 페이지: {len(pages)}개\n")
 
     if not pages:
-        print("최근 3시간 내 새 항목 없음. 발송 생략.")
+        print(f"최근 {run_every}시간 내 새 항목 없음. 발송 생략.")
         return
 
     print("[2/3] 내용 수집 중...")

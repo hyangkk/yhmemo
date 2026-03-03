@@ -53,8 +53,9 @@
       padding: 18px 24px;
       border-bottom: 1px solid #f0f0f0;
     }
-    .agent-card-header.news  { border-top: 4px solid #0071e3; }
+    .agent-card-header.news    { border-top: 4px solid #0071e3; }
     .agent-card-header.kstartup { border-top: 4px solid #30b94a; }
+    .agent-card-header.board   { border-top: 4px solid #ff9500; }
 
     .agent-name {
       font-size: 16px;
@@ -71,6 +72,7 @@
     }
     .badge-news { background: #e8f0fe; color: #0071e3; }
     .badge-kstartup { background: #e6f8ea; color: #1d8a32; }
+    .badge-board    { background: #fff3e0; color: #ff9500; }
 
     .agent-card-body { padding: 20px 24px; }
 
@@ -179,8 +181,18 @@
     .btn-run-news:hover { opacity: 1; }
     .btn-run-kstartup { background: #30b94a; color: #fff; }
     .btn-run-kstartup:hover { opacity: .88; }
-    .btn-run-board { background: #ff9500; color: #fff; }
-    .btn-run-board:hover { opacity: .88; }
+    .btn-run-board  { background: #ff9500; color: #fff; }
+    .btn-run-board:hover  { opacity: .88; }
+    .member-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #f5f5f7;
+      border-radius: 8px;
+    }
+    .member-name { font-size: 14px; font-weight: 500; }
+    .member-role { font-size: 12px; color: #aaa; }
     .btn-secondary { background: transparent; color: #0071e3; border: 1px solid #0071e3; }
     .btn-danger { background: transparent; color: #ff3b30; border: 1px solid #ff3b30; }
     .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
@@ -469,6 +481,53 @@
       </div>
     </div>
 
+    <!-- ───────────────────────────── 생각일기 이사회 에이전트 ───────────────────────────── -->
+    <div class="agent-card">
+      <div class="agent-card-header board">
+        <div>
+          <span class="agent-name">생각일기 이사회 에이전트</span>
+          <span class="agent-badge badge-board" id="board-schedule-badge">3시간마다</span>
+        </div>
+        <label class="switch" title="에이전트 활성화/비활성화">
+          <input type="checkbox" id="board-enabled">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="agent-card-body">
+
+        <div class="section-label">실행 주기</div>
+        <div class="field">
+          <select id="board-run-every-hours">
+            <option value="1">매 시간 (1시간)</option>
+            <option value="2">2시간마다</option>
+            <option value="3">3시간마다</option>
+            <option value="6">6시간마다</option>
+            <option value="12">12시간마다</option>
+            <option value="24">하루 1회 (자정 UTC)</option>
+          </select>
+          <p class="hint">최근 N시간 내 새 항목이 없으면 자동으로 발송을 생략합니다</p>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <div class="section-label">이사회 멤버 (5인 고정)</div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:4px;">
+          <div class="member-row"><span class="member-name">💰 냉정한 이익주의자</span><span class="member-role">ROI · 데이터</span></div>
+          <div class="member-row"><span class="member-name">🌈 낭만 긍정주의자</span><span class="member-role">가능성 · 도전</span></div>
+          <div class="member-row"><span class="member-name">🛡️ 보수적 조심주의자</span><span class="member-role">리스크 · 안전</span></div>
+          <div class="member-row"><span class="member-name">🧘 내면 평온주의자</span><span class="member-role">감정 · 균형추</span></div>
+          <div class="member-row"><span class="member-name">🚀 도전과 발전주의자</span><span class="member-role">성장 · 돌파</span></div>
+        </div>
+
+        <div class="action-row">
+          <button class="btn btn-primary" onclick="saveBoardSettings()">설정 저장</button>
+          <button class="btn btn-run-board" id="board-run-btn" onclick="runBoardNow()">▶ 지금 실행</button>
+        </div>
+
+      </div>
+    </div>
+
     <!-- 하단 공통 -->
     <div class="bottom-row">
       <button class="btn btn-secondary" onclick="loadAll()">새로고침</button>
@@ -495,32 +554,6 @@
     <!-- 지금 실행 -->
     <div class="card">
       <button class="btn btn-run" onclick="runDiaryNow()" id="diary-run-btn">지금 실행하기</button>
-    </div>
-
-    <!-- ── 생각일기 이사회 에이전트 ── -->
-    <div class="section-header">생각일기 이사회 에이전트</div>
-
-    <div class="card">
-      <div class="card-title">실행 일정 & 이사회 멤버</div>
-      <div class="info-row">
-        <span class="info-label">실행 주기</span>
-        <span class="info-value">매 3시간마다</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">데이터 범위</span>
-        <span class="info-value">최근 3시간 신규 항목 (없으면 생략)</span>
-      </div>
-      <div style="margin-top:14px; display:flex; flex-direction:column; gap:6px;">
-        <div style="font-size:13px;">💰 냉정한 이익주의자 <span style="color:#aaa;font-size:12px;">ROI · 데이터</span></div>
-        <div style="font-size:13px;">🌈 낭만 긍정주의자 <span style="color:#aaa;font-size:12px;">가능성 · 도전</span></div>
-        <div style="font-size:13px;">🛡️ 보수적 조심주의자 <span style="color:#aaa;font-size:12px;">리스크 · 안전</span></div>
-        <div style="font-size:13px;">🧘 내면 평온주의자 <span style="color:#aaa;font-size:12px;">감정 · 균형추</span></div>
-        <div style="font-size:13px;">🚀 도전과 발전주의자 <span style="color:#aaa;font-size:12px;">성장 · 돌파</span></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <button class="btn btn-run-board btn-full" onclick="runBoardNow()" id="board-run-btn">지금 실행하기</button>
     </div>
 
   </div>
@@ -600,6 +633,8 @@
           prompt_template: '',
           kstartup_enabled: true,
           kstartup_run_every_hours: 24,
+          board_enabled: true,
+          board_run_every_hours: 3,
         }),
       });
       return loadNewsSettings();
@@ -617,6 +652,12 @@
     document.getElementById('kstartup-keywords').value = s.kstartup_keywords || '';
     const kBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
     document.getElementById('kstartup-schedule-badge').textContent = kBadgeMap[kEvery] || `${kEvery}시간마다`;
+
+    // 이사회 에이전트 설정
+    document.getElementById('board-enabled').checked = s.board_enabled !== false;
+    const bEvery = parseInt(s.board_run_every_hours || 3);
+    document.getElementById('board-run-every-hours').value = bEvery;
+    document.getElementById('board-schedule-badge').textContent = kBadgeMap[bEvery] || `${bEvery}시간마다`;
   }
 
   async function loadProfile() {
@@ -827,6 +868,26 @@
     } finally {
       btn.disabled = false;
       btn.textContent = '지금 실행하기';
+    }
+  }
+
+  async function saveBoardSettings() {
+    const bEvery = parseInt(document.getElementById('board-run-every-hours').value);
+    const payload = {
+      board_enabled: document.getElementById('board-enabled').checked,
+      board_run_every_hours: bEvery,
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      await sbFetch('agent_settings?id=eq.1', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      const badgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
+      document.getElementById('board-schedule-badge').textContent = badgeMap[bEvery] || `${bEvery}시간마다`;
+      toast('이사회 에이전트 설정 저장 완료!');
+    } catch (e) {
+      toast('저장 실패: ' + e.message, true);
     }
   }
 
