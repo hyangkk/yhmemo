@@ -675,8 +675,7 @@ def handle_command(text, settings):
             q_num = (topic.get("total_questions", 0) or 0) + 1
             label = (
                 f"<b>[{topic['name']}]</b> (Q{q_num})\n\n"
-                f"{question}\n\n"
-                f"<i>답변을 입력해주세요. /건너뛰기 로 건너뛸 수 있습니다.</i>"
+                f"{question}"
             )
             msg_id = tg_send(label)
             if msg_id:
@@ -898,8 +897,7 @@ def process_ask(settings):
     q_num = (topic.get("total_questions", 0) or 0) + 1
     label = (
         f"<b>[{topic['name']}]</b> (Q{q_num})\n\n"
-        f"{question}\n\n"
-        f"<i>답변을 입력해주세요. /건너뛰기 로 건너뛸 수 있습니다.</i>"
+        f"{question}"
     )
     msg_id = tg_send(label)
 
