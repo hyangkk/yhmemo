@@ -610,48 +610,6 @@ def handle_command(text, settings):
             tg_send(f"대본 생성 실패: {e}")
         return True
 
-    if cmd in ("/주기", "/interval"):
-        parts = text.strip().split(maxsplit=1)
-        if len(parts) < 2:
-            current = _get_interval_minutes(settings)
-            tg_send(
-                f"<b>현재 질문 주기:</b> {_format_interval(current)}\n\n"
-                f"변경하려면:\n"
-                f"  /주기 30분\n"
-                f"  /주기 1시간 30분\n"
-                f"  /주기 2시간\n"
-                f"  /주기 45분"
-            )
-            return True
-
-        raw = parts[1].strip()
-        total_minutes = 0
-        # "1시간 30분", "2시간", "45분", "90분" 등 파싱
-        import re as _re
-        h_match = _re.search(r"(\d+)\s*시간", raw)
-        m_match = _re.search(r"(\d+)\s*분", raw)
-        if h_match:
-            total_minutes += int(h_match.group(1)) * 60
-        if m_match:
-            total_minutes += int(m_match.group(1))
-        # 숫자만 입력한 경우 분으로 해석
-        if not h_match and not m_match:
-            try:
-                total_minutes = int(raw)
-            except ValueError:
-                tg_send("주기를 인식할 수 없습니다.\n예: /주기 45분, /주기 2시간, /주기 1시간 30분")
-                return True
-
-        if total_minutes < 15:
-            tg_send("최소 주기는 15분입니다. (GitHub Actions 실행 간격)")
-            return True
-
-        sb_patch("agent_settings?id=eq.1", {
-            "interview_interval_minutes": total_minutes,
-        })
-        tg_send(f"질문 주기가 <b>{_format_interval(total_minutes)}</b>으로 변경되었습니다!")
-        return True
-
     if cmd in ("/건너뛰기", "/skip"):
         pending = get_pending_question()
         if pending:
@@ -909,6 +867,24 @@ def process_notion_sync(settings, topics_updated):
 # 메인
 # ---------------------------------------------------------------------------
 
+def _webhook_active():
+    """텔레그램 웹훅이 설정되어 있는지 확인."""
+    token = _tg_token()
+    if not token:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/getWebhookInfo",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            info = json.loads(resp.read().decode())
+            url = info.get("result", {}).get("url", "")
+            return bool(url)
+    except Exception:
+        return False
+
+
 def main():
     print("=== 인터뷰 에이전트 시작 ===\n")
 
@@ -919,34 +895,40 @@ def main():
         print("인터뷰 에이전트가 비활성화 상태입니다. 종료합니다.")
         sys.exit(0)
 
-    interval = int(settings.get("interview_interval_hours", 3))
+    interval_min = _get_interval_minutes(settings)
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    print(f"질문 주기: {interval}시간 | 노션: {'연결됨' if _notion_available() else '미설정'}")
+    webhook = _webhook_active()
+    print(f"질문 주기: {_format_interval(interval_min)} | 노션: {'연결됨' if _notion_available() else '미설정'} | 웹훅: {'활성' if webhook else '비활성'}")
     if is_manual:
-        print("수동 실행 모드\n")
+        print("수동 실행 모드")
     print()
 
-    # 1단계: 텔레그램 답변 수집
-    print("[1/3] 답변 수집 중...")
-    try:
-        topics_updated = process_collect(settings)
-    except Exception as e:
-        print(f"답변 수집 오류: {e}", file=sys.stderr)
-        topics_updated = set()
+    topics_updated = set()
 
-    # 2단계: 노션 동기화
-    print("\n[2/3] 노션 동기화...")
-    try:
-        process_notion_sync(settings, topics_updated)
-    except Exception as e:
-        print(f"노션 동기화 오류: {e}", file=sys.stderr)
+    # 1단계: 텔레그램 답변 수집 (웹훅 미사용 시에만)
+    if webhook:
+        print("[1/2] 웹훅 활성 — 메시지 수집 건너뜀 (실시간 처리 중)")
+    else:
+        print("[1/2] 답변 수집 중 (폴링 모드)...")
+        try:
+            topics_updated = process_collect(settings)
+        except Exception as e:
+            print(f"답변 수집 오류: {e}", file=sys.stderr)
 
-    # 3단계: 질문 발송
-    print("\n[3/3] 질문 발송 확인...")
+    # 2단계: 질문 발송
+    print(f"\n[2/2] 질문 발송 확인...")
     try:
         process_ask(settings)
     except Exception as e:
         print(f"질문 발송 오류: {e}", file=sys.stderr)
+
+    # 노션 동기화 (답변이 새로 수집된 경우에만)
+    if topics_updated:
+        print("\n[추가] 노션 동기화...")
+        try:
+            process_notion_sync(settings, topics_updated)
+        except Exception as e:
+            print(f"노션 동기화 오류: {e}", file=sys.stderr)
 
     print("\n=== 인터뷰 에이전트 완료 ===")
 
