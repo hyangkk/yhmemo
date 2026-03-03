@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS interview_topics (
     enabled         BOOLEAN DEFAULT TRUE,
     total_questions INTEGER DEFAULT 0,            -- 누적 질문 수
     notion_page_id  TEXT DEFAULT '',              -- 연결된 노션 페이지 ID
+    draft           TEXT DEFAULT '',              -- 최신 유튜브 대본 초안
+    draft_updated_at TIMESTAMPTZ,                 -- 대본 마지막 업데이트 시각
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 

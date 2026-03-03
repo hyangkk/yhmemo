@@ -301,6 +301,24 @@ async function saveAnswer(text: string, messageId?: number): Promise<void> {
       telegram_message_id: messageId,
     });
     await tgSend("답변이 기록되었습니다!");
+
+    // 답변 후 자동으로 대본 재생성 (기존 대본이 있는 경우에만)
+    const { data: topicData } = await sb
+      .from("interview_topics")
+      .select("draft, draft_updated_at")
+      .eq("id", topicId)
+      .single();
+
+    if (topicData?.draft) {
+      // 마지막 대본 생성 후 3분 이상 경과했을 때만 재생성
+      const lastDraft = topicData.draft_updated_at
+        ? new Date(topicData.draft_updated_at).getTime()
+        : 0;
+      const now = Date.now();
+      if (now - lastDraft > 3 * 60 * 1000) {
+        await triggerWorkflow("interview-draft.yml");
+      }
+    }
   }
 }
 
