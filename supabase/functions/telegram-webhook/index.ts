@@ -143,7 +143,8 @@ async function triggerWorkflow(
 // ─── 명령어 핸들러 ───
 async function handleCommand(
   text: string,
-  settings: Record<string, unknown>
+  settings: Record<string, unknown>,
+  msgId: number = 0
 ): Promise<boolean> {
   const cmd = text.trim().split(/\s+/)[0].toLowerCase();
 
@@ -152,7 +153,12 @@ async function handleCommand(
     await tgSend(
       "<b>전체 명령어 목록</b>\n" +
         "\n" +
-        "<b>인터뷰 에이전트</b>\n" +
+        "<b>🏛️ 이사회 에이전트</b>\n" +
+        "  /생각일기 — 최근 N시간 이사회 분석\n" +
+        "  /생각일기 6시간 — 6시간 이사회 분석\n" +
+        "  /이사회 — /생각일기와 동일\n" +
+        "\n" +
+        "<b>🎙️ 인터뷰 에이전트</b>\n" +
         "  /주제 — 인터뷰 주제 목록\n" +
         "  /인터뷰 — 에이전트 상태 확인\n" +
         "  /주기 — 질문 주기 확인/변경\n" +
@@ -161,18 +167,42 @@ async function handleCommand(
         "  /질문줘 — 지금 바로 질문 받기\n" +
         "  /건너뛰기 — 현재 질문 건너뛰기\n" +
         "\n" +
-        "<b>뉴스 에이전트</b>\n" +
-        "  자동 실행 (설정 주기마다)\n" +
-        "\n" +
-        "<b>K-Startup 에이전트</b>\n" +
-        "  자동 실행 (설정 주기마다)\n" +
-        "\n" +
         "<b>공통</b>\n" +
         "  /명령어 — 이 도움말 표시\n" +
         "\n" +
         "<i>일반 텍스트를 보내면 현재 진행 중인\n" +
         "인터뷰 주제에 답변으로 기록됩니다.</i>"
     );
+    return true;
+  }
+
+  // /생각일기, /이사회 — 이사회 에이전트 즉시 실행
+  if (cmd === "/생각일기" || cmd === "/이사회") {
+    // "N시간" 파싱
+    const parts = text.trim().split(/\s+/);
+    let hours = 0;
+    if (parts.length >= 2) {
+      const m = parts[1].match(/^(\d+)/);
+      if (m) hours = parseInt(m[1], 10);
+    }
+    const displayHours = hours > 0 ? `${hours}시간` : "기본 주기";
+
+    // Supabase에 커맨드 정보 저장
+    await sb.from("agent_settings").update({
+      board_command_hours: hours,
+      board_command_msg_id: msgId,
+    }).eq("id", 1);
+
+    // GitHub Actions 트리거
+    const triggered = await triggerWorkflow("diary-board-agent.yml");
+    if (triggered) {
+      await tgSend(
+        `📊 최근 <b>${displayHours}</b> 생각일기 이사회 분석 중...\n잠시 후 결과가 전송됩니다.`,
+        msgId
+      );
+    } else {
+      await tgSend("⚠️ 이사회 에이전트 실행에 실패했습니다. 잠시 후 다시 시도해주세요.", msgId);
+    }
     return true;
   }
 
@@ -408,7 +438,7 @@ Deno.serve(async (req: Request) => {
 
     // 명령어 처리
     if (text.startsWith("/")) {
-      await handleCommand(text, settings);
+      await handleCommand(text, settings, msg?.message_id ?? 0);
       return new Response("OK", { status: 200 });
     }
 
