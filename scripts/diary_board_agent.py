@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys as _sys; _sys.stdout.reconfigure(line_buffering=True)  # GitHub Actions 로그 순서 보장
 """
 생각일기 이사회 에이전트
 - 최근 N시간 생각일기 항목 수집
@@ -7,9 +9,11 @@
 - 합의 사항 / 액션 아이템 도출
 - 텔레그램 발송 + Notion 이사회DB + Supabase 기록 저장
 - 이사회 후 각 멤버의 personality 자동 업데이트
+- 텔레그램 커맨드: /생각일기 N시간 → 즉시 이사회 분석
 """
 
 import os
+import re
 import sys
 import json
 import urllib.request
@@ -118,6 +122,7 @@ def load_settings() -> dict:
         "board_run_every_hours": int(s.get("board_run_every_hours", 3)),
         "diary_notion_database_id": s.get("diary_notion_database_id") or os.environ.get("NOTION_DATABASE_ID", ""),
         "board_notion_db_id": s.get("board_notion_db_id") or os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
+        "board_last_update_id": int(s.get("board_last_update_id") or 0),
     }
 
 def load_board_members() -> list:
@@ -333,7 +338,138 @@ JSON 없이 텍스트만 반환하세요."""
 # 텔레그램 발송
 # ---------------------------------------------------------------------------
 
-def send_to_telegram(report: dict, members: list, entry_count: int, run_every: int, now: datetime) -> bool:
+# ---------------------------------------------------------------------------
+# 텔레그램 커맨드 처리
+# ---------------------------------------------------------------------------
+
+def _tg_token() -> str:
+    return os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+def _tg_chat_id() -> str:
+    return os.environ.get("TELEGRAM_CHAT_ID", "")
+
+def tg_send_simple(text: str, reply_to: int = None) -> int | None:
+    """단순 텍스트 메시지 발송. 성공 시 message_id 반환."""
+    payload = {
+        "chat_id": _tg_chat_id(),
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{_tg_token()}/sendMessage",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                return result["result"]["message_id"]
+    except Exception as e:
+        print(f"텔레그램 발송 오류: {e}", file=sys.stderr)
+    return None
+
+def tg_get_updates(offset: int = 0) -> list:
+    """텔레그램 새 메시지 가져오기."""
+    payload = {"offset": offset, "timeout": 5, "allowed_updates": ["message"]}
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{_tg_token()}/getUpdates",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode())
+            if not result.get("ok"):
+                return []
+            chat_id = _tg_chat_id()
+            return [
+                u for u in result.get("result", [])
+                if str(u.get("message", {}).get("chat", {}).get("id")) == chat_id
+            ]
+    except Exception as e:
+        print(f"텔레그램 업데이트 조회 실패: {e}", file=sys.stderr)
+        return []
+
+def parse_board_command(text: str) -> int | None:
+    """/생각일기 [N시간] 또는 /이사회 [N시간] 파싱.
+    유효한 커맨드면 시간 수 반환 (0 = 기본값 사용). None이면 커맨드 아님."""
+    text = text.strip()
+    m = re.match(r'^/(?:생각일기|이사회)(?:\s+(\d+)(?:시간)?)?$', text)
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1) else 0
+
+def handle_telegram_commands(settings: dict, members: list) -> int:
+    """텔레그램 커맨드 처리. 처리한 커맨드 수 반환."""
+    if not _tg_token() or not _tg_chat_id():
+        return 0
+
+    last_id = settings.get("board_last_update_id", 0)
+    updates = tg_get_updates(offset=last_id + 1)
+    if not updates:
+        return 0
+
+    handled = 0
+    new_last_id = last_id
+    diary_db_id = settings.get("diary_notion_database_id", "")
+    default_hours = int(settings.get("board_run_every_hours", 3))
+
+    for update in updates:
+        uid = update.get("update_id", 0)
+        new_last_id = max(new_last_id, uid)
+
+        msg = update.get("message", {})
+        text = (msg.get("text") or "").strip()
+        msg_id = msg.get("message_id")
+
+        hours = parse_board_command(text)
+        if hours is None:
+            continue
+
+        if hours == 0:
+            hours = default_hours
+
+        print(f"  커맨드 수신: '{text}' → {hours}시간 분석 (msg_id={msg_id})")
+        tg_send_simple(f"📊 최근 <b>{hours}시간</b> 생각일기 이사회 분석 중...", reply_to=msg_id)
+
+        try:
+            pages = fetch_recent_pages(hours=hours, database_id=diary_db_id)
+            now = datetime.now(KST)
+
+            if not pages:
+                tg_send_simple(f"최근 {hours}시간 내 생각일기 항목이 없습니다.", reply_to=msg_id)
+            else:
+                entries = collect_entries(pages)
+                report = generate_board_report(entries, members)
+                send_to_telegram(report, members, len(entries), hours, now, reply_to=msg_id)
+                save_to_supabase(report, len(entries), hours, now)
+                board_db_id = settings.get("board_notion_db_id", "")
+                if board_db_id:
+                    save_to_board_notion_db(report, members, len(entries), hours, now, board_db_id)
+                update_member_personalities(members, report)
+            handled += 1
+        except SystemExit:
+            tg_send_simple("⚠️ 분석 중 오류가 발생했습니다. 로그를 확인해주세요.", reply_to=msg_id)
+        except Exception as e:
+            print(f"  커맨드 처리 오류: {e}", file=sys.stderr)
+            tg_send_simple(f"⚠️ 오류: {e}", reply_to=msg_id)
+
+    if new_last_id > last_id:
+        _supabase_patch(
+            "/rest/v1/agent_settings?id=eq.1",
+            {"board_last_update_id": new_last_id},
+        )
+
+    return handled
+
+
+def send_to_telegram(report: dict, members: list, entry_count: int, run_every: int, now: datetime, reply_to: int = None) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -382,12 +518,15 @@ def send_to_telegram(report: dict, members: list, entry_count: int, run_every: i
             lines.append(f"  • {item}")
 
     message = "\n".join(lines).strip()
-    payload = json.dumps({
+    tg_payload = {
         "chat_id": chat_id,
         "text": message[:4096],
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
-    }).encode("utf-8")
+    }
+    if reply_to:
+        tg_payload["reply_to_message_id"] = reply_to
+    payload = json.dumps(tg_payload).encode("utf-8")
 
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -544,6 +683,20 @@ def main():
     print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}")
     print(f"  생각일기 DB: {diary_db_id or '(미설정)'}\n")
 
+    # 멤버 로드 (커맨드 처리에서도 사용)
+    print("[멤버] 이사회 멤버 로드 중...")
+    members = load_board_members()
+    print(f"  → {len(members)}명\n")
+
+    # 텔레그램 커맨드 처리 (스케줄과 무관하게 항상 실행)
+    print("[커맨드] 텔레그램 명령어 확인 중...")
+    cmd_count = handle_telegram_commands(settings, members)
+    if cmd_count:
+        print(f"  처리 완료: {cmd_count}개 커맨드\n")
+    else:
+        print("  새 커맨드 없음\n")
+
+    # 스케줄 실행 체크
     if not settings["board_enabled"] and not is_manual:
         print("이사회 에이전트 비활성화 상태. 종료.")
         return
@@ -554,10 +707,6 @@ def main():
         if current_hour_utc % run_every != 0:
             print(f"현재 {current_hour_utc}시 (UTC) — {run_every}시간 간격 미해당. 건너뜀.")
             return
-
-    print("[멤버] 이사회 멤버 로드 중...")
-    members = load_board_members()
-    print(f"  → {len(members)}명\n")
 
     print(f"[1/4] 최근 {run_every}시간 생각일기 조회 중...")
     pages = fetch_recent_pages(hours=run_every, database_id=diary_db_id)

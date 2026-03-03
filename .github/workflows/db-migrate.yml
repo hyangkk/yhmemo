@@ -85,6 +85,7 @@ jobs:
           ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS opinions    JSONB DEFAULT '{}'::jsonb;
           ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS briefing    JSONB DEFAULT '{}'::jsonb;
           ALTER TABLE board_reports ADD COLUMN IF NOT EXISTS action_items JSONB DEFAULT '[]'::jsonb;
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_last_update_id BIGINT DEFAULT 0;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
