@@ -65,6 +65,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_kstartup_announcement_id
 
 
 -- ============================================================
+-- 3. 인생 이사회 회의록 테이블
+--    매 시간 이사회 토론 결과 저장
+-- ============================================================
+CREATE TABLE IF NOT EXISTS life_council_meetings (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    generated_at    TIMESTAMPTZ NOT NULL,       -- 회의 시각
+    agenda          JSONB,                      -- 안건 {title, category, description, question}
+    discussion      JSONB,                      -- 토론 [{member_id, name, emoji, opinions}]
+    options         JSONB,                      -- 선택지 ["A", "B", "C"]
+    votes           JSONB,                      -- 투표 상세 {이사명: {vote, option, reason}}
+    vote_counts     JSONB,                      -- 투표 집계 {"A": 2, "B": 2, "C": 1}
+    winner          TEXT,                       -- 채택된 선택지
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS 비활성화
+ALTER TABLE life_council_meetings DISABLE ROW LEVEL SECURITY;
+
+
+-- ============================================================
 -- 프로필 예시 데이터 (실제 정보로 수정하세요)
 -- ============================================================
 /*
