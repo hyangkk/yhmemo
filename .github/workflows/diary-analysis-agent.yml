@@ -1,0 +1,44 @@
+name: 생각일기 분석 에이전트
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: '분석 기간 (개월)'
+        required: true
+        default: '1'
+      msg_id:
+        description: '텔레그램 메시지 ID (reply용)'
+        required: false
+        default: '0'
+
+jobs:
+  analysis:
+    name: 생각일기 종합 분석 & Notion 저장
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install anthropic
+
+      - name: 분석 에이전트 실행
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          BOARD_NOTION_DATABASE_ID: ${{ secrets.BOARD_NOTION_DATABASE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          INPUT_MONTHS: ${{ github.event.inputs.months }}
+          INPUT_MSG_ID: ${{ github.event.inputs.msg_id }}
+        run: python scripts/diary_analysis_agent.py
