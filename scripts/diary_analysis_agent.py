@@ -5,7 +5,8 @@ import sys as _sys; _sys.stdout.reconfigure(line_buffering=True)
 생각일기 분석 에이전트
 - 특정 기간(N개월)의 생각일기 항목을 수집
 - Claude AI로 장기 트렌드, 패턴, 성장 포인트 등 종합 분석
-- 텔레그램으로 결과 발송
+- Notion 이사회 DB에 분석 결과 저장
+- 텔레그램에 완료 알림 + Notion 링크 발송
 - 명령어: /생각분석 24개월
 """
 
@@ -166,8 +167,8 @@ def _build_text(grouped: dict, content_limit: int) -> str:
 # Claude AI 분석
 # ---------------------------------------------------------------------------
 
-def generate_analysis(entries_text: str, total_count: int, months: int, date_range: str) -> str:
-    """Claude로 장기 생각일기 종합 분석."""
+def generate_analysis(entries_text: str, total_count: int, months: int, date_range: str) -> dict:
+    """Claude로 장기 생각일기 종합 분석. JSON dict 반환."""
     client = anthropic.Anthropic()
 
     prompt = f"""다음은 최근 {months}개월간의 생각일기 항목들입니다 ({date_range}, 총 {total_count}개).
@@ -175,31 +176,38 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
 {entries_text}
 
 ---
-위 생각일기들을 종합적으로 분석해서 아래 형식으로 작성해주세요.
-마크다운이나 JSON 없이, 아래 구조의 순수 텍스트로 작성하세요.
-각 섹션은 충실하게 작성하되, 전체 길이는 텔레그램 메시지에 맞게 간결하게 유지하세요.
+위 생각일기들을 종합적으로 분석해서 반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
+각 섹션은 충실하고 구체적으로 작성해주세요.
 
-[전체 개요]
-기간, 항목 수, 전반적인 특징을 2~3문장으로 요약
-
-[핵심 주제 TOP 5]
-가장 많이 등장하거나 중요한 주제 5개를 빈도/중요도 순으로 정리
-각 주제마다 한 줄 설명
-
-[시간별 변화 흐름]
-초기 → 중기 → 최근으로 관심사/고민이 어떻게 변화했는지 흐름 정리
-
-[감정/에너지 패턴]
-글에서 읽히는 감정적 흐름, 에너지 높낮이의 패턴
-
-[핵심 인사이트 3가지]
-데이터에서 발견되는 가장 중요한 인사이트 3개
-
-[성장 포인트]
-이 기간 동안 확인되는 성장이나 변화
-
-[앞으로의 제안]
-분석 결과를 바탕으로 한 구체적 제안 2~3개"""
+{{
+  "overview": "기간, 항목 수, 전반적인 특징을 2~3문장으로 요약",
+  "top_themes": [
+    {{"theme": "주제명", "description": "해당 주제에 대한 설명 1~2문장"}}
+  ],
+  "timeline_flow": "초기 → 중기 → 최근으로 관심사/고민이 어떻게 변화했는지 흐름 정리 (3~5문장)",
+  "emotion_pattern": "글에서 읽히는 감정적 흐름, 에너지 높낮이의 패턴 (2~3문장)",
+  "recurring_patterns": [
+    "자주 나타나는 패턴이나 공통점 1",
+    "자주 나타나는 패턴이나 공통점 2",
+    "자주 나타나는 패턴이나 공통점 3"
+  ],
+  "recurring_problems": [
+    "반복되는 문제점 1",
+    "반복되는 문제점 2",
+    "반복되는 문제점 3"
+  ],
+  "key_insights": [
+    "핵심 인사이트 1",
+    "핵심 인사이트 2",
+    "핵심 인사이트 3"
+  ],
+  "growth_points": "이 기간 동안 확인되는 성장이나 변화 (2~3문장)",
+  "suggestions": [
+    "분석 결과를 바탕으로 한 구체적 제안 1",
+    "구체적 제안 2",
+    "구체적 제안 3"
+  ]
+}}"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -207,11 +215,144 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return message.content[0].text.strip()
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:].lstrip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"overview": raw, "top_themes": [], "timeline_flow": "", "emotion_pattern": "",
+                "recurring_patterns": [], "recurring_problems": [], "key_insights": [],
+                "growth_points": "", "suggestions": []}
 
 
 # ---------------------------------------------------------------------------
-# 텔레그램 발송 (긴 메시지 분할)
+# Notion 이사회 DB에 분석 결과 저장
+# ---------------------------------------------------------------------------
+
+def _text_block(block_type: str, content: str) -> dict:
+    """Notion 텍스트 블록 생성 헬퍼. 2000자 제한 처리."""
+    content = content[:2000] if len(content) > 2000 else content
+    return {"object": "block", "type": block_type, block_type: {
+        "rich_text": [{"type": "text", "text": {"content": content}}]
+    }}
+
+
+def save_to_notion(analysis: dict, entry_count: int, months: int, date_range: str, now: datetime, db_id: str) -> str | None:
+    """분석 결과를 Notion 이사회 DB에 저장. 성공 시 페이지 URL 반환."""
+    if not db_id:
+        print("BOARD_NOTION_DATABASE_ID 미설정 — Notion 저장 불가", file=sys.stderr)
+        return None
+
+    title = f"생각분석 · {date_range} ({months}개월)"
+    children = [
+        {"object": "block", "type": "callout", "callout": {
+            "icon": {"type": "emoji", "emoji": "🔍"},
+            "color": "blue_background",
+            "rich_text": [{"type": "text", "text": {"content": f"{date_range} · {entry_count}개 항목 · {months}개월 분석 | {now.strftime('%Y-%m-%d %H:%M')} KST"}}],
+        }},
+    ]
+
+    # 전체 개요
+    children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📋 전체 개요"}}]}})
+    children.append(_text_block("paragraph", analysis.get("overview", "")))
+
+    # 핵심 주제 TOP 5
+    top_themes = analysis.get("top_themes", [])
+    if top_themes:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🏷️ 핵심 주제 TOP 5"}}]}})
+        for t in top_themes:
+            if isinstance(t, dict):
+                text = f"{t.get('theme', '')} — {t.get('description', '')}"
+            else:
+                text = str(t)
+            children.append(_text_block("numbered_list_item", text))
+
+    # 시간별 변화 흐름
+    timeline = analysis.get("timeline_flow", "")
+    if timeline:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📈 시간별 변화 흐름"}}]}})
+        children.append(_text_block("paragraph", timeline))
+
+    # 감정/에너지 패턴
+    emotion = analysis.get("emotion_pattern", "")
+    if emotion:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "💫 감정/에너지 패턴"}}]}})
+        children.append(_text_block("paragraph", emotion))
+
+    children.append({"object": "block", "type": "divider", "divider": {}})
+
+    # 자주 나타나는 패턴 및 공통점
+    patterns = analysis.get("recurring_patterns", [])
+    if patterns:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🔄 자주 나타나는 패턴 및 공통점"}}]}})
+        for p in patterns:
+            children.append(_text_block("bulleted_list_item", str(p)))
+
+    # 반복되는 문제점
+    problems = analysis.get("recurring_problems", [])
+    if problems:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "⚠️ 반복되는 문제점"}}]}})
+        for p in problems:
+            children.append(_text_block("bulleted_list_item", str(p)))
+
+    children.append({"object": "block", "type": "divider", "divider": {}})
+
+    # 핵심 인사이트
+    insights = analysis.get("key_insights", [])
+    if insights:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "💡 핵심 인사이트"}}]}})
+        for item in insights:
+            children.append(_text_block("numbered_list_item", str(item)))
+
+    # 성장 포인트
+    growth = analysis.get("growth_points", "")
+    if growth:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🌱 성장 포인트"}}]}})
+        children.append(_text_block("paragraph", growth))
+
+    # 앞으로의 제안
+    suggestions = analysis.get("suggestions", [])
+    if suggestions:
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "✅ 앞으로의 제안"}}]}})
+        for item in suggestions:
+            children.append({"object": "block", "type": "to_do", "to_do": {
+                "checked": False,
+                "rich_text": [{"type": "text", "text": {"content": str(item)}}],
+            }})
+
+    page_data = {
+        "parent": {"database_id": db_id},
+        "properties": {"title": {"title": [{"type": "text", "text": {"content": title}}]}},
+        "children": children,
+    }
+
+    req = urllib.request.Request(
+        "https://api.notion.com/v1/pages",
+        data=json.dumps(page_data, ensure_ascii=False).encode("utf-8"),
+        headers=notion_headers(),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            url = result.get("url", "")
+            print(f"Notion 저장 완료: {url}")
+            return url
+    except urllib.error.HTTPError as e:
+        print(f"Notion 저장 실패 ({e.code}): {e.read().decode()}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Notion 저장 오류: {e}", file=sys.stderr)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 텔레그램 알림 (링크만 발송)
 # ---------------------------------------------------------------------------
 
 def send_to_telegram(text: str, reply_to: int = None) -> bool:
@@ -221,58 +362,31 @@ def send_to_telegram(text: str, reply_to: int = None) -> bool:
         print("경고: 텔레그램 환경변수 누락", file=sys.stderr)
         return False
 
-    # 4096자 제한 → 분할 발송
-    chunks = split_message(text, 4096)
-    success = True
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
 
-    for i, chunk in enumerate(chunks):
-        payload = {
-            "chat_id": chat_id,
-            "text": chunk,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
-        if i == 0 and reply_to:
-            payload["reply_to_message_id"] = reply_to
-
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                result = json.loads(resp.read().decode())
-                if not result.get("ok"):
-                    print(f"텔레그램 발송 실패 (파트 {i+1}): {result}", file=sys.stderr)
-                    success = False
-        except Exception as e:
-            print(f"텔레그램 발송 오류 (파트 {i+1}): {e}", file=sys.stderr)
-            success = False
-
-    if success:
-        print(f"텔레그램 발송 완료 ({len(chunks)}개 메시지)")
-    return success
-
-
-def split_message(text: str, max_len: int = 4096) -> list:
-    """텍스트를 줄 단위로 분할."""
-    if len(text) <= max_len:
-        return [text]
-
-    chunks = []
-    current = ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_len:
-            if current:
-                chunks.append(current.strip())
-            current = line + "\n"
-        else:
-            current += line + "\n"
-    if current.strip():
-        chunks.append(current.strip())
-    return chunks
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print("텔레그램 발송 완료")
+                return True
+            print(f"텔레그램 발송 실패: {result}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"텔레그램 발송 오류: {e}", file=sys.stderr)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +406,14 @@ def _sb_headers() -> dict:
         "Content-Type": "application/json",
     }
 
-def load_diary_db_id() -> str:
-    """Supabase agent_settings에서 생각일기 DB ID를 로드."""
+def load_settings() -> dict:
+    """Supabase agent_settings에서 설정 로드."""
+    default = {
+        "diary_notion_database_id": os.environ.get("NOTION_DATABASE_ID", ""),
+        "board_notion_db_id": os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
+    }
     if not _sb_url() or not _sb_key():
-        return os.environ.get("NOTION_DATABASE_ID", "")
+        return default
     try:
         req = urllib.request.Request(
             f"{_sb_url()}/rest/v1/agent_settings?id=eq.1",
@@ -304,12 +422,14 @@ def load_diary_db_id() -> str:
         with urllib.request.urlopen(req) as resp:
             rows = json.loads(resp.read().decode())
         if rows:
-            db_id = rows[0].get("diary_notion_database_id") or ""
-            if db_id:
-                return db_id
+            s = rows[0]
+            return {
+                "diary_notion_database_id": s.get("diary_notion_database_id") or default["diary_notion_database_id"],
+                "board_notion_db_id": s.get("board_notion_db_id") or default["board_notion_db_id"],
+            }
     except Exception as e:
         print(f"Supabase 설정 로드 오류: {e}", file=sys.stderr)
-    return os.environ.get("NOTION_DATABASE_ID", "")
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -327,13 +447,17 @@ def main():
     months = int(os.environ.get("INPUT_MONTHS", "1"))
     reply_to = int(os.environ.get("INPUT_MSG_ID", "0")) or None
 
-    diary_db_id = load_diary_db_id()
+    settings = load_settings()
+    diary_db_id = settings["diary_notion_database_id"]
+    board_db_id = settings["board_notion_db_id"]
+
     if not diary_db_id:
         print("오류: 생각일기 Notion DB ID가 없습니다.", file=sys.stderr)
         sys.exit(1)
 
     print(f"분석 기간: {months}개월")
-    print(f"생각일기 DB: {diary_db_id}\n")
+    print(f"생각일기 DB: {diary_db_id}")
+    print(f"이사회 DB: {board_db_id or '(미설정)'}\n")
 
     # 1단계: 항목 조회
     print(f"[1/3] 최근 {months}개월 생각일기 조회 중...")
@@ -364,17 +488,21 @@ def main():
     # 3단계: AI 분석
     print("[3/3] Claude AI 종합 분석 중...")
     analysis = generate_analysis(entries_text, len(entries), months, date_range)
-
-    # 텔레그램 발송
     now = datetime.now(KST)
-    header = (
-        f"<b>🔍 생각일기 종합 분석</b>\n"
-        f"<i>{date_range} · {len(entries)}개 항목 · {months}개월</i>\n"
-        f"<i>{now.strftime('%Y/%m/%d %H:%M')} KST</i>\n\n"
-    )
-    full_message = header + analysis
 
-    ok = send_to_telegram(full_message, reply_to)
+    # Notion 이사회 DB에 저장
+    notion_url = save_to_notion(analysis, len(entries), months, date_range, now, board_db_id)
+
+    # 텔레그램에 완료 알림 + 링크
+    if notion_url:
+        msg = (
+            f"🔍 <b>생각일기 종합 분석 완료</b>\n"
+            f"<i>{date_range} · {len(entries)}개 항목 · {months}개월</i>\n\n"
+            f"👉 {notion_url}"
+        )
+        ok = send_to_telegram(msg, reply_to)
+    else:
+        ok = send_to_telegram("⚠️ 분석은 완료했으나 Notion 저장에 실패했습니다.", reply_to)
 
     print("\n=== 완료 ===")
     if not ok:

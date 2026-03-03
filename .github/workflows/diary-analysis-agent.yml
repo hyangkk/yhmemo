@@ -14,7 +14,7 @@ on:
 
 jobs:
   analysis:
-    name: 생각일기 종합 분석 & 텔레그램 발송
+    name: 생각일기 종합 분석 & Notion 저장
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +33,7 @@ jobs:
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          BOARD_NOTION_DATABASE_ID: ${{ secrets.BOARD_NOTION_DATABASE_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
