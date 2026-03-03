@@ -176,9 +176,9 @@ async function handleCommand(
     return true;
   }
 
-  // /생각일기, /이사회 — 이사회 에이전트 즉시 실행
-  if (cmd === "/생각일기" || cmd === "/이사회") {
-    // "N시간" 파싱
+  // /생각일기, /이사회, /board — 이사회 에이전트 즉시 실행
+  if (cmd === "/생각일기" || cmd === "/이사회" || cmd === "/board") {
+    // "N시간" 또는 숫자 파싱 (/board 3 또는 /생각일기 3시간)
     const parts = text.trim().split(/\s+/);
     let hours = 0;
     if (parts.length >= 2) {
