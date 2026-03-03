@@ -718,12 +718,17 @@
 
         <div class="section-divider"></div>
 
-        <!-- 이사회 기록 DB -->
-        <div class="section-label">이사회 기록 저장</div>
+        <!-- 이사회 노션 DB -->
+        <div class="section-label">노션 연동</div>
         <div class="field">
-          <label>Notion 이사회 DB ID</label>
+          <label>생각일기 Notion DB ID <span style="color:#ff3b30">*</span></label>
+          <input type="text" id="diary-notion-db-id" placeholder="784b53d2c7e6441f87ad6d677c994fcc">
+          <p class="hint">이사회가 내용을 읽어올 생각일기 Notion 데이터베이스 ID입니다. 노션 URL에서 복사하세요.</p>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label>이사회 기록 Notion DB ID</label>
           <input type="text" id="board-notion-db-id" placeholder="3181114e649180dc8431f9ef1a89df67">
-          <p class="hint">보고서가 생성될 때마다 해당 Notion DB에 페이지를 자동 저장합니다. NOTION_API_KEY는 GitHub Secrets에 등록하세요.</p>
+          <p class="hint">보고서가 생성될 때마다 해당 Notion DB에 페이지를 자동 저장합니다. (선택)</p>
         </div>
 
         <div class="section-divider"></div>
@@ -877,6 +882,7 @@
     const bEvery = parseInt(s.board_run_every_hours || 3);
     document.getElementById('board-run-every-hours').value = bEvery;
     document.getElementById('board-schedule-badge').textContent = kBadgeMap[bEvery] || `${bEvery}시간마다`;
+    document.getElementById('diary-notion-db-id').value = s.diary_notion_database_id || '';
     document.getElementById('board-notion-db-id').value = s.board_notion_db_id || '';
   }
 
@@ -1249,6 +1255,7 @@
     const payload = {
       board_enabled: document.getElementById('board-enabled').checked,
       board_run_every_hours: bEvery,
+      diary_notion_database_id: document.getElementById('diary-notion-db-id').value.trim(),
       board_notion_db_id: document.getElementById('board-notion-db-id').value.trim(),
       updated_at: new Date().toISOString(),
     };

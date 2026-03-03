@@ -106,6 +106,7 @@ def load_settings() -> dict:
     default = {
         "board_enabled": True,
         "board_run_every_hours": 3,
+        "diary_notion_database_id": os.environ.get("NOTION_DATABASE_ID", ""),
         "board_notion_db_id": os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
     }
     rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
@@ -115,6 +116,7 @@ def load_settings() -> dict:
     return {
         "board_enabled": s.get("board_enabled", True),
         "board_run_every_hours": int(s.get("board_run_every_hours", 3)),
+        "diary_notion_database_id": s.get("diary_notion_database_id") or os.environ.get("NOTION_DATABASE_ID", ""),
         "board_notion_db_id": s.get("board_notion_db_id") or os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
     }
 
@@ -139,10 +141,11 @@ def notion_headers() -> dict:
         "Notion-Version": "2022-06-28",
     }
 
-def fetch_recent_pages(hours: int) -> list:
-    database_id = os.environ.get("NOTION_DATABASE_ID", "")
+def fetch_recent_pages(hours: int, database_id: str = "") -> list:
     if not database_id:
-        print("오류: NOTION_DATABASE_ID가 없습니다.", file=sys.stderr)
+        database_id = os.environ.get("NOTION_DATABASE_ID", "")
+    if not database_id:
+        print("오류: 생각일기 Notion DB ID가 없습니다. 웹 설정에서 'diary_notion_database_id'를 입력해주세요.", file=sys.stderr)
         sys.exit(1)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
@@ -531,7 +534,9 @@ def main():
 
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     settings = load_settings()
-    print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}\n")
+    diary_db_id = settings["diary_notion_database_id"]
+    print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}")
+    print(f"  생각일기 DB: {diary_db_id or '(미설정)'}\n")
 
     if not settings["board_enabled"] and not is_manual:
         print("이사회 에이전트 비활성화 상태. 종료.")
@@ -549,7 +554,7 @@ def main():
     print(f"  → {len(members)}명\n")
 
     print(f"[1/4] 최근 {run_every}시간 생각일기 조회 중...")
-    pages = fetch_recent_pages(hours=run_every)
+    pages = fetch_recent_pages(hours=run_every, database_id=diary_db_id)
     print(f"조회된 페이지: {len(pages)}개\n")
 
     if not pages:
