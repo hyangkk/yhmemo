@@ -1,0 +1,29 @@
+name: RLS 보안 수정
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-rls:
+    name: 전체 테이블 RLS 활성화
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: RLS 활성화 SQL 실행
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.supabase.com/v1/projects/unuvbdqjgiypxfvlplpd/database/query" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "ALTER TABLE user_profile ENABLE ROW LEVEL SECURITY; ALTER TABLE kstartup_announcements ENABLE ROW LEVEL SECURITY; ALTER TABLE board_reports ENABLE ROW LEVEL SECURITY; ALTER TABLE board_members ENABLE ROW LEVEL SECURITY; ALTER TABLE news_ideas ENABLE ROW LEVEL SECURITY; ALTER TABLE interview_topics ENABLE ROW LEVEL SECURITY; ALTER TABLE interview_messages ENABLE ROW LEVEL SECURITY;"
+            }')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::RLS 활성화 실패 (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "모든 테이블 RLS 활성화 완료"
