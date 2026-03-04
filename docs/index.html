@@ -1340,8 +1340,12 @@
       <textarea class="member-desc-input" placeholder="이 이사의 관점과 판단 방식을 설명해주세요">${m.description || ''}</textarea>
       <div class="member-card-label">🤖 AI가 파악한 personality <span style="font-weight:400;text-transform:none;letter-spacing:0">(이사회 진행 시 자동 업데이트)</span></div>
       <textarea class="personality-field member-personality-input" placeholder="아직 이사회가 진행되지 않았습니다">${m.personality || ''}</textarea>
-      <div class="member-card-label" style="margin-top:6px">📝 발언 기록 (memory) <span style="font-weight:400;text-transform:none;letter-spacing:0">— 소통할수록 누적</span></div>
-      <textarea class="personality-field member-memory-input" placeholder="이사회, 안건, 표결 참여 시 자동 누적됩니다" style="min-height:60px;font-size:11px;line-height:1.5" readonly>${m.memory || ''}</textarea>
+      <div class="member-card-label" style="margin-top:6px">📌 사용자 지시사항 <span style="font-weight:400;text-transform:none;letter-spacing:0">— "기억해" 명령으로 누적</span></div>
+      <textarea class="personality-field member-directives-input" placeholder="이사회 대화에서 기억하라고 지시한 내용이 쌓입니다" style="min-height:40px;font-size:11px;line-height:1.5" readonly>${m.user_directives || ''}</textarea>
+      <div class="member-card-label" style="margin-top:6px">🧠 장기 기억 (meta_memory) <span style="font-weight:400;text-transform:none;letter-spacing:0">— AI가 자동 요약·통합</span></div>
+      <textarea class="personality-field member-meta-memory-input" placeholder="memory가 일정량 이상 쌓이면 AI가 자동으로 핵심 내용을 요약합니다" style="min-height:50px;font-size:11px;line-height:1.5" readonly>${m.meta_memory || ''}</textarea>
+      <div class="member-card-label" style="margin-top:6px">📝 최근 발언 기록 (memory) <span style="font-weight:400;text-transform:none;letter-spacing:0">— 소통할수록 누적</span></div>
+      <textarea class="personality-field member-memory-input" placeholder="이사회, 안건, 표결, 대화 참여 시 자동 누적됩니다" style="min-height:60px;font-size:11px;line-height:1.5" readonly>${m.memory || ''}</textarea>
       <div class="member-card-actions">
         <button class="btn-member-del" onclick="deleteBoardMember(this)">삭제</button>
         <button class="btn-member-save" onclick="saveBoardMember(this)">저장</button>

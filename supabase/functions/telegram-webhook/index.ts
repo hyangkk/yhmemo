@@ -140,6 +140,20 @@ async function triggerWorkflow(
   }
 }
 
+// ─── 이사회 대화 모드 활성화 ───
+async function activateBoardChat(): Promise<void> {
+  await sb.from("agent_settings").update({
+    board_chat_active_at: new Date().toISOString(),
+  }).eq("id", 1);
+}
+
+function isBoardChatActive(settings: Record<string, unknown>): boolean {
+  const activeAt = settings.board_chat_active_at as string | null;
+  if (!activeAt) return false;
+  const elapsed = Date.now() - new Date(activeAt).getTime();
+  return elapsed < 30 * 60 * 1000; // 30분
+}
+
 // ─── 명령어 핸들러 ───
 async function handleCommand(
   text: string,
@@ -174,7 +188,11 @@ async function handleCommand(
         "<b>공통</b>\n" +
         "  /명령어 — 이 도움말 표시\n" +
         "\n" +
-        "<i>일반 텍스트를 보내면 현재 진행 중인\n" +
+        "<b>💬 이사회 대화 모드</b>\n" +
+        "  이사회 명령어 사용 후 30분간 자동 활성화\n" +
+        "  자연어로 이사들과 대화, 질문, 지시 가능\n" +
+        "\n" +
+        "<i>대화 모드가 아닐 때 일반 텍스트를 보내면\n" +
         "인터뷰 주제에 답변으로 기록됩니다.</i>"
     );
     return true;
@@ -202,6 +220,7 @@ async function handleCommand(
     });
     if (triggered) {
       await tgSend(`📋 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 이사들의 의견이 도착합니다.`, msgId);
+      await activateBoardChat();
     } else {
       await tgSend("⚠️ 안건 에이전트 실행에 실패했습니다.", msgId);
     }
@@ -230,6 +249,7 @@ async function handleCommand(
     });
     if (triggered) {
       await tgSend(`🗳️ 표결 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 투표 결과가 도착합니다.`, msgId);
+      await activateBoardChat();
     } else {
       await tgSend("⚠️ 표결 에이전트 실행에 실패했습니다.", msgId);
     }
@@ -286,6 +306,7 @@ async function handleCommand(
         `📊 최근 <b>${displayHours}</b> 생각일기 이사회 분석 중...\n잠시 후 결과가 전송됩니다.`,
         msgId
       );
+      await activateBoardChat();
     } else {
       await tgSend("⚠️ 이사회 에이전트 실행에 실패했습니다. 잠시 후 다시 시도해주세요.", msgId);
     }
@@ -558,6 +579,22 @@ Deno.serve(async (req: Request) => {
         .from("agent_settings")
         .update({ draft_pending_at: null })
         .eq("id", 1);
+    }
+
+    // 이사회 대화 모드 체크 (30분간 활성)
+    if (isBoardChatActive(settings)) {
+      const triggered = await triggerWorkflow("board-chat-agent.yml", {
+        message: text,
+        msg_id: String(msg.message_id ?? 0),
+      });
+      if (triggered) {
+        // 대화 모드 갱신 (활성 시간 연장)
+        await activateBoardChat();
+      } else {
+        // 트리거 실패 시 일반 답변으로 처리
+        await saveAnswer(text, msg.message_id);
+      }
+      return new Response("OK", { status: 200 });
     }
 
     // 일반 텍스트 → 답변 저장

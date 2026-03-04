@@ -124,9 +124,15 @@ def generate_agenda_opinions(agenda: str, members: list) -> dict:
     for m in members:
         desc = m.get("description", "")
         personality = m.get("personality", "")
+        meta_mem = m.get("meta_memory", "").strip()
+        directives = m.get("user_directives", "").strip()
         persona = desc
         if personality:
-            persona += f"\n  (지금까지 파악된 특성: {personality})"
+            persona += f"\n  (성격: {personality})"
+        if directives:
+            persona += f"\n  (사용자 지시사항: {directives[-500:]})"
+        if meta_mem:
+            persona += f"\n  (장기 기억: {meta_mem[-500:]})"
         member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
 
     member_keys = [m["key"] for m in members]
@@ -181,14 +187,20 @@ def generate_vote(topic: str, members: list) -> dict:
     for m in members:
         desc = m.get("description", "")
         personality = m.get("personality", "")
+        meta_mem = m.get("meta_memory", "").strip()
+        directives = m.get("user_directives", "").strip()
         persona = desc
         if personality:
-            persona += f"\n  (지금까지 파악된 특성: {personality})"
+            persona += f"\n  (성격: {personality})"
+        if directives:
+            persona += f"\n  (사용자 지시사항: {directives[-500:]})"
+        if meta_mem:
+            persona += f"\n  (장기 기억: {meta_mem[-500:]})"
         member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
 
     member_keys = [m["key"] for m in members]
 
-    prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성 또는 반대 투표를 해주세요.
+    prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성, 반대, 또는 기권 투표를 해주세요.
 
 🗳️ 표결 안건: {topic}
 
@@ -196,15 +208,19 @@ def generate_vote(topic: str, members: list) -> dict:
 {member_instructions}
 
 반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
-각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대를 결정하고,
-그 이유를 2~3문장으로 설명해주세요.
+
+투표 규칙:
+- 각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대/기권을 결정
+- 안건이 애매하거나, 자신의 관점에서 판단이 불가능하거나, 정보가 부족하면 "기권" 가능
+- 기권 사유도 반드시 작성 (예: "현재 정보만으로는 판단이 어렵습니다")
+- 안건의 논리가 불충분하면 반대하거나 기권하고, 어떤 추가 정보/논리가 있으면 찬성할 수 있을지 제시
+- 찬성/반대 시 사유를 2~3문장으로 설명
 
 {{
   "votes": {{
-    {', '.join(f'"{k}": {{"vote": "찬성 또는 반대", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
+    {', '.join(f'"{k}": {{"vote": "찬성 또는 반대 또는 기권", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
   }},
-  "result": "최종 결과 (예: 찬성 3 vs 반대 2 — 가결/부결)",
-  "summary": "표결 결과에 대한 종합 해석 (2~3문장)"
+  "summary": "표결 결과에 대한 종합 해석 (2~3문장). 부결되었다면 어떤 논리/조건이 추가되면 가결될 수 있을지 제안"
 }}"""
 
     message = client.messages.create(
@@ -221,9 +237,42 @@ def generate_vote(topic: str, members: list) -> dict:
             raw = raw[4:].lstrip()
 
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return {"votes": {}, "result": "", "summary": raw[:2000]}
+
+    # 과반수 가결 로직 적용
+    votes = data.get("votes", {})
+    total_members = len(member_keys)
+    yes_count = 0
+    no_count = 0
+    abstain_count = 0
+    for k in member_keys:
+        v = votes.get(k, {})
+        vote_str = v.get("vote", "") if isinstance(v, dict) else str(v)
+        if "찬성" in vote_str:
+            yes_count += 1
+        elif "반대" in vote_str:
+            no_count += 1
+        else:
+            abstain_count += 1
+
+    voted_count = yes_count + no_count
+    quorum = (total_members // 2) + 1  # 과반수 정족수
+
+    if voted_count < quorum:
+        result_str = f"투표 {voted_count}명 / 정족수 {quorum}명 미달 — ❌ 성립 불가 (찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count})"
+        passed = False
+    else:
+        # 투표자 중 과반수 찬성 필요
+        pass_threshold = (voted_count // 2) + 1
+        passed = yes_count >= pass_threshold
+        verdict = "✅ 가결" if passed else "❌ 부결"
+        result_str = f"찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count} — {verdict} (투표 {voted_count}명 중 {pass_threshold}표 이상 찬성 필요)"
+
+    data["result"] = result_str
+    data["passed"] = passed
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +373,12 @@ def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, no
             if isinstance(v, dict):
                 vote_str = v.get("vote", "")
                 reason = v.get("reason", "")
-                icon = "✅" if "찬성" in vote_str else "❌"
+                if "찬성" in vote_str:
+                    icon = "✅"
+                elif "반대" in vote_str:
+                    icon = "❌"
+                else:
+                    icon = "⬜"
                 children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"{icon} {m['name']} — {vote_str}"}}]}})
                 if reason:
                     children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": reason}}]}})
@@ -364,13 +418,61 @@ def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, no
 # personality 자동 업데이트 (memory 누적)
 # ---------------------------------------------------------------------------
 
+MEMORY_RAW_LIMIT = 6000
+META_MEMORY_LIMIT = 20000
+
+
+def _consolidate_memory(member: dict, client: anthropic.Anthropic) -> tuple:
+    """raw memory가 MEMORY_RAW_LIMIT를 초과하면 오래된 내용을 meta_memory로 통합."""
+    memory = member.get("memory", "").strip()
+    meta_memory = member.get("meta_memory", "").strip()
+
+    if len(memory) <= MEMORY_RAW_LIMIT:
+        return memory, meta_memory
+
+    lines = memory.split("\n")
+    midpoint = len(lines) // 2
+    old_lines = lines[:midpoint]
+    keep_lines = lines[midpoint:]
+    old_text = "\n".join(old_lines).strip()
+    if not old_text:
+        return memory, meta_memory
+
+    prompt = f"""아래는 이사회 멤버 "{member.get('name', '')}"의 과거 발언/기록입니다.
+
+{old_text}
+
+---
+기존 장기 기억 요약:
+{meta_memory if meta_memory else '(없음)'}
+
+---
+위의 과거 발언을 기존 장기 기억에 통합하여 새로운 장기 기억 요약을 작성해주세요.
+핵심 가치관, 반복 패턴, 중요 의사결정 중심. 구체적 날짜/숫자 보존. 최대 2000자. 텍스트만 반환."""
+
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        new_meta = msg.content[0].text.strip()
+        if len(new_meta) > META_MEMORY_LIMIT:
+            new_meta = new_meta[:META_MEMORY_LIMIT]
+        updated_memory = "\n".join(keep_lines).strip()
+        print(f"    메모리 통합: {len(memory):,}자 → {len(updated_memory):,}자 (meta: {len(new_meta):,}자)")
+        return updated_memory, new_meta
+    except Exception as e:
+        print(f"    메모리 통합 오류: {e}", file=sys.stderr)
+        return memory, meta_memory
+
+
 def update_member_personalities(members: list, result: dict, mode: str, topic: str) -> None:
-    """발언을 memory에 누적하고 personality를 전체 기록으로 종합."""
+    """발언을 memory에 누적하고 3-tier 메모리 시스템으로 관리."""
     client = anthropic.Anthropic()
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     context_label = f"안건: {topic[:30]}" if mode == "agenda" else f"표결: {topic[:30]}"
 
-    # 안건: opinions, 표결: votes에서 발언 추출
     if mode == "vote":
         raw_opinions = result.get("votes", {})
     else:
@@ -390,30 +492,36 @@ def update_member_personalities(members: list, result: dict, mode: str, topic: s
         if not member_id:
             continue
 
-        existing_personality = m.get("personality", "").strip()
         existing_memory = m.get("memory", "").strip()
 
         new_entry = f"[{now_str} {context_label}] {opinion}"
         updated_memory = f"{existing_memory}\n{new_entry}".strip()
+        m["memory"] = updated_memory
 
-        if len(updated_memory) > 8000:
-            lines = updated_memory.split("\n")
-            while len("\n".join(lines)) > 8000 and len(lines) > 5:
-                lines.pop(0)
-            updated_memory = "\n".join(lines)
+        # 3-tier 메모리 통합
+        updated_memory, updated_meta = _consolidate_memory(m, client)
 
-        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 발언 기록입니다:
+        # 전체 기록으로 personality 종합
+        full_context = ""
+        if updated_meta:
+            full_context += f"[장기 기억]\n{updated_meta}\n\n"
+        directives = m.get("user_directives", "").strip()
+        if directives:
+            full_context += f"[사용자 지시사항]\n{directives}\n\n"
+        full_context += f"[최근 기록]\n{updated_memory}"
 
-{updated_memory}
+        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 기록입니다:
+
+{full_context}
 
 ---
-위 발언 기록을 바탕으로 이 이사의 personality를 종합해주세요.
+위 기록을 바탕으로 이 이사의 personality를 종합해주세요.
 
 작성 규칙:
 - 3~5문장으로 작성
 - 핵심 가치관, 사고 패턴, 판단 기준을 구체적으로
 - 시간에 따른 변화나 일관된 패턴이 있으면 언급
-- 자주 쓰는 표현이나 논리 구조가 있으면 포함
+- 사용자 지시사항이 있으면 그것도 반영
 - JSON 없이 텍스트만 반환"""
 
         try:
@@ -423,16 +531,19 @@ def update_member_personalities(members: list, result: dict, mode: str, topic: s
                 messages=[{"role": "user", "content": prompt}],
             )
             new_personality = msg.content[0].text.strip()
+            patch_data = {
+                "personality": new_personality,
+                "memory": updated_memory,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if updated_meta != m.get("meta_memory", ""):
+                patch_data["meta_memory"] = updated_meta
             ok = _supabase_patch(
                 f"/rest/v1/board_members?id=eq.{member_id}",
-                {
-                    "personality": new_personality,
-                    "memory": updated_memory,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                patch_data,
             )
             status = "✓" if ok else "✗"
-            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자)")
+            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자, meta {len(updated_meta):,}자)")
         except Exception as e:
             print(f"  {m['name']} personality 업데이트 오류: {e}", file=sys.stderr)
 
@@ -481,7 +592,12 @@ def format_vote_telegram(topic: str, result: dict, members: list, now: datetime,
         if isinstance(v, dict):
             vote_str = v.get("vote", "")
             reason = v.get("reason", "")
-            icon = "✅" if "찬성" in vote_str else "❌"
+            if "찬성" in vote_str:
+                icon = "✅"
+            elif "반대" in vote_str:
+                icon = "❌"
+            else:
+                icon = "⬜"  # 기권
             lines.append(f"{icon} <b>{m['name']}</b> — {vote_str}")
             if reason:
                 lines.append(f"  {reason}\n")
@@ -489,6 +605,9 @@ def format_vote_telegram(topic: str, result: dict, members: list, now: datetime,
     summary = result.get("summary", "")
     if summary:
         lines.append(f"<b>📝 종합</b>\n{summary}")
+
+    if not result.get("passed", True):
+        lines.append("\n<i>💡 안건을 수정하거나 추가 논리를 제시하여 다시 /표결 할 수 있습니다.</i>")
 
     if notion_url:
         lines.append(f"\n👉 <a href=\"{notion_url}\">전체 보기</a>")
