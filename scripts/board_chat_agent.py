@@ -145,6 +145,123 @@ def consolidate_memory(member: dict, client: anthropic.Anthropic) -> tuple[str, 
 
 
 # ---------------------------------------------------------------------------
+# 웹 검색 필요 여부 판단 + 검색
+# ---------------------------------------------------------------------------
+
+def needs_external_info(message: str, client: anthropic.Anthropic) -> bool:
+    """메시지가 외부 정보(최신 뉴스, 사실 확인 등)를 필요로 하는지 판단."""
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=10,
+            messages=[{"role": "user", "content": f"""다음 메시지에 답하려면 웹 검색(최신 뉴스, 현재 상황, 사실 확인, 가격, 날씨, 여행 정보 등)이 필요한가요?
+
+메시지: "{message}"
+
+"YES" 또는 "NO"로만 답하세요."""}],
+        )
+        return "YES" in msg.content[0].text.strip().upper()
+    except Exception:
+        return False
+
+
+def research_topic(topic: str) -> str:
+    """주제에 대해 웹 검색으로 최신 정보를 조사한다."""
+    client = anthropic.Anthropic()
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            tools=[{"type": "web_search_20250305"}],
+            messages=[{"role": "user", "content": f"""다음 주제에 대해 의사결정이나 대화에 필요한 최신 정보를 조사해주세요.
+
+주제: {topic}
+
+조사 방향:
+- 관련 최신 뉴스, 현황, 리스크
+- 객관적 사실 (안전, 비용, 시기 등)
+- 현재 상황에서 고려할 중요 정보
+
+핵심 사실 위주로 bullet point로 간결하게 정리."""}],
+        )
+        research_text = ""
+        for block in message.content:
+            if block.type == "text":
+                research_text += block.text + "\n"
+        research_text = research_text.strip()
+        if research_text:
+            print(f"  웹 조사 완료 ({len(research_text):,}자)")
+        return research_text
+    except Exception as e:
+        print(f"  웹 조사 오류: {e}", file=sys.stderr)
+        return ""
+
+
+def search_past_reports(topic: str) -> str:
+    """Supabase board_reports에서 과거 이사회 분석 기록을 검색하여 관련 내용을 반환한다."""
+    rows = _supabase_get(
+        "/rest/v1/board_reports?select=created_at,summary,opinions,action_items"
+        "&order=created_at.desc&limit=30"
+    )
+    if not rows:
+        return ""
+
+    report_summaries = []
+    for r in rows:
+        created = r.get("created_at", "")[:10]
+        summary = r.get("summary", "").strip()
+        opinions = r.get("opinions", {})
+        if not summary and not opinions:
+            continue
+        opinion_snippets = []
+        if isinstance(opinions, dict):
+            for key, val in opinions.items():
+                if isinstance(val, str) and val.strip():
+                    opinion_snippets.append(f"  {key}: {val[:150]}")
+                elif isinstance(val, dict):
+                    vote = val.get("vote", "")
+                    reason = val.get("reason", "")
+                    opinion_snippets.append(f"  {key}: {vote} - {reason[:100]}")
+        entry = f"[{created}] {summary}"
+        if opinion_snippets:
+            entry += "\n" + "\n".join(opinion_snippets[:5])
+        report_summaries.append(entry)
+
+    if not report_summaries:
+        return ""
+
+    all_reports = "\n\n---\n".join(report_summaries)
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": f"""아래는 과거 이사회 분석 기록입니다.
+
+현재 대화 주제: {topic}
+
+과거 기록:
+{all_reports[:8000]}
+
+---
+현재 대화 주제와 관련된 과거 기록이 있으면 요약해주세요.
+- 비슷한 고민이나 상황이 있었는지
+- 그때 이사회의 판단은 어땠는지
+
+관련 기록이 없으면 "관련 과거 기록 없음"이라고만 답하세요.
+간결하게 bullet point로 작성."""}],
+        )
+        result = msg.content[0].text.strip()
+        if "관련 과거 기록 없음" in result:
+            return ""
+        print(f"  관련 과거 기록 발견 ({len(result):,}자)")
+        return result
+    except Exception as e:
+        print(f"  과거 기록 검색 오류: {e}", file=sys.stderr)
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # 의도 분류
 # ---------------------------------------------------------------------------
 
@@ -219,7 +336,8 @@ def save_directive(members: list, message: str, detail: str) -> None:
 # 이사회 응답 생성
 # ---------------------------------------------------------------------------
 
-def generate_board_response(message: str, intent: dict, members: list, client: anthropic.Anthropic) -> dict:
+def generate_board_response(message: str, intent: dict, members: list, client: anthropic.Anthropic,
+                            research: str = "", past_context: str = "") -> dict:
     """이사회 멤버들의 응답을 생성한다.
     Returns: {"responses": {"key": "응답"}, "summary": "종합"}"""
 
@@ -256,10 +374,26 @@ def generate_board_response(message: str, intent: dict, members: list, client: a
         instruction = """사용자가 일상 대화를 했습니다. 각 이사는 자신의 관점과 기억을 바탕으로 자연스럽게 반응해주세요.
 각 이사는 1~2문장으로 짧고 따뜻하게 응답합니다. 불필요하게 길게 쓰지 마세요."""
 
+    extra_context = ""
+    if research:
+        extra_context += f"""
+📌 웹 검색 결과 (최신 정보):
+{research}
+
+위 정보를 참고하여 현실에 기반한 응답을 해주세요.
+"""
+    if past_context:
+        extra_context += f"""
+📂 과거 관련 기록 (이전 이사회 분석):
+{past_context}
+
+과거에 비슷한 상황이 있었다면 그때의 판단과 결과를 참고하세요.
+"""
+
     prompt = f"""사용자가 이사회에 메시지를 보냈습니다.
 
 💬 메시지: {message}
-
+{extra_context}
 이사회 멤버 정보:
 {member_context}
 
@@ -417,26 +551,42 @@ def main():
         return
     print(f"  → {len(members)}명\n")
 
-    print("[2/5] 의도 분류...")
+    print("[2/7] 의도 분류...")
     intent = classify_intent(message, client)
     print(f"  → {intent.get('intent', '?')}: {intent.get('detail', '')}\n")
 
     # 지시사항이면 저장
     if intent.get("intent") == "directive":
-        print("[2.5/5] 지시사항 저장...")
+        print("[2.5/7] 지시사항 저장...")
         save_directive(members, message, intent.get("detail", ""))
         # 멤버 데이터 다시 로드 (directives 반영)
         members = load_board_members()
 
-    print("[3/5] 이사회 응답 생성...")
-    result = generate_board_response(message, intent, members, client)
+    # 웹 검색 필요 여부 판단 + 과거 기록 검색
+    research = ""
+    past_context = ""
 
-    print("[4/5] 텔레그램 발송...")
+    print("[3/7] 웹 검색 필요 여부 판단...")
+    if needs_external_info(message, client):
+        print("  → 웹 검색 필요 — 조사 중...")
+        research = research_topic(message)
+    else:
+        print("  → 웹 검색 불필요\n")
+
+    print("[4/7] 과거 이사회 기록 검색...")
+    past_context = search_past_reports(message)
+    if not past_context:
+        print("  → 관련 과거 기록 없음\n")
+
+    print("[5/7] 이사회 응답 생성...")
+    result = generate_board_response(message, intent, members, client, research, past_context)
+
+    print("[6/7] 텔레그램 발송...")
     tg_msg = format_response(intent, result, members)
     ok = send_telegram(tg_msg, reply_to)
     print(f"  발송 {'완료' if ok else '실패'}\n")
 
-    print("[5/5] 메모리 업데이트...")
+    print("[7/7] 메모리 업데이트...")
     update_memories(members, message, result, client)
 
     print("\n=== 완료 ===")
