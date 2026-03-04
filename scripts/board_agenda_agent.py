@@ -1,0 +1,470 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys as _sys; _sys.stdout.reconfigure(line_buffering=True)
+"""
+이사회 안건/표결 에이전트
+- /안건 OOOO → 5인 이사가 각자 관점에서 의견 제시
+- /표결 OOOO → 5인 이사가 찬성/반대 + 사유로 투표
+- 결과를 텔레그램 발송 + Notion 이사회DB 저장
+"""
+
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone, timedelta
+
+import anthropic
+
+KST = timezone(timedelta(hours=9))
+
+
+# ---------------------------------------------------------------------------
+# Supabase 헬퍼 (diary_board_agent.py와 동일)
+# ---------------------------------------------------------------------------
+
+def _sb_url() -> str:
+    return os.environ.get("SUPABASE_URL", "").rstrip("/")
+
+def _sb_key() -> str:
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+def _sb_headers(extra: dict = None) -> dict:
+    h = {
+        "apikey": _sb_key(),
+        "Authorization": f"Bearer {_sb_key()}",
+        "Content-Type": "application/json",
+    }
+    if extra:
+        h.update(extra)
+    return h
+
+def _supabase_get(path: str) -> list:
+    if not _sb_url() or not _sb_key():
+        return []
+    req = urllib.request.Request(f"{_sb_url()}{path}", headers=_sb_headers())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"Supabase GET 오류 ({path}): {e}", file=sys.stderr)
+        return []
+
+def _supabase_patch(path: str, data: dict) -> bool:
+    if not _sb_url() or not _sb_key():
+        return False
+    payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_sb_url()}{path}", data=payload,
+        headers=_sb_headers({"Prefer": "return=minimal"}), method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status in (200, 204)
+    except Exception as e:
+        print(f"Supabase PATCH 오류: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# 설정 & 멤버 로드
+# ---------------------------------------------------------------------------
+
+DEFAULT_MEMBERS = [
+    {"key": "roi",          "name": "💰 냉정한 이익주의자", "role": "ROI · 데이터",   "description": "ROI와 데이터를 중심으로 냉철하게 판단하는 분석가",              "personality": ""},
+    {"key": "romantic",     "name": "🌈 낭만 긍정주의자",   "role": "가능성 · 도전",  "description": "가능성과 설렘에 집중하며 도전을 응원하는 꿈꾸는 사람",          "personality": ""},
+    {"key": "conservative", "name": "🛡️ 보수적 조심주의자", "role": "리스크 · 안전",  "description": "리스크와 안전을 최우선으로 검토하는 신중한 이",                 "personality": ""},
+    {"key": "zen",          "name": "🧘 내면 평온주의자",   "role": "감정 · 균형추",  "description": "감정과 내면의 균형을 중시하며 삶의 질을 살피는 이",              "personality": ""},
+    {"key": "challenger",   "name": "🚀 도전과 발전주의자", "role": "성장 · 돌파",    "description": "성장과 돌파를 추구하며 현실에 안주하지 않는 불굴의 도전가",      "personality": ""},
+]
+
+def load_settings() -> dict:
+    default = {
+        "board_notion_db_id": os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
+    }
+    rows = _supabase_get("/rest/v1/agent_settings?id=eq.1")
+    if not rows:
+        return default
+    s = rows[0]
+    return {
+        "board_notion_db_id": s.get("board_notion_db_id") or os.environ.get("BOARD_NOTION_DATABASE_ID", ""),
+    }
+
+def load_board_members() -> list:
+    rows = _supabase_get("/rest/v1/board_members?enabled=eq.true&order=sort_order.asc")
+    if rows:
+        print(f"  Supabase에서 {len(rows)}명 로드")
+        return rows
+    print("  board_members 테이블 없거나 비어있음 — 기본 멤버 사용")
+    return DEFAULT_MEMBERS
+
+
+# ---------------------------------------------------------------------------
+# Notion 헬퍼
+# ---------------------------------------------------------------------------
+
+def notion_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {os.environ.get('NOTION_API_KEY', '')}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Claude AI — 안건 의견 생성
+# ---------------------------------------------------------------------------
+
+def generate_agenda_opinions(agenda: str, members: list) -> dict:
+    """안건에 대해 각 이사의 의견을 생성한다."""
+    client = anthropic.Anthropic()
+
+    member_instructions = ""
+    for m in members:
+        desc = m.get("description", "")
+        personality = m.get("personality", "")
+        persona = desc
+        if personality:
+            persona += f"\n  (지금까지 파악된 특성: {personality})"
+        member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
+
+    member_keys = [m["key"] for m in members]
+
+    prompt = f"""다음 안건에 대해 이사회 멤버 각자의 관점에서 의견을 제시해주세요.
+
+📋 안건: {agenda}
+
+이사회 멤버:
+{member_instructions}
+
+반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
+각 이사의 의견은 3~5문장으로 구체적이고 실질적으로 작성해주세요.
+해당 이사의 역할과 성격에 맞는 고유한 관점을 반영하세요.
+
+{{
+  "opinions": {{
+    {', '.join(f'"{k}": "해당 이사 관점의 구체적 의견 (3~5문장)"' for k in member_keys)}
+  }},
+  "summary": "이사들의 의견을 종합한 핵심 요약 (2~3문장)",
+  "action_items": ["구체적인 제안/다음 단계 1", "제안 2", "제안 3"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:].lstrip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"opinions": {}, "summary": raw[:2000], "action_items": []}
+
+
+# ---------------------------------------------------------------------------
+# Claude AI — 표결 생성
+# ---------------------------------------------------------------------------
+
+def generate_vote(topic: str, members: list) -> dict:
+    """안건에 대해 각 이사의 찬반 투표를 생성한다."""
+    client = anthropic.Anthropic()
+
+    member_instructions = ""
+    for m in members:
+        desc = m.get("description", "")
+        personality = m.get("personality", "")
+        persona = desc
+        if personality:
+            persona += f"\n  (지금까지 파악된 특성: {personality})"
+        member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
+
+    member_keys = [m["key"] for m in members]
+
+    prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성 또는 반대 투표를 해주세요.
+
+🗳️ 표결 안건: {topic}
+
+이사회 멤버:
+{member_instructions}
+
+반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
+각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대를 결정하고,
+그 이유를 2~3문장으로 설명해주세요.
+
+{{
+  "votes": {{
+    {', '.join(f'"{k}": {{"vote": "찬성 또는 반대", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
+  }},
+  "result": "최종 결과 (예: 찬성 3 vs 반대 2 — 가결/부결)",
+  "summary": "표결 결과에 대한 종합 해석 (2~3문장)"
+}}"""
+
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:].lstrip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"votes": {}, "result": "", "summary": raw[:2000]}
+
+
+# ---------------------------------------------------------------------------
+# 텔레그램 발송
+# ---------------------------------------------------------------------------
+
+def send_telegram(text: str, reply_to: int = None) -> bool:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        print("경고: 텔레그램 환경변수 누락", file=sys.stderr)
+        return False
+
+    payload = {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print("텔레그램 발송 완료")
+                return True
+            print(f"텔레그램 발송 실패: {result}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"텔레그램 발송 오류: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Notion 저장
+# ---------------------------------------------------------------------------
+
+def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, now: datetime, db_id: str) -> str | None:
+    """안건/표결 결과를 Notion 이사회 DB에 저장. 성공 시 URL 반환."""
+    if not db_id:
+        print("BOARD_NOTION_DATABASE_ID 미설정 — Notion 저장 불가", file=sys.stderr)
+        return None
+
+    emoji = "📋" if mode == "agenda" else "🗳️"
+    label = "안건" if mode == "agenda" else "표결"
+    title = f"{label} · {topic[:40]}"
+
+    children = [
+        {"object": "block", "type": "callout", "callout": {
+            "icon": {"type": "emoji", "emoji": emoji},
+            "color": "blue_background" if mode == "agenda" else "yellow_background",
+            "rich_text": [{"type": "text", "text": {"content": f"{label}: {topic} | {now.strftime('%Y-%m-%d %H:%M')} KST"}}],
+        }},
+    ]
+
+    if mode == "agenda":
+        # 각 이사 의견
+        opinions = result.get("opinions", {})
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "💬 이사회 의견"}}]}})
+        for m in members:
+            opinion = opinions.get(m["key"], "").strip()
+            if opinion:
+                children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": m["name"]}}]}})
+                children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": opinion[:2000]}}]}})
+
+        # 종합
+        summary = result.get("summary", "")
+        if summary:
+            children.append({"object": "block", "type": "divider", "divider": {}})
+            children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🤝 종합"}}]}})
+            children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": summary}}]}})
+
+        # 액션 아이템
+        action_items = result.get("action_items", [])
+        if action_items:
+            children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "✅ 다음 단계"}}]}})
+            for item in action_items:
+                children.append({"object": "block", "type": "to_do", "to_do": {
+                    "checked": False, "rich_text": [{"type": "text", "text": {"content": str(item)}}],
+                }})
+
+    else:  # vote
+        votes = result.get("votes", {})
+        vote_result = result.get("result", "")
+        summary = result.get("summary", "")
+
+        # 투표 결과 요약
+        if vote_result:
+            children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📊 결과: {vote_result}"}}]}})
+
+        # 각 이사 투표
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🗳️ 개별 투표"}}]}})
+        for m in members:
+            v = votes.get(m["key"], {})
+            if isinstance(v, dict):
+                vote_str = v.get("vote", "")
+                reason = v.get("reason", "")
+                icon = "✅" if "찬성" in vote_str else "❌"
+                children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"{icon} {m['name']} — {vote_str}"}}]}})
+                if reason:
+                    children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": reason}}]}})
+
+        if summary:
+            children.append({"object": "block", "type": "divider", "divider": {}})
+            children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📝 종합 해석"}}]}})
+            children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": summary}}]}})
+
+    page_data = {
+        "parent": {"database_id": db_id},
+        "properties": {"title": {"title": [{"type": "text", "text": {"content": title}}]}},
+        "children": children,
+    }
+
+    req = urllib.request.Request(
+        "https://api.notion.com/v1/pages",
+        data=json.dumps(page_data, ensure_ascii=False).encode("utf-8"),
+        headers=notion_headers(),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            page = json.loads(resp.read().decode())
+            url = page.get("url", "")
+            print(f"Notion 저장 완료: {url}")
+            return url
+    except urllib.error.HTTPError as e:
+        print(f"Notion 저장 실패 ({e.code}): {e.read().decode()}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Notion 저장 오류: {e}", file=sys.stderr)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 텔레그램 포맷
+# ---------------------------------------------------------------------------
+
+def format_agenda_telegram(topic: str, result: dict, members: list, now: datetime, notion_url: str | None) -> str:
+    """안건 결과를 텔레그램 메시지로 포맷."""
+    lines = [f"<b>📋 이사회 안건</b>", f"<i>{topic}</i>\n"]
+
+    opinions = result.get("opinions", {})
+    for m in members:
+        opinion = opinions.get(m["key"], "").strip()
+        if opinion:
+            lines.append(f"<b>{m['name']}</b>\n{opinion}\n")
+
+    summary = result.get("summary", "")
+    if summary:
+        lines.append(f"<b>🤝 종합</b>\n{summary}\n")
+
+    action_items = result.get("action_items", [])
+    if action_items:
+        lines.append("<b>✅ 다음 단계</b>")
+        for item in action_items:
+            lines.append(f"  • {item}")
+
+    if notion_url:
+        lines.append(f"\n👉 <a href=\"{notion_url}\">전체 보기</a>")
+
+    return "\n".join(lines)
+
+
+def format_vote_telegram(topic: str, result: dict, members: list, now: datetime, notion_url: str | None) -> str:
+    """표결 결과를 텔레그램 메시지로 포맷."""
+    lines = [f"<b>🗳️ 이사회 표결</b>", f"<i>{topic}</i>\n"]
+
+    vote_result = result.get("result", "")
+    if vote_result:
+        lines.append(f"<b>📊 {vote_result}</b>\n")
+
+    votes = result.get("votes", {})
+    for m in members:
+        v = votes.get(m["key"], {})
+        if isinstance(v, dict):
+            vote_str = v.get("vote", "")
+            reason = v.get("reason", "")
+            icon = "✅" if "찬성" in vote_str else "❌"
+            lines.append(f"{icon} <b>{m['name']}</b> — {vote_str}")
+            if reason:
+                lines.append(f"  {reason}\n")
+
+    summary = result.get("summary", "")
+    if summary:
+        lines.append(f"<b>📝 종합</b>\n{summary}")
+
+    if notion_url:
+        lines.append(f"\n👉 <a href=\"{notion_url}\">전체 보기</a>")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 메인
+# ---------------------------------------------------------------------------
+
+def main():
+    mode = os.environ.get("INPUT_MODE", "agenda")  # "agenda" or "vote"
+    topic = os.environ.get("INPUT_TOPIC", "").strip()
+    reply_to = int(os.environ.get("INPUT_MSG_ID", "0")) or None
+
+    if not topic:
+        print("오류: 안건/표결 내용이 없습니다.", file=sys.stderr)
+        sys.exit(1)
+
+    label = "안건" if mode == "agenda" else "표결"
+    print(f"=== 이사회 {label} 에이전트 시작 ===\n")
+    print(f"모드: {mode}")
+    print(f"내용: {topic}\n")
+
+    settings = load_settings()
+    board_db_id = settings["board_notion_db_id"]
+
+    print("[1/3] 이사회 멤버 로드 중...")
+    members = load_board_members()
+    print(f"  → {len(members)}명\n")
+
+    print(f"[2/3] {label} 분석 중...")
+    if mode == "vote":
+        result = generate_vote(topic, members)
+    else:
+        result = generate_agenda_opinions(topic, members)
+    now = datetime.now(KST)
+
+    print(f"[3/3] 발송 및 저장 중...")
+    notion_url = save_agenda_to_notion(mode, topic, result, members, now, board_db_id)
+
+    if mode == "vote":
+        tg_msg = format_vote_telegram(topic, result, members, now, notion_url)
+    else:
+        tg_msg = format_agenda_telegram(topic, result, members, now, notion_url)
+
+    ok = send_telegram(tg_msg, reply_to)
+
+    print("\n=== 완료 ===")
+    if not ok:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -157,6 +157,8 @@ async function handleCommand(
         "  /생각일기 — 최근 N시간 이사회 분석\n" +
         "  /생각일기 6시간 — 6시간 이사회 분석\n" +
         "  /이사회 — /생각일기와 동일\n" +
+        "  /안건 [내용] — 이사회에 안건 올려 의견 받기\n" +
+        "  /표결 [내용] — 이사회 찬반 투표\n" +
         "  /생각분석 — 최근 1개월 종합 분석\n" +
         "  /생각분석 24개월 — 24개월 종합 분석\n" +
         "\n" +
@@ -175,6 +177,46 @@ async function handleCommand(
         "<i>일반 텍스트를 보내면 현재 진행 중인\n" +
         "인터뷰 주제에 답변으로 기록됩니다.</i>"
     );
+    return true;
+  }
+
+  // /안건 — 이사회 안건 의견 요청
+  if (cmd === "/안건" || cmd === "/agenda") {
+    const rest = text.trim().replace(/^\/\S+\s*/, "").trim();
+    if (!rest) {
+      await tgSend("사용법: /안건 [내용]\n예: /안건 회사를 그만둘까 말까", msgId);
+      return true;
+    }
+    const triggered = await triggerWorkflow("board-agenda-agent.yml", {
+      mode: "agenda",
+      topic: rest,
+      msg_id: String(msgId),
+    });
+    if (triggered) {
+      await tgSend(`📋 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 이사들의 의견이 도착합니다.`, msgId);
+    } else {
+      await tgSend("⚠️ 안건 에이전트 실행에 실패했습니다.", msgId);
+    }
+    return true;
+  }
+
+  // /표결 — 이사회 찬반 표결
+  if (cmd === "/표결" || cmd === "/vote") {
+    const rest = text.trim().replace(/^\/\S+\s*/, "").trim();
+    if (!rest) {
+      await tgSend("사용법: /표결 [내용]\n예: /표결 이번 달에 새 프로젝트를 시작한다", msgId);
+      return true;
+    }
+    const triggered = await triggerWorkflow("board-agenda-agent.yml", {
+      mode: "vote",
+      topic: rest,
+      msg_id: String(msgId),
+    });
+    if (triggered) {
+      await tgSend(`🗳️ 표결 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 투표 결과가 도착합니다.`, msgId);
+    } else {
+      await tgSend("⚠️ 표결 에이전트 실행에 실패했습니다.", msgId);
+    }
     return true;
   }
 
