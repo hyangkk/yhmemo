@@ -13,6 +13,9 @@ import os
 import signal
 import sys
 from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from supabase import create_client
 
