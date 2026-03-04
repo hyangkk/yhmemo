@@ -159,12 +159,6 @@ class SlackClient:
             return
 
         try:
-            # 봇을 채널에 조인 (이미 들어가 있으면 무시됨)
-            try:
-                await self.client.conversations_join(channel=channel_id)
-            except Exception:
-                pass
-
             kwargs = {"channel": channel_id, "limit": 20}
             if channel_id in self._last_ts:
                 kwargs["oldest"] = self._last_ts[channel_id]
@@ -217,16 +211,33 @@ class SlackClient:
         except Exception as e:
             logger.debug(f"Poll error for {channel_name}: {e}")
 
+    async def _init_channel_cache(self):
+        """채널 캐시 초기화 (재시도 포함)"""
+        for attempt in range(5):
+            try:
+                result = await self.client.conversations_list(types="public_channel")
+                for ch in result["channels"]:
+                    self._channel_cache[ch["name"]] = ch["id"]
+                logger.info(f"Channel cache loaded: {len(self._channel_cache)} channels")
+                return True
+            except Exception as e:
+                logger.warning(f"Channel cache init attempt {attempt+1}/5 failed: {e}")
+                await asyncio.sleep(2 ** attempt)
+        return False
+
     async def _poll_loop(self):
         """모든 채널을 주기적으로 폴링"""
         logger.info(f"Polling mode started (interval: {self._poll_interval}s)")
+
+        # 채널 캐시 초기화
+        await self._init_channel_cache()
 
         # 초기: 현재 시각을 기준으로 설정 (과거 메시지 무시)
         channels = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
                     self.CHANNEL_CURATOR, self.CHANNEL_LOGS]
         for ch_name in channels:
-            ch_id = await self._resolve_channel(ch_name)
-            if ch_id and ch_id != ch_name:
+            ch_id = self._channel_cache.get(ch_name)
+            if ch_id:
                 self._last_ts[ch_id] = str(time.time())
 
         while self._running:
