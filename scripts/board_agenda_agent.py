@@ -113,6 +113,85 @@ def notion_headers() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 과거 이사회 분석 기록 검색
+# ---------------------------------------------------------------------------
+
+def search_past_reports(topic: str) -> str:
+    """Supabase board_reports에서 과거 이사회 분석 기록을 검색하여 관련 내용을 반환한다."""
+    # 최근 30건의 board_reports 요약 가져오기
+    rows = _supabase_get(
+        "/rest/v1/board_reports?select=created_at,summary,opinions,action_items"
+        "&order=created_at.desc&limit=30"
+    )
+    if not rows:
+        print("  과거 이사회 기록 없음")
+        return ""
+
+    # 각 보고서를 간결한 형태로 정리
+    report_summaries = []
+    for r in rows:
+        created = r.get("created_at", "")[:10]
+        summary = r.get("summary", "").strip()
+        opinions = r.get("opinions", {})
+        if not summary and not opinions:
+            continue
+
+        # 의견 요약 (각 이사 의견의 앞부분만)
+        opinion_snippets = []
+        if isinstance(opinions, dict):
+            for key, val in opinions.items():
+                if isinstance(val, str) and val.strip():
+                    opinion_snippets.append(f"  {key}: {val[:150]}")
+                elif isinstance(val, dict):
+                    vote = val.get("vote", "")
+                    reason = val.get("reason", "")
+                    opinion_snippets.append(f"  {key}: {vote} - {reason[:100]}")
+
+        entry = f"[{created}] {summary}"
+        if opinion_snippets:
+            entry += "\n" + "\n".join(opinion_snippets[:5])
+        report_summaries.append(entry)
+
+    if not report_summaries:
+        print("  과거 기록 있으나 유의미한 내용 없음")
+        return ""
+
+    # Claude로 관련 기록 필터링
+    all_reports = "\n\n---\n".join(report_summaries)
+    client = anthropic.Anthropic()
+
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": f"""아래는 과거 이사회 분석 기록입니다.
+
+현재 안건: {topic}
+
+과거 기록:
+{all_reports[:8000]}
+
+---
+현재 안건과 관련된 과거 기록이 있으면 요약해주세요.
+- 비슷한 고민이나 상황이 있었는지
+- 그때 이사회의 판단은 어땠는지
+- 그때의 결정 이후 어떤 흐름이 있었는지
+
+관련 기록이 없으면 "관련 과거 기록 없음"이라고만 답하세요.
+간결하게 bullet point로 작성."""}],
+        )
+        result = msg.content[0].text.strip()
+        if "관련 과거 기록 없음" in result:
+            print("  관련 과거 기록 없음")
+            return ""
+        print(f"  관련 과거 기록 발견 ({len(result):,}자)")
+        return result
+    except Exception as e:
+        print(f"  과거 기록 검색 오류 (무시하고 진행): {e}", file=sys.stderr)
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # 웹 검색 기반 사전 조사
 # ---------------------------------------------------------------------------
 
@@ -161,7 +240,7 @@ def research_topic(topic: str) -> str:
 # Claude AI — 안건 의견 생성
 # ---------------------------------------------------------------------------
 
-def generate_agenda_opinions(agenda: str, members: list, research: str = "") -> dict:
+def generate_agenda_opinions(agenda: str, members: list, research: str = "", past_context: str = "") -> dict:
     """안건에 대해 각 이사의 의견을 생성한다."""
     client = anthropic.Anthropic()
 
@@ -191,10 +270,19 @@ def generate_agenda_opinions(agenda: str, members: list, research: str = "") -> 
 위 조사 결과를 반드시 참고하여 의견을 제시하세요. 현실과 동떨어진 의견은 지양하세요.
 """
 
+    past_section = ""
+    if past_context:
+        past_section = f"""
+📂 과거 관련 기록 (이전 이사회 분석에서 발견):
+{past_context}
+
+과거에 비슷한 고민이나 상황이 있었다면 그때의 판단과 결과를 참고하여 의견을 제시하세요.
+"""
+
     prompt = f"""다음 안건에 대해 이사회 멤버 각자의 관점에서 의견을 제시해주세요.
 
 📋 안건: {agenda}
-{research_section}
+{research_section}{past_section}
 이사회 멤버:
 {member_instructions}
 
@@ -233,7 +321,7 @@ def generate_agenda_opinions(agenda: str, members: list, research: str = "") -> 
 # Claude AI — 표결 생성
 # ---------------------------------------------------------------------------
 
-def generate_vote(topic: str, members: list, research: str = "") -> dict:
+def generate_vote(topic: str, members: list, research: str = "", past_context: str = "") -> dict:
     """안건에 대해 각 이사의 찬반 투표를 생성한다."""
     client = anthropic.Anthropic()
 
@@ -263,10 +351,19 @@ def generate_vote(topic: str, members: list, research: str = "") -> dict:
 위 조사 결과를 반드시 참고하여 투표하세요. 최신 정세, 안전 이슈, 현실적 리스크를 무시한 투표는 지양하세요.
 """
 
+    past_section = ""
+    if past_context:
+        past_section = f"""
+📂 과거 관련 기록 (이전 이사회 분석에서 발견):
+{past_context}
+
+과거에 비슷한 고민이나 결정이 있었다면 그때의 판단과 결과를 참고하여 투표하세요.
+"""
+
     prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성, 반대, 또는 기권 투표를 해주세요.
 
 🗳️ 표결 안건: {topic}
-{research_section}
+{research_section}{past_section}
 이사회 멤버:
 {member_instructions}
 
@@ -694,25 +791,28 @@ def main():
     settings = load_settings()
     board_db_id = settings["board_notion_db_id"]
 
-    print("[1/4] 이사회 멤버 로드 중...")
+    print("[1/5] 이사회 멤버 로드 중...")
     members = load_board_members()
     print(f"  → {len(members)}명\n")
 
-    print("[2/4] 웹 검색으로 관련 정보 조사 중...")
+    print("[2/5] 과거 이사회 기록 검색 중...")
+    past_context = search_past_reports(topic)
+
+    print("[3/5] 웹 검색으로 관련 정보 조사 중...")
     research = research_topic(topic)
     if research:
         print(f"  → 조사 결과 확보\n")
     else:
         print(f"  → 추가 조사 없이 진행\n")
 
-    print(f"[3/4] {label} 분석 중...")
+    print(f"[4/5] {label} 분석 중...")
     if mode == "vote":
-        result = generate_vote(topic, members, research)
+        result = generate_vote(topic, members, research, past_context)
     else:
-        result = generate_agenda_opinions(topic, members, research)
+        result = generate_agenda_opinions(topic, members, research, past_context)
     now = datetime.now(KST)
 
-    print(f"[4/5] 발송 및 저장 중...")
+    print(f"[5/6] 발송 및 저장 중...")
     notion_url = save_agenda_to_notion(mode, topic, result, members, now, board_db_id)
 
     if mode == "vote":
@@ -722,7 +822,7 @@ def main():
 
     ok = send_telegram(tg_msg, reply_to)
 
-    print(f"\n[5/5] 이사 personality 업데이트 중...")
+    print(f"\n[6/6] 이사 personality 업데이트 중...")
     update_member_personalities(members, result, mode, topic)
 
     print("\n=== 완료 ===")
