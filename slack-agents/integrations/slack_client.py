@@ -1,16 +1,18 @@
 """
 Slack 연동 클라이언트
 
-Socket Mode를 사용하여 웹훅 서버 없이 슬랙과 실시간 양방향 통신.
+두 가지 모드 지원:
+1. Socket Mode (WebSocket) - 실시간 양방향 통신 (기본)
+2. Polling Mode (HTTP) - WebSocket 불가 환경용 폴백
+
 에이전트가 메시지를 보내고, 사용자 명령을 수신하고, 이모지 반응을 추적.
 """
 
 import asyncio
 import logging
+import time
 from typing import Callable, Coroutine, Any
 
-from slack_bolt.async_app import AsyncApp
-from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.web.async_client import AsyncWebClient
 
 logger = logging.getLogger(__name__)
@@ -25,62 +27,23 @@ class SlackClient:
     CHANNEL_CURATOR = "ai-curator"
     CHANNEL_LOGS = "ai-agent-logs"
 
-    def __init__(self, bot_token: str, app_token: str):
-        self.app = AsyncApp(token=bot_token)
+    def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 3.0):
         self.client = AsyncWebClient(token=bot_token)
+        self._bot_token = bot_token
         self._app_token = app_token
+        self._poll_interval = poll_interval
         self._channel_cache: dict[str, str] = {}  # name → id
         self._command_handlers: dict[str, Callable] = {}
         self._reaction_handlers: list[Callable] = []
         self._mention_handlers: list[Callable] = []
+        self._running = False
+        self._bot_user_id: str = ""
 
-        self._setup_event_handlers()
-
-    def _setup_event_handlers(self):
-        """슬랙 이벤트 핸들러 등록"""
-
-        @self.app.event("app_mention")
-        async def handle_mention(event, say):
-            """에이전트에 대한 멘션 처리"""
-            text = event.get("text", "")
-            user = event.get("user", "")
-            channel = event.get("channel", "")
-            for handler in self._mention_handlers:
-                try:
-                    await handler(text=text, user=user, channel=channel, say=say)
-                except Exception as e:
-                    logger.error(f"Mention handler error: {e}")
-
-        @self.app.event("reaction_added")
-        async def handle_reaction(event):
-            """이모지 반응 추적 (사용자 피드백)"""
-            reaction = event.get("reaction", "")
-            item = event.get("item", {})
-            user = event.get("user", "")
-            for handler in self._reaction_handlers:
-                try:
-                    await handler(reaction=reaction, item=item, user=user)
-                except Exception as e:
-                    logger.error(f"Reaction handler error: {e}")
-
-        @self.app.event("message")
-        async def handle_message(event):
-            """DM이나 채널 메시지 처리"""
-            # bot 자신의 메시지는 무시
-            if event.get("bot_id"):
-                return
-            text = event.get("text", "")
-            user = event.get("user", "")
-            channel = event.get("channel", "")
-
-            # 슬래시 커맨드 패턴 처리 (예: "!수집 AI 뉴스")
-            if text.startswith("!"):
-                parts = text[1:].split(maxsplit=1)
-                cmd = parts[0]
-                args = parts[1] if len(parts) > 1 else ""
-                handler = self._command_handlers.get(cmd)
-                if handler:
-                    await handler(args=args, user=user, channel=channel)
+        # 폴링용 타임스탬프 (채널별 마지막 확인 시각)
+        self._last_ts: dict[str, str] = {}
+        # Socket Mode 객체 (사용 가능할 때만)
+        self._socket_handler = None
+        self._app = None
 
     # ── 메시지 전송 ────────────────────────────────────
 
@@ -156,7 +119,7 @@ class SlackClient:
             return self._channel_cache[channel_name]
 
         try:
-            result = await self.client.conversations_list(types="public_channel,private_channel")
+            result = await self.client.conversations_list(types="public_channel")
             for ch in result["channels"]:
                 self._channel_cache[ch["name"]] = ch["id"]
             if channel_name in self._channel_cache:
@@ -180,17 +143,168 @@ class SlackClient:
         except Exception as e:
             logger.warning(f"Could not ensure channels: {e}")
 
+    # ── 폴링 모드 ───────────────────────────────────────
+
+    async def _get_bot_user_id(self):
+        """봇 자신의 user ID 조회"""
+        if not self._bot_user_id:
+            result = await self.client.auth_test()
+            self._bot_user_id = result["user_id"]
+        return self._bot_user_id
+
+    async def _poll_channel(self, channel_name: str):
+        """한 채널의 새 메시지를 폴링"""
+        channel_id = await self._resolve_channel(channel_name)
+        if not channel_id or channel_id == channel_name:
+            return
+
+        try:
+            # 봇을 채널에 조인 (이미 들어가 있으면 무시됨)
+            try:
+                await self.client.conversations_join(channel=channel_id)
+            except Exception:
+                pass
+
+            kwargs = {"channel": channel_id, "limit": 20}
+            if channel_id in self._last_ts:
+                kwargs["oldest"] = self._last_ts[channel_id]
+
+            result = await self.client.conversations_history(**kwargs)
+            messages = result.get("messages", [])
+
+            if not messages:
+                return
+
+            # 가장 최신 타임스탬프 저장
+            newest_ts = messages[0]["ts"]
+            self._last_ts[channel_id] = newest_ts
+
+            bot_id = await self._get_bot_user_id()
+
+            # 오래된 것부터 처리 (역순)
+            for msg in reversed(messages):
+                # 봇 자신의 메시지 무시
+                if msg.get("bot_id") or msg.get("user") == bot_id:
+                    continue
+
+                text = msg.get("text", "")
+                user = msg.get("user", "")
+                channel = channel_id
+
+                # 멘션 처리
+                if f"<@{bot_id}>" in text:
+                    for handler in self._mention_handlers:
+                        try:
+                            # say 함수 만들기
+                            async def say(reply_text, ch=channel, ts=msg["ts"]):
+                                await self.send_thread_reply(ch, ts, reply_text)
+                            await handler(text=text, user=user, channel=channel, say=say)
+                        except Exception as e:
+                            logger.error(f"Mention handler error: {e}")
+
+                # 명령어 처리
+                elif text.startswith("!"):
+                    parts = text[1:].split(maxsplit=1)
+                    cmd = parts[0]
+                    args = parts[1] if len(parts) > 1 else ""
+                    handler = self._command_handlers.get(cmd)
+                    if handler:
+                        try:
+                            await handler(args=args, user=user, channel=channel)
+                        except Exception as e:
+                            logger.error(f"Command handler error: {e}")
+
+        except Exception as e:
+            logger.debug(f"Poll error for {channel_name}: {e}")
+
+    async def _poll_loop(self):
+        """모든 채널을 주기적으로 폴링"""
+        logger.info(f"Polling mode started (interval: {self._poll_interval}s)")
+
+        # 초기: 현재 시각을 기준으로 설정 (과거 메시지 무시)
+        channels = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
+                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS]
+        for ch_name in channels:
+            ch_id = await self._resolve_channel(ch_name)
+            if ch_id and ch_id != ch_name:
+                self._last_ts[ch_id] = str(time.time())
+
+        while self._running:
+            for ch_name in channels:
+                await self._poll_channel(ch_name)
+            await asyncio.sleep(self._poll_interval)
+
+    # ── Socket Mode 시도 → 실패 시 폴링 ─────────────────
+
+    async def _try_socket_mode(self) -> bool:
+        """Socket Mode 연결 시도. 성공하면 True."""
+        if not self._app_token:
+            return False
+        try:
+            from slack_bolt.async_app import AsyncApp
+            from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+
+            self._app = AsyncApp(token=self._bot_token)
+            self._setup_socket_event_handlers()
+            handler = AsyncSocketModeHandler(self._app, self._app_token)
+            await asyncio.wait_for(handler.connect_async(), timeout=5)
+            self._socket_handler = handler
+            logger.info("Slack Socket Mode connected")
+            return True
+        except Exception as e:
+            logger.warning(f"Socket Mode 연결 실패, 폴링 모드로 전환: {e}")
+            return False
+
+    def _setup_socket_event_handlers(self):
+        """Socket Mode용 이벤트 핸들러 등록"""
+        @self._app.event("app_mention")
+        async def handle_mention(event, say):
+            text = event.get("text", "")
+            user = event.get("user", "")
+            channel = event.get("channel", "")
+            for handler in self._mention_handlers:
+                try:
+                    await handler(text=text, user=user, channel=channel, say=say)
+                except Exception as e:
+                    logger.error(f"Mention handler error: {e}")
+
+        @self._app.event("reaction_added")
+        async def handle_reaction(event):
+            reaction = event.get("reaction", "")
+            item = event.get("item", {})
+            user = event.get("user", "")
+            for handler in self._reaction_handlers:
+                try:
+                    await handler(reaction=reaction, item=item, user=user)
+                except Exception as e:
+                    logger.error(f"Reaction handler error: {e}")
+
+        @self._app.event("message")
+        async def handle_message(event):
+            if event.get("bot_id"):
+                return
+            text = event.get("text", "")
+            user = event.get("user", "")
+            channel = event.get("channel", "")
+            if text.startswith("!"):
+                parts = text[1:].split(maxsplit=1)
+                cmd = parts[0]
+                args = parts[1] if len(parts) > 1 else ""
+                handler = self._command_handlers.get(cmd)
+                if handler:
+                    await handler(args=args, user=user, channel=channel)
+
     # ── 시작/종료 ──────────────────────────────────────
 
-    async def start(self):
-        """Socket Mode 연결 시작"""
-        await self.ensure_channels_exist()
-        handler = AsyncSocketModeHandler(self.app, self._app_token)
-        await handler.start_async()
-
     async def start_background(self):
-        """백그라운드에서 Socket Mode 실행"""
+        """백그라운드에서 Slack 연결 (Socket Mode 시도 → 실패 시 폴링)"""
         await self.ensure_channels_exist()
-        handler = AsyncSocketModeHandler(self.app, self._app_token)
-        await handler.connect_async()
-        logger.info("Slack Socket Mode connected")
+
+        socket_ok = await self._try_socket_mode()
+        if not socket_ok:
+            self._running = True
+            asyncio.create_task(self._poll_loop())
+
+    def stop(self):
+        """폴링 중지"""
+        self._running = False
