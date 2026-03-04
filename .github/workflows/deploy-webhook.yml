@@ -60,6 +60,8 @@ jobs:
             -d '{
               "commands": [
                 {"command": "board",     "description": "생각일기 이사회 분석 (예: /board 3)"},
+                {"command": "agenda",    "description": "이사회 안건 의견 요청 (/안건)"},
+                {"command": "vote",      "description": "이사회 찬반 표결 (/표결)"},
                 {"command": "help",      "description": "전체 명령어 도움말 (/명령어)"},
                 {"command": "topics",    "description": "인터뷰 주제 목록 (/주제)"},
                 {"command": "interview", "description": "인터뷰 에이전트 상태 (/인터뷰)"},
