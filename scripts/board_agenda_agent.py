@@ -200,7 +200,7 @@ def generate_vote(topic: str, members: list) -> dict:
 
     member_keys = [m["key"] for m in members]
 
-    prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성 또는 반대 투표를 해주세요.
+    prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성, 반대, 또는 기권 투표를 해주세요.
 
 🗳️ 표결 안건: {topic}
 
@@ -208,15 +208,19 @@ def generate_vote(topic: str, members: list) -> dict:
 {member_instructions}
 
 반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
-각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대를 결정하고,
-그 이유를 2~3문장으로 설명해주세요.
+
+투표 규칙:
+- 각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대/기권을 결정
+- 안건이 애매하거나, 자신의 관점에서 판단이 불가능하거나, 정보가 부족하면 "기권" 가능
+- 기권 사유도 반드시 작성 (예: "현재 정보만으로는 판단이 어렵습니다")
+- 안건의 논리가 불충분하면 반대하거나 기권하고, 어떤 추가 정보/논리가 있으면 찬성할 수 있을지 제시
+- 찬성/반대 시 사유를 2~3문장으로 설명
 
 {{
   "votes": {{
-    {', '.join(f'"{k}": {{"vote": "찬성 또는 반대", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
+    {', '.join(f'"{k}": {{"vote": "찬성 또는 반대 또는 기권", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
   }},
-  "result": "최종 결과 (예: 찬성 3 vs 반대 2 — 가결/부결)",
-  "summary": "표결 결과에 대한 종합 해석 (2~3문장)"
+  "summary": "표결 결과에 대한 종합 해석 (2~3문장). 부결되었다면 어떤 논리/조건이 추가되면 가결될 수 있을지 제안"
 }}"""
 
     message = client.messages.create(
@@ -233,9 +237,42 @@ def generate_vote(topic: str, members: list) -> dict:
             raw = raw[4:].lstrip()
 
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return {"votes": {}, "result": "", "summary": raw[:2000]}
+
+    # 과반수 가결 로직 적용
+    votes = data.get("votes", {})
+    total_members = len(member_keys)
+    yes_count = 0
+    no_count = 0
+    abstain_count = 0
+    for k in member_keys:
+        v = votes.get(k, {})
+        vote_str = v.get("vote", "") if isinstance(v, dict) else str(v)
+        if "찬성" in vote_str:
+            yes_count += 1
+        elif "반대" in vote_str:
+            no_count += 1
+        else:
+            abstain_count += 1
+
+    voted_count = yes_count + no_count
+    quorum = (total_members // 2) + 1  # 과반수 정족수
+
+    if voted_count < quorum:
+        result_str = f"투표 {voted_count}명 / 정족수 {quorum}명 미달 — ❌ 성립 불가 (찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count})"
+        passed = False
+    else:
+        # 투표자 중 과반수 찬성 필요
+        pass_threshold = (voted_count // 2) + 1
+        passed = yes_count >= pass_threshold
+        verdict = "✅ 가결" if passed else "❌ 부결"
+        result_str = f"찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count} — {verdict} (투표 {voted_count}명 중 {pass_threshold}표 이상 찬성 필요)"
+
+    data["result"] = result_str
+    data["passed"] = passed
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +373,12 @@ def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, no
             if isinstance(v, dict):
                 vote_str = v.get("vote", "")
                 reason = v.get("reason", "")
-                icon = "✅" if "찬성" in vote_str else "❌"
+                if "찬성" in vote_str:
+                    icon = "✅"
+                elif "반대" in vote_str:
+                    icon = "❌"
+                else:
+                    icon = "⬜"
                 children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"{icon} {m['name']} — {vote_str}"}}]}})
                 if reason:
                     children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": reason}}]}})
@@ -550,7 +592,12 @@ def format_vote_telegram(topic: str, result: dict, members: list, now: datetime,
         if isinstance(v, dict):
             vote_str = v.get("vote", "")
             reason = v.get("reason", "")
-            icon = "✅" if "찬성" in vote_str else "❌"
+            if "찬성" in vote_str:
+                icon = "✅"
+            elif "반대" in vote_str:
+                icon = "❌"
+            else:
+                icon = "⬜"  # 기권
             lines.append(f"{icon} <b>{m['name']}</b> — {vote_str}")
             if reason:
                 lines.append(f"  {reason}\n")
@@ -558,6 +605,9 @@ def format_vote_telegram(topic: str, result: dict, members: list, now: datetime,
     summary = result.get("summary", "")
     if summary:
         lines.append(f"<b>📝 종합</b>\n{summary}")
+
+    if not result.get("passed", True):
+        lines.append("\n<i>💡 안건을 수정하거나 추가 논리를 제시하여 다시 /표결 할 수 있습니다.</i>")
 
     if notion_url:
         lines.append(f"\n👉 <a href=\"{notion_url}\">전체 보기</a>")
