@@ -176,58 +176,102 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
 {entries_text}
 
 ---
-위 생각일기들을 종합적으로 분석해서 반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
-각 섹션은 충실하고 구체적으로 작성해주세요.
+위 생각일기들을 종합 분석해서 아래 JSON 형식으로만 응답하세요.
+
+작성 규칙:
+- overview: 3~4문장 (기간, 항목 수, 전반적 특징)
+- top_themes: 5~7개 (주제명 + 1~2문장 설명)
+- timeline_flow: 4~6문장 (초기→중기→최근 흐름)
+- emotion_pattern: 3~4문장
+- recurring_patterns: 3~5개
+- recurring_problems: 3~5개
+- key_insights: 3~5개 (각 1~2문장)
+- growth_points: 3~4문장
+- suggestions: 3~5개 (각 1~2문장, 구체적으로)
 
 {{
-  "overview": "기간, 항목 수, 전반적인 특징을 2~3문장으로 요약",
-  "top_themes": [
-    {{"theme": "주제명", "description": "해당 주제에 대한 설명 1~2문장"}}
-  ],
-  "timeline_flow": "초기 → 중기 → 최근으로 관심사/고민이 어떻게 변화했는지 흐름 정리 (3~5문장)",
-  "emotion_pattern": "글에서 읽히는 감정적 흐름, 에너지 높낮이의 패턴 (2~3문장)",
-  "recurring_patterns": [
-    "자주 나타나는 패턴이나 공통점 1",
-    "자주 나타나는 패턴이나 공통점 2",
-    "자주 나타나는 패턴이나 공통점 3"
-  ],
-  "recurring_problems": [
-    "반복되는 문제점 1",
-    "반복되는 문제점 2",
-    "반복되는 문제점 3"
-  ],
-  "key_insights": [
-    "핵심 인사이트 1",
-    "핵심 인사이트 2",
-    "핵심 인사이트 3"
-  ],
-  "growth_points": "이 기간 동안 확인되는 성장이나 변화 (2~3문장)",
-  "suggestions": [
-    "분석 결과를 바탕으로 한 구체적 제안 1",
-    "구체적 제안 2",
-    "구체적 제안 3"
-  ]
+  "overview": "...",
+  "top_themes": [{{"theme": "주제명", "description": "설명"}}],
+  "timeline_flow": "...",
+  "emotion_pattern": "...",
+  "recurring_patterns": ["..."],
+  "recurring_problems": ["..."],
+  "key_insights": ["..."],
+  "growth_points": "...",
+  "suggestions": ["..."]
 }}"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4000,
+        max_tokens=16000,
         messages=[{"role": "user", "content": prompt}],
     )
 
     raw = message.content[0].text.strip()
+
+    # 응답이 잘렸는지 확인
+    if message.stop_reason == "max_tokens":
+        print("경고: Claude 응답이 max_tokens로 잘림, 복구 시도", file=sys.stderr)
+
+    # 코드블록 제거
     if raw.startswith("```"):
         parts = raw.split("```")
         raw = parts[1] if len(parts) > 1 else raw
         if raw.startswith("json"):
             raw = raw[4:].lstrip()
 
+    # JSON 파싱 시도
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return {"overview": raw, "top_themes": [], "timeline_flow": "", "emotion_pattern": "",
-                "recurring_patterns": [], "recurring_problems": [], "key_insights": [],
-                "growth_points": "", "suggestions": []}
+        pass
+
+    # 잘린 JSON 복구 시도: 닫히지 않은 괄호를 닫아본다
+    repaired = _try_repair_json(raw)
+    if repaired is not None:
+        print("잘린 JSON 복구 성공")
+        return repaired
+
+    # 최후 수단: 텍스트를 overview로
+    print("JSON 파싱 실패 — 텍스트로 대체", file=sys.stderr)
+    return {"overview": raw[:2000], "top_themes": [], "timeline_flow": "", "emotion_pattern": "",
+            "recurring_patterns": [], "recurring_problems": [], "key_insights": [],
+            "growth_points": "", "suggestions": []}
+
+
+def _try_repair_json(raw: str) -> dict | None:
+    """잘린 JSON을 닫아서 복구를 시도한다."""
+    # 마지막 완전한 값 위치를 찾아 잘라낸 뒤 괄호를 닫는다
+    import re
+    # 문자열 끝에서 불완전한 부분 제거
+    # 마지막 완성된 키-값 쌍 또는 배열 원소까지만 남기기
+    text = raw.rstrip()
+
+    # 끝에 열린 문자열이 있으면 닫기
+    for attempt in range(5):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 끝에서 불완전한 부분을 점진적으로 제거
+        # 마지막 , 또는 완전한 값 이후를 잘라냄
+        last_comma = text.rfind(",")
+        last_close_bracket = max(text.rfind("]"), text.rfind("}"), text.rfind('"'))
+
+        if last_comma > last_close_bracket:
+            text = text[:last_comma]
+        elif last_close_bracket > 0:
+            text = text[:last_close_bracket + 1]
+        else:
+            break
+
+        # 닫히지 않은 괄호 수 계산하여 닫기
+        opens = text.count("[") - text.count("]")
+        opens_curly = text.count("{") - text.count("}")
+        text = text + "]" * opens + "}" * opens_curly
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -493,16 +537,34 @@ def main():
     # Notion 이사회 DB에 저장
     notion_url = save_to_notion(analysis, len(entries), months, date_range, now, board_db_id)
 
-    # 텔레그램에 완료 알림 + 링크
-    if notion_url:
-        msg = (
-            f"🔍 <b>생각일기 종합 분석 완료</b>\n"
-            f"<i>{date_range} · {len(entries)}개 항목 · {months}개월</i>\n\n"
-            f"👉 {notion_url}"
+    # 텔레그램에 완료 알림 + 핵심 요약
+    tg_msg = f"🔍 <b>생각일기 종합 분석 완료</b>\n<i>{date_range} · {len(entries)}개 항목 · {months}개월</i>\n"
+
+    # 핵심 요약 포함
+    overview = analysis.get("overview", "")
+    if overview:
+        tg_msg += f"\n📋 <b>개요</b>\n{overview}\n"
+
+    top_themes = analysis.get("top_themes", [])
+    if top_themes:
+        themes_str = ", ".join(
+            t.get("theme", str(t)) if isinstance(t, dict) else str(t)
+            for t in top_themes[:5]
         )
-        ok = send_to_telegram(msg, reply_to)
+        tg_msg += f"\n🏷️ <b>핵심 주제</b>\n{themes_str}\n"
+
+    insights = analysis.get("key_insights", [])
+    if insights:
+        tg_msg += "\n💡 <b>핵심 인사이트</b>\n"
+        for i, item in enumerate(insights[:3], 1):
+            tg_msg += f"{i}. {item}\n"
+
+    if notion_url:
+        tg_msg += f"\n👉 <a href=\"{notion_url}\">전체 분석 보기</a>"
+        ok = send_to_telegram(tg_msg, reply_to)
     else:
-        ok = send_to_telegram("⚠️ 분석은 완료했으나 Notion 저장에 실패했습니다.", reply_to)
+        tg_msg += "\n⚠️ Notion 저장에 실패했습니다."
+        ok = send_to_telegram(tg_msg, reply_to)
 
     print("\n=== 완료 ===")
     if not ok:
