@@ -216,11 +216,15 @@ def generate_vote(topic: str, members: list) -> dict:
 - 안건의 논리가 불충분하면 반대하거나 기권하고, 어떤 추가 정보/논리가 있으면 찬성할 수 있을지 제시
 - 찬성/반대 시 사유를 2~3문장으로 설명
 
+가결 기준: 찬성 3표 이상이면 가결, 미만이면 부결 (기권은 찬성도 반대도 아님)
+
+중요: summary에서 가결/부결을 직접 판단하지 마세요. 각 이사의 투표 사유를 종합 분석하고, 부결 시 어떤 조건이 추가되면 가결될 수 있을지만 제안하세요.
+
 {{
   "votes": {{
     {', '.join(f'"{k}": {{"vote": "찬성 또는 반대 또는 기권", "reason": "투표 사유 2~3문장"}}' for k in member_keys)}
   }},
-  "summary": "표결 결과에 대한 종합 해석 (2~3문장). 부결되었다면 어떤 논리/조건이 추가되면 가결될 수 있을지 제안"
+  "summary": "각 이사의 입장을 종합 분석 (2~3문장). 가결/부결 판정은 쓰지 말고, 핵심 쟁점과 개선 제안만 작성"
 }}"""
 
     message = client.messages.create(
@@ -241,9 +245,8 @@ def generate_vote(topic: str, members: list) -> dict:
     except json.JSONDecodeError:
         return {"votes": {}, "result": "", "summary": raw[:2000]}
 
-    # 과반수 가결 로직 적용
+    # 찬성 3표 이상 단순 가결
     votes = data.get("votes", {})
-    total_members = len(member_keys)
     yes_count = 0
     no_count = 0
     abstain_count = 0
@@ -257,18 +260,9 @@ def generate_vote(topic: str, members: list) -> dict:
         else:
             abstain_count += 1
 
-    voted_count = yes_count + no_count
-    quorum = (total_members // 2) + 1  # 과반수 정족수
-
-    if voted_count < quorum:
-        result_str = f"투표 {voted_count}명 / 정족수 {quorum}명 미달 — ❌ 성립 불가 (찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count})"
-        passed = False
-    else:
-        # 투표자 중 과반수 찬성 필요
-        pass_threshold = (voted_count // 2) + 1
-        passed = yes_count >= pass_threshold
-        verdict = "✅ 가결" if passed else "❌ 부결"
-        result_str = f"찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count} — {verdict} (투표 {voted_count}명 중 {pass_threshold}표 이상 찬성 필요)"
+    passed = yes_count >= 3
+    verdict = "✅ 가결" if passed else "❌ 부결"
+    result_str = f"찬성 {yes_count} · 반대 {no_count} · 기권 {abstain_count} — {verdict}"
 
     data["result"] = result_str
     data["passed"] = passed
