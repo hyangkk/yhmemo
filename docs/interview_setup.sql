@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS interview_topics (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE interview_topics DISABLE ROW LEVEL SECURITY;
+ALTER TABLE interview_topics ENABLE ROW LEVEL SECURITY;
 
 
 -- 2. 인터뷰 메시지 테이블 (Q&A 기록)
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS interview_messages (
 CREATE INDEX IF NOT EXISTS idx_interview_messages_topic
     ON interview_messages (topic_id, created_at);
 
-ALTER TABLE interview_messages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE interview_messages ENABLE ROW LEVEL SECURITY;
 
 
 -- 3. agent_settings에 인터뷰 관련 컬럼 추가
