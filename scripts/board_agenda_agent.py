@@ -361,6 +361,83 @@ def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, no
 
 
 # ---------------------------------------------------------------------------
+# personality 자동 업데이트 (memory 누적)
+# ---------------------------------------------------------------------------
+
+def update_member_personalities(members: list, result: dict, mode: str, topic: str) -> None:
+    """발언을 memory에 누적하고 personality를 전체 기록으로 종합."""
+    client = anthropic.Anthropic()
+    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+    context_label = f"안건: {topic[:30]}" if mode == "agenda" else f"표결: {topic[:30]}"
+
+    # 안건: opinions, 표결: votes에서 발언 추출
+    if mode == "vote":
+        raw_opinions = result.get("votes", {})
+    else:
+        raw_opinions = result.get("opinions", {})
+
+    for m in members:
+        key = m["key"]
+        raw = raw_opinions.get(key, "")
+        if isinstance(raw, dict):
+            opinion = f"{raw.get('vote', '')} — {raw.get('reason', '')}".strip()
+        else:
+            opinion = str(raw).strip()
+        if not opinion:
+            continue
+
+        member_id = m.get("id")
+        if not member_id:
+            continue
+
+        existing_personality = m.get("personality", "").strip()
+        existing_memory = m.get("memory", "").strip()
+
+        new_entry = f"[{now_str} {context_label}] {opinion}"
+        updated_memory = f"{existing_memory}\n{new_entry}".strip()
+
+        if len(updated_memory) > 8000:
+            lines = updated_memory.split("\n")
+            while len("\n".join(lines)) > 8000 and len(lines) > 5:
+                lines.pop(0)
+            updated_memory = "\n".join(lines)
+
+        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 발언 기록입니다:
+
+{updated_memory}
+
+---
+위 발언 기록을 바탕으로 이 이사의 personality를 종합해주세요.
+
+작성 규칙:
+- 3~5문장으로 작성
+- 핵심 가치관, 사고 패턴, 판단 기준을 구체적으로
+- 시간에 따른 변화나 일관된 패턴이 있으면 언급
+- 자주 쓰는 표현이나 논리 구조가 있으면 포함
+- JSON 없이 텍스트만 반환"""
+
+        try:
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=400,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            new_personality = msg.content[0].text.strip()
+            ok = _supabase_patch(
+                f"/rest/v1/board_members?id=eq.{member_id}",
+                {
+                    "personality": new_personality,
+                    "memory": updated_memory,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            status = "✓" if ok else "✗"
+            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자)")
+        except Exception as e:
+            print(f"  {m['name']} personality 업데이트 오류: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # 텔레그램 포맷
 # ---------------------------------------------------------------------------
 
@@ -451,7 +528,7 @@ def main():
         result = generate_agenda_opinions(topic, members)
     now = datetime.now(KST)
 
-    print(f"[3/3] 발송 및 저장 중...")
+    print(f"[3/4] 발송 및 저장 중...")
     notion_url = save_agenda_to_notion(mode, topic, result, members, now, board_db_id)
 
     if mode == "vote":
@@ -460,6 +537,9 @@ def main():
         tg_msg = format_agenda_telegram(topic, result, members, now, notion_url)
 
     ok = send_telegram(tg_msg, reply_to)
+
+    print(f"\n[4/4] 이사 personality 업데이트 중...")
+    update_member_personalities(members, result, mode, topic)
 
     print("\n=== 완료 ===")
     if not ok:

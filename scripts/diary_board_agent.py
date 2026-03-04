@@ -297,10 +297,11 @@ def generate_board_report(entries: list, members: list) -> dict:
 # personality 자동 업데이트
 # ---------------------------------------------------------------------------
 
-def update_member_personalities(members: list, report: dict) -> None:
-    """각 멤버의 최신 의견을 바탕으로 personality를 AI로 업데이트."""
+def update_member_personalities(members: list, report: dict, context_label: str = "이사회") -> None:
+    """각 멤버의 발언을 memory에 누적하고, 전체 기록으로 personality를 종합."""
     client = anthropic.Anthropic()
     opinions = report.get("opinions", {})
+    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
 
     for m in members:
         key = m["key"]
@@ -308,34 +309,57 @@ def update_member_personalities(members: list, report: dict) -> None:
         if not opinion:
             continue
 
-        existing = m.get("personality", "").strip()
-        prompt = f"""이사회 멤버 "{m['name']}"의 이번 의견입니다:
-"{opinion}"
+        member_id = m.get("id")
+        if not member_id:
+            print(f"  - {m['name']}: id 없음 (기본 멤버), 업데이트 생략")
+            continue
 
-기존에 파악된 특성:
-"{existing if existing else '아직 없음'}"
+        existing_personality = m.get("personality", "").strip()
+        existing_memory = m.get("memory", "").strip()
 
-이번 의견을 반영하여 이 이사의 personality를 1~2문장으로 업데이트해주세요.
-실제로 드러난 성향, 가치관, 언어 패턴을 바탕으로 구체적으로 작성해주세요.
-JSON 없이 텍스트만 반환하세요."""
+        # memory에 이번 발언 누적
+        new_entry = f"[{now_str} {context_label}] {opinion}"
+        updated_memory = f"{existing_memory}\n{new_entry}".strip()
+
+        # memory가 너무 길면 최근 내용 위주로 유지 (최대 ~8000자)
+        if len(updated_memory) > 8000:
+            lines = updated_memory.split("\n")
+            while len("\n".join(lines)) > 8000 and len(lines) > 5:
+                lines.pop(0)
+            updated_memory = "\n".join(lines)
+
+        # 전체 memory로 personality 종합
+        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 발언 기록입니다:
+
+{updated_memory}
+
+---
+위 발언 기록을 바탕으로 이 이사의 personality를 종합해주세요.
+
+작성 규칙:
+- 3~5문장으로 작성
+- 핵심 가치관, 사고 패턴, 판단 기준을 구체적으로
+- 시간에 따른 변화나 일관된 패턴이 있으면 언급
+- 자주 쓰는 표현이나 논리 구조가 있으면 포함
+- JSON 없이 텍스트만 반환"""
 
         try:
             msg = client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=200,
+                max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
             new_personality = msg.content[0].text.strip()
-            member_id = m.get("id")
-            if member_id:
-                ok = _supabase_patch(
-                    f"/rest/v1/board_members?id=eq.{member_id}",
-                    {"personality": new_personality, "updated_at": datetime.now(timezone.utc).isoformat()},
-                )
-                status = "✓" if ok else "✗"
-                print(f"  {status} {m['name']} personality 업데이트")
-            else:
-                print(f"  - {m['name']}: id 없음 (기본 멤버), 업데이트 생략")
+            ok = _supabase_patch(
+                f"/rest/v1/board_members?id=eq.{member_id}",
+                {
+                    "personality": new_personality,
+                    "memory": updated_memory,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            status = "✓" if ok else "✗"
+            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자)")
         except Exception as e:
             print(f"  {m['name']} personality 업데이트 오류: {e}", file=sys.stderr)
 
