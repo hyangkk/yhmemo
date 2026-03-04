@@ -113,10 +113,55 @@ def notion_headers() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 웹 검색 기반 사전 조사
+# ---------------------------------------------------------------------------
+
+def research_topic(topic: str) -> str:
+    """안건/표결 주제에 대해 웹 검색으로 최신 정보를 조사한다."""
+    client = anthropic.Anthropic()
+
+    prompt = f"""다음 안건/표결 주제에 대해 의사결정에 필요한 최신 정보를 조사해주세요.
+
+주제: {topic}
+
+조사 방향:
+- 이 주제와 관련된 최신 뉴스, 현황, 리스크
+- 의사결정에 영향을 줄 수 있는 객관적 사실 (안전, 비용, 시기 등)
+- 현재 상황에서 고려해야 할 중요 정보
+
+조사 결과를 간결하게 정리해주세요. 핵심 사실 위주로 bullet point로 작성."""
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            tools=[{"type": "web_search_20250305"}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        # tool_use + text 결과에서 텍스트만 추출
+        research_text = ""
+        for block in message.content:
+            if block.type == "text":
+                research_text += block.text + "\n"
+
+        research_text = research_text.strip()
+        if research_text:
+            print(f"  웹 조사 완료 ({len(research_text):,}자)")
+            return research_text
+        else:
+            print("  웹 조사 결과 없음")
+            return ""
+    except Exception as e:
+        print(f"  웹 조사 오류 (무시하고 진행): {e}", file=sys.stderr)
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Claude AI — 안건 의견 생성
 # ---------------------------------------------------------------------------
 
-def generate_agenda_opinions(agenda: str, members: list) -> dict:
+def generate_agenda_opinions(agenda: str, members: list, research: str = "") -> dict:
     """안건에 대해 각 이사의 의견을 생성한다."""
     client = anthropic.Anthropic()
 
@@ -137,10 +182,19 @@ def generate_agenda_opinions(agenda: str, members: list) -> dict:
 
     member_keys = [m["key"] for m in members]
 
+    research_section = ""
+    if research:
+        research_section = f"""
+📌 사전 조사 결과 (웹 검색 기반 최신 정보):
+{research}
+
+위 조사 결과를 반드시 참고하여 의견을 제시하세요. 현실과 동떨어진 의견은 지양하세요.
+"""
+
     prompt = f"""다음 안건에 대해 이사회 멤버 각자의 관점에서 의견을 제시해주세요.
 
 📋 안건: {agenda}
-
+{research_section}
 이사회 멤버:
 {member_instructions}
 
@@ -179,7 +233,7 @@ def generate_agenda_opinions(agenda: str, members: list) -> dict:
 # Claude AI — 표결 생성
 # ---------------------------------------------------------------------------
 
-def generate_vote(topic: str, members: list) -> dict:
+def generate_vote(topic: str, members: list, research: str = "") -> dict:
     """안건에 대해 각 이사의 찬반 투표를 생성한다."""
     client = anthropic.Anthropic()
 
@@ -200,10 +254,19 @@ def generate_vote(topic: str, members: list) -> dict:
 
     member_keys = [m["key"] for m in members]
 
+    research_section = ""
+    if research:
+        research_section = f"""
+📌 사전 조사 결과 (웹 검색 기반 최신 정보):
+{research}
+
+위 조사 결과를 반드시 참고하여 투표하세요. 최신 정세, 안전 이슈, 현실적 리스크를 무시한 투표는 지양하세요.
+"""
+
     prompt = f"""다음 안건에 대해 이사회 멤버 각자가 찬성, 반대, 또는 기권 투표를 해주세요.
 
 🗳️ 표결 안건: {topic}
-
+{research_section}
 이사회 멤버:
 {member_instructions}
 
@@ -211,6 +274,7 @@ def generate_vote(topic: str, members: list) -> dict:
 
 투표 규칙:
 - 각 이사는 자신의 역할과 성격에 기반해 솔직하게 찬성/반대/기권을 결정
+- 사전 조사 결과가 있으면 반드시 참고하여 현실에 기반한 판단을 내릴 것
 - 안건이 애매하거나, 자신의 관점에서 판단이 불가능하거나, 정보가 부족하면 "기권" 가능
 - 기권 사유도 반드시 작성 (예: "현재 정보만으로는 판단이 어렵습니다")
 - 안건의 논리가 불충분하면 반대하거나 기권하고, 어떤 추가 정보/논리가 있으면 찬성할 수 있을지 제시
@@ -630,18 +694,25 @@ def main():
     settings = load_settings()
     board_db_id = settings["board_notion_db_id"]
 
-    print("[1/3] 이사회 멤버 로드 중...")
+    print("[1/4] 이사회 멤버 로드 중...")
     members = load_board_members()
     print(f"  → {len(members)}명\n")
 
-    print(f"[2/3] {label} 분석 중...")
-    if mode == "vote":
-        result = generate_vote(topic, members)
+    print("[2/4] 웹 검색으로 관련 정보 조사 중...")
+    research = research_topic(topic)
+    if research:
+        print(f"  → 조사 결과 확보\n")
     else:
-        result = generate_agenda_opinions(topic, members)
+        print(f"  → 추가 조사 없이 진행\n")
+
+    print(f"[3/4] {label} 분석 중...")
+    if mode == "vote":
+        result = generate_vote(topic, members, research)
+    else:
+        result = generate_agenda_opinions(topic, members, research)
     now = datetime.now(KST)
 
-    print(f"[3/4] 발송 및 저장 중...")
+    print(f"[4/5] 발송 및 저장 중...")
     notion_url = save_agenda_to_notion(mode, topic, result, members, now, board_db_id)
 
     if mode == "vote":
@@ -651,7 +722,7 @@ def main():
 
     ok = send_telegram(tg_msg, reply_to)
 
-    print(f"\n[4/4] 이사 personality 업데이트 중...")
+    print(f"\n[5/5] 이사 personality 업데이트 중...")
     update_member_personalities(members, result, mode, topic)
 
     print("\n=== 완료 ===")
