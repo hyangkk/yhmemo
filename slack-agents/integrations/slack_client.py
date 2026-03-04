@@ -27,7 +27,7 @@ class SlackClient:
     CHANNEL_CURATOR = "ai-curator"
     CHANNEL_LOGS = "ai-agent-logs"
 
-    def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 3.0):
+    def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
         self._bot_token = bot_token
         self._app_token = app_token
@@ -48,19 +48,23 @@ class SlackClient:
     # ── 메시지 전송 ────────────────────────────────────
 
     async def send_message(self, channel: str, text: str, blocks: list = None) -> dict:
-        """채널에 메시지 전송"""
+        """채널에 메시지 전송 (rate limit 시 재시도)"""
         channel_id = await self._resolve_channel(channel)
-        try:
-            result = await self.client.chat_postMessage(
-                channel=channel_id,
-                text=text,
-                blocks=blocks,
-                unfurl_links=False,
-            )
-            return result
-        except Exception as e:
-            logger.error(f"Failed to send message to {channel}: {e}")
-            raise
+        for attempt in range(3):
+            try:
+                result = await self.client.chat_postMessage(
+                    channel=channel_id,
+                    text=text,
+                    blocks=blocks,
+                    unfurl_links=False,
+                )
+                return result
+            except Exception as e:
+                if "ratelimited" in str(e) and attempt < 2:
+                    await asyncio.sleep(5 * (attempt + 1))
+                    continue
+                logger.error(f"Failed to send message to {channel}: {e}")
+                raise
 
     async def send_log(self, message: str):
         """로그 채널에 메시지 전송"""
@@ -209,7 +213,11 @@ class SlackClient:
                             logger.error(f"Command handler error: {e}")
 
         except Exception as e:
-            logger.debug(f"Poll error for {channel_name}: {e}")
+            if "ratelimited" in str(e):
+                logger.debug(f"Rate limited on {channel_name}, backing off")
+                await asyncio.sleep(30)
+            else:
+                logger.warning(f"Poll error for {channel_name}: {e}")
 
     async def _init_channel_cache(self):
         """채널 캐시 초기화 (재시도 포함)"""
@@ -232,17 +240,21 @@ class SlackClient:
         # 채널 캐시 초기화
         await self._init_channel_cache()
 
-        # 초기: 현재 시각을 기준으로 설정 (과거 메시지 무시)
-        channels = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
-                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS]
+        # 명령어는 GENERAL 채널에서만 수신 (rate limit 방지)
+        channels = [self.CHANNEL_GENERAL]
         for ch_name in channels:
             ch_id = self._channel_cache.get(ch_name)
             if ch_id:
                 self._last_ts[ch_id] = str(time.time())
 
+        logger.info(f"Polling channels: {[self._channel_cache.get(ch, '?') for ch in channels]}")
+
         while self._running:
-            for ch_name in channels:
-                await self._poll_channel(ch_name)
+            try:
+                for ch_name in channels:
+                    await self._poll_channel(ch_name)
+            except Exception as e:
+                logger.error(f"Poll loop error: {e}")
             await asyncio.sleep(self._poll_interval)
 
     # ── Socket Mode 시도 → 실패 시 폴링 ─────────────────
