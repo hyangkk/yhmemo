@@ -1,0 +1,40 @@
+name: 이사회 자연어 대화 에이전트
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: '사용자 메시지'
+        required: true
+      msg_id:
+        description: '텔레그램 메시지 ID (회신용)'
+        required: false
+        default: '0'
+
+jobs:
+  board-chat:
+    name: 이사회 자연어 대화 처리
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install anthropic
+
+      - name: 에이전트 실행
+        env:
+          INPUT_MESSAGE: ${{ github.event.inputs.message }}
+          INPUT_MSG_ID: ${{ github.event.inputs.msg_id }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/board_chat_agent.py

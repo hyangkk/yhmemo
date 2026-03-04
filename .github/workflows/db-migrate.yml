@@ -90,6 +90,9 @@ jobs:
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_command_hours INTEGER DEFAULT 0;
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_command_msg_id BIGINT DEFAULT 0;
           ALTER TABLE board_members ADD COLUMN IF NOT EXISTS memory TEXT NOT NULL DEFAULT '';
+          ALTER TABLE board_members ADD COLUMN IF NOT EXISTS meta_memory TEXT NOT NULL DEFAULT '';
+          ALTER TABLE board_members ADD COLUMN IF NOT EXISTS user_directives TEXT NOT NULL DEFAULT '';
+          ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_chat_active_at TIMESTAMPTZ;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')

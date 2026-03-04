@@ -124,9 +124,15 @@ def generate_agenda_opinions(agenda: str, members: list) -> dict:
     for m in members:
         desc = m.get("description", "")
         personality = m.get("personality", "")
+        meta_mem = m.get("meta_memory", "").strip()
+        directives = m.get("user_directives", "").strip()
         persona = desc
         if personality:
-            persona += f"\n  (지금까지 파악된 특성: {personality})"
+            persona += f"\n  (성격: {personality})"
+        if directives:
+            persona += f"\n  (사용자 지시사항: {directives[-500:]})"
+        if meta_mem:
+            persona += f"\n  (장기 기억: {meta_mem[-500:]})"
         member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
 
     member_keys = [m["key"] for m in members]
@@ -181,9 +187,15 @@ def generate_vote(topic: str, members: list) -> dict:
     for m in members:
         desc = m.get("description", "")
         personality = m.get("personality", "")
+        meta_mem = m.get("meta_memory", "").strip()
+        directives = m.get("user_directives", "").strip()
         persona = desc
         if personality:
-            persona += f"\n  (지금까지 파악된 특성: {personality})"
+            persona += f"\n  (성격: {personality})"
+        if directives:
+            persona += f"\n  (사용자 지시사항: {directives[-500:]})"
+        if meta_mem:
+            persona += f"\n  (장기 기억: {meta_mem[-500:]})"
         member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
 
     member_keys = [m["key"] for m in members]
@@ -364,13 +376,61 @@ def save_agenda_to_notion(mode: str, topic: str, result: dict, members: list, no
 # personality 자동 업데이트 (memory 누적)
 # ---------------------------------------------------------------------------
 
+MEMORY_RAW_LIMIT = 6000
+META_MEMORY_LIMIT = 20000
+
+
+def _consolidate_memory(member: dict, client: anthropic.Anthropic) -> tuple:
+    """raw memory가 MEMORY_RAW_LIMIT를 초과하면 오래된 내용을 meta_memory로 통합."""
+    memory = member.get("memory", "").strip()
+    meta_memory = member.get("meta_memory", "").strip()
+
+    if len(memory) <= MEMORY_RAW_LIMIT:
+        return memory, meta_memory
+
+    lines = memory.split("\n")
+    midpoint = len(lines) // 2
+    old_lines = lines[:midpoint]
+    keep_lines = lines[midpoint:]
+    old_text = "\n".join(old_lines).strip()
+    if not old_text:
+        return memory, meta_memory
+
+    prompt = f"""아래는 이사회 멤버 "{member.get('name', '')}"의 과거 발언/기록입니다.
+
+{old_text}
+
+---
+기존 장기 기억 요약:
+{meta_memory if meta_memory else '(없음)'}
+
+---
+위의 과거 발언을 기존 장기 기억에 통합하여 새로운 장기 기억 요약을 작성해주세요.
+핵심 가치관, 반복 패턴, 중요 의사결정 중심. 구체적 날짜/숫자 보존. 최대 2000자. 텍스트만 반환."""
+
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        new_meta = msg.content[0].text.strip()
+        if len(new_meta) > META_MEMORY_LIMIT:
+            new_meta = new_meta[:META_MEMORY_LIMIT]
+        updated_memory = "\n".join(keep_lines).strip()
+        print(f"    메모리 통합: {len(memory):,}자 → {len(updated_memory):,}자 (meta: {len(new_meta):,}자)")
+        return updated_memory, new_meta
+    except Exception as e:
+        print(f"    메모리 통합 오류: {e}", file=sys.stderr)
+        return memory, meta_memory
+
+
 def update_member_personalities(members: list, result: dict, mode: str, topic: str) -> None:
-    """발언을 memory에 누적하고 personality를 전체 기록으로 종합."""
+    """발언을 memory에 누적하고 3-tier 메모리 시스템으로 관리."""
     client = anthropic.Anthropic()
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     context_label = f"안건: {topic[:30]}" if mode == "agenda" else f"표결: {topic[:30]}"
 
-    # 안건: opinions, 표결: votes에서 발언 추출
     if mode == "vote":
         raw_opinions = result.get("votes", {})
     else:
@@ -390,30 +450,36 @@ def update_member_personalities(members: list, result: dict, mode: str, topic: s
         if not member_id:
             continue
 
-        existing_personality = m.get("personality", "").strip()
         existing_memory = m.get("memory", "").strip()
 
         new_entry = f"[{now_str} {context_label}] {opinion}"
         updated_memory = f"{existing_memory}\n{new_entry}".strip()
+        m["memory"] = updated_memory
 
-        if len(updated_memory) > 8000:
-            lines = updated_memory.split("\n")
-            while len("\n".join(lines)) > 8000 and len(lines) > 5:
-                lines.pop(0)
-            updated_memory = "\n".join(lines)
+        # 3-tier 메모리 통합
+        updated_memory, updated_meta = _consolidate_memory(m, client)
 
-        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 발언 기록입니다:
+        # 전체 기록으로 personality 종합
+        full_context = ""
+        if updated_meta:
+            full_context += f"[장기 기억]\n{updated_meta}\n\n"
+        directives = m.get("user_directives", "").strip()
+        if directives:
+            full_context += f"[사용자 지시사항]\n{directives}\n\n"
+        full_context += f"[최근 기록]\n{updated_memory}"
 
-{updated_memory}
+        prompt = f"""이사회 멤버 "{m['name']}" ({m.get('role', '')})의 전체 기록입니다:
+
+{full_context}
 
 ---
-위 발언 기록을 바탕으로 이 이사의 personality를 종합해주세요.
+위 기록을 바탕으로 이 이사의 personality를 종합해주세요.
 
 작성 규칙:
 - 3~5문장으로 작성
 - 핵심 가치관, 사고 패턴, 판단 기준을 구체적으로
 - 시간에 따른 변화나 일관된 패턴이 있으면 언급
-- 자주 쓰는 표현이나 논리 구조가 있으면 포함
+- 사용자 지시사항이 있으면 그것도 반영
 - JSON 없이 텍스트만 반환"""
 
         try:
@@ -423,16 +489,19 @@ def update_member_personalities(members: list, result: dict, mode: str, topic: s
                 messages=[{"role": "user", "content": prompt}],
             )
             new_personality = msg.content[0].text.strip()
+            patch_data = {
+                "personality": new_personality,
+                "memory": updated_memory,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if updated_meta != m.get("meta_memory", ""):
+                patch_data["meta_memory"] = updated_meta
             ok = _supabase_patch(
                 f"/rest/v1/board_members?id=eq.{member_id}",
-                {
-                    "personality": new_personality,
-                    "memory": updated_memory,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                patch_data,
             )
             status = "✓" if ok else "✗"
-            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자)")
+            print(f"  {status} {m['name']} personality 업데이트 (memory {len(updated_memory):,}자, meta {len(updated_meta):,}자)")
         except Exception as e:
             print(f"  {m['name']} personality 업데이트 오류: {e}", file=sys.stderr)
 
