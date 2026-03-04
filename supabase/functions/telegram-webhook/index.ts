@@ -147,11 +147,17 @@ async function activateBoardChat(): Promise<void> {
   }).eq("id", 1);
 }
 
+async function deactivateBoardChat(): Promise<void> {
+  await sb.from("agent_settings").update({
+    board_chat_active_at: null,
+  }).eq("id", 1);
+}
+
 function isBoardChatActive(settings: Record<string, unknown>): boolean {
   const activeAt = settings.board_chat_active_at as string | null;
   if (!activeAt) return false;
   const elapsed = Date.now() - new Date(activeAt).getTime();
-  return elapsed < 30 * 60 * 1000; // 30분
+  return elapsed < 10 * 60 * 1000; // 10분 무활동 시 자동 종료
 }
 
 // ─── 명령어 핸들러 ───
@@ -189,12 +195,35 @@ async function handleCommand(
         "  /명령어 — 이 도움말 표시\n" +
         "\n" +
         "<b>💬 이사회 대화 모드</b>\n" +
-        "  이사회 명령어 사용 후 30분간 자동 활성화\n" +
+        "  /대화 — 이사회 대화 시작\n" +
+        "  /대화끝 — 대화 종료 (10분 무응답 시 자동 종료)\n" +
         "  자연어로 이사들과 대화, 질문, 지시 가능\n" +
         "\n" +
         "<i>대화 모드가 아닐 때 일반 텍스트를 보내면\n" +
         "인터뷰 주제에 답변으로 기록됩니다.</i>"
     );
+    return true;
+  }
+
+  // /대화 — 이사회 대화 모드 시작
+  if (cmd === "/대화" || cmd === "/chat") {
+    await activateBoardChat();
+    await tgSend(
+      "💬 <b>이사회 대화 모드 시작</b>\n\n" +
+      "이제 일반 텍스트를 보내면 이사들과 대화합니다.\n" +
+      "• 질문: \"내 지난달 목표 뭐였지?\"\n" +
+      "• 지시: \"이번달 목표는 매출 1억이야 기억해\"\n" +
+      "• 대화: \"오늘 좀 힘들었어\"\n\n" +
+      "<b>/대화끝</b> 으로 대화 모드를 종료합니다.",
+      msgId
+    );
+    return true;
+  }
+
+  // /대화끝 — 이사회 대화 모드 종료
+  if (cmd === "/대화끝" || cmd === "/endchat") {
+    await deactivateBoardChat();
+    await tgSend("💬 이사회 대화 모드를 종료했습니다.\n이제 일반 텍스트는 인터뷰 답변으로 기록됩니다.", msgId);
     return true;
   }
 
@@ -220,7 +249,6 @@ async function handleCommand(
     });
     if (triggered) {
       await tgSend(`📋 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 이사들의 의견이 도착합니다.`, msgId);
-      await activateBoardChat();
     } else {
       await tgSend("⚠️ 안건 에이전트 실행에 실패했습니다.", msgId);
     }
@@ -249,7 +277,6 @@ async function handleCommand(
     });
     if (triggered) {
       await tgSend(`🗳️ 표결 안건을 이사회에 올렸습니다.\n<i>${rest}</i>\n\n잠시 후 투표 결과가 도착합니다.`, msgId);
-      await activateBoardChat();
     } else {
       await tgSend("⚠️ 표결 에이전트 실행에 실패했습니다.", msgId);
     }
@@ -306,7 +333,6 @@ async function handleCommand(
         `📊 최근 <b>${displayHours}</b> 생각일기 이사회 분석 중...\n잠시 후 결과가 전송됩니다.`,
         msgId
       );
-      await activateBoardChat();
     } else {
       await tgSend("⚠️ 이사회 에이전트 실행에 실패했습니다. 잠시 후 다시 시도해주세요.", msgId);
     }
@@ -581,7 +607,7 @@ Deno.serve(async (req: Request) => {
         .eq("id", 1);
     }
 
-    // 이사회 대화 모드 체크 (30분간 활성)
+    // 이사회 대화 모드 체크 (10분 무활동 시 자동 종료)
     if (isBoardChatActive(settings)) {
       const triggered = await triggerWorkflow("board-chat-agent.yml", {
         message: text,
