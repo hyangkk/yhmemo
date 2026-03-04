@@ -164,7 +164,83 @@ def _build_text(grouped: dict, content_limit: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Claude AI 분석
+# Claude AI 분석 — 공통 헬퍼
+# ---------------------------------------------------------------------------
+
+FINAL_JSON_SCHEMA = """{
+  "overview": "...",
+  "top_themes": [{"theme": "주제명", "description": "설명"}],
+  "timeline_flow": "...",
+  "emotion_pattern": "...",
+  "recurring_patterns": ["..."],
+  "recurring_problems": ["..."],
+  "key_insights": ["..."],
+  "growth_points": "...",
+  "suggestions": ["..."]
+}"""
+
+FINAL_RULES = """작성 규칙:
+- overview: 3~4문장 (기간, 항목 수, 전반적 특징)
+- top_themes: 5~7개 (주제명 + 1~2문장 설명)
+- timeline_flow: 4~6문장 (초기→중기→최근 흐름)
+- emotion_pattern: 3~4문장
+- recurring_patterns: 3~5개
+- recurring_problems: 3~5개
+- key_insights: 3~5개 (각 1~2문장)
+- growth_points: 3~4문장
+- suggestions: 3~5개 (각 1~2문장, 구체적으로)"""
+
+# 총 원문 글자수가 이 이상이면 분할 분석
+CHUNK_CHAR_THRESHOLD = 80000
+
+
+def _parse_claude_json(raw_text: str) -> dict:
+    """Claude 응답에서 JSON을 추출/파싱한다."""
+    raw = raw_text.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:].lstrip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    repaired = _try_repair_json(raw)
+    if repaired is not None:
+        print("잘린 JSON 복구 성공")
+        return repaired
+
+    print("JSON 파싱 실패 — 텍스트로 대체", file=sys.stderr)
+    return {"overview": raw[:2000]}
+
+
+def _try_repair_json(raw: str) -> dict | None:
+    """잘린 JSON을 닫아서 복구를 시도한다."""
+    text = raw.rstrip()
+    for _ in range(5):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        last_comma = text.rfind(",")
+        last_close = max(text.rfind("]"), text.rfind("}"), text.rfind('"'))
+        if last_comma > last_close:
+            text = text[:last_comma]
+        elif last_close > 0:
+            text = text[:last_close + 1]
+        else:
+            break
+        opens = text.count("[") - text.count("]")
+        opens_curly = text.count("{") - text.count("}")
+        text = text + "]" * max(opens, 0) + "}" * max(opens_curly, 0)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 단일 분석 (데이터가 컨텍스트에 들어갈 때)
 # ---------------------------------------------------------------------------
 
 def generate_analysis(entries_text: str, total_count: int, months: int, date_range: str) -> dict:
@@ -178,28 +254,9 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
 ---
 위 생각일기들을 종합 분석해서 아래 JSON 형식으로만 응답하세요.
 
-작성 규칙:
-- overview: 3~4문장 (기간, 항목 수, 전반적 특징)
-- top_themes: 5~7개 (주제명 + 1~2문장 설명)
-- timeline_flow: 4~6문장 (초기→중기→최근 흐름)
-- emotion_pattern: 3~4문장
-- recurring_patterns: 3~5개
-- recurring_problems: 3~5개
-- key_insights: 3~5개 (각 1~2문장)
-- growth_points: 3~4문장
-- suggestions: 3~5개 (각 1~2문장, 구체적으로)
+{FINAL_RULES}
 
-{{
-  "overview": "...",
-  "top_themes": [{{"theme": "주제명", "description": "설명"}}],
-  "timeline_flow": "...",
-  "emotion_pattern": "...",
-  "recurring_patterns": ["..."],
-  "recurring_problems": ["..."],
-  "key_insights": ["..."],
-  "growth_points": "...",
-  "suggestions": ["..."]
-}}"""
+{FINAL_JSON_SCHEMA}"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -207,71 +264,120 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip()
-
-    # 응답이 잘렸는지 확인
     if message.stop_reason == "max_tokens":
         print("경고: Claude 응답이 max_tokens로 잘림, 복구 시도", file=sys.stderr)
 
-    # 코드블록 제거
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        raw = parts[1] if len(parts) > 1 else raw
-        if raw.startswith("json"):
-            raw = raw[4:].lstrip()
-
-    # JSON 파싱 시도
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # 잘린 JSON 복구 시도: 닫히지 않은 괄호를 닫아본다
-    repaired = _try_repair_json(raw)
-    if repaired is not None:
-        print("잘린 JSON 복구 성공")
-        return repaired
-
-    # 최후 수단: 텍스트를 overview로
-    print("JSON 파싱 실패 — 텍스트로 대체", file=sys.stderr)
-    return {"overview": raw[:2000], "top_themes": [], "timeline_flow": "", "emotion_pattern": "",
-            "recurring_patterns": [], "recurring_problems": [], "key_insights": [],
-            "growth_points": "", "suggestions": []}
+    return _parse_claude_json(message.content[0].text)
 
 
-def _try_repair_json(raw: str) -> dict | None:
-    """잘린 JSON을 닫아서 복구를 시도한다."""
-    # 마지막 완전한 값 위치를 찾아 잘라낸 뒤 괄호를 닫는다
-    import re
-    # 문자열 끝에서 불완전한 부분 제거
-    # 마지막 완성된 키-값 쌍 또는 배열 원소까지만 남기기
-    text = raw.rstrip()
+# ---------------------------------------------------------------------------
+# 분할 분석 (대량 데이터 — 수년 치 처리)
+# ---------------------------------------------------------------------------
 
-    # 끝에 열린 문자열이 있으면 닫기
-    for attempt in range(5):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
+def _needs_chunked_analysis(entries: list) -> bool:
+    """항목 총 원문 길이를 보고 분할 분석 필요 여부를 판단."""
+    total = sum(len(e.get("content", "")) for e in entries)
+    return total > CHUNK_CHAR_THRESHOLD
 
-        # 끝에서 불완전한 부분을 점진적으로 제거
-        # 마지막 , 또는 완전한 값 이후를 잘라냄
-        last_comma = text.rfind(",")
-        last_close_bracket = max(text.rfind("]"), text.rfind("}"), text.rfind('"'))
 
-        if last_comma > last_close_bracket:
-            text = text[:last_comma]
-        elif last_close_bracket > 0:
-            text = text[:last_close_bracket + 1]
-        else:
-            break
+def split_entries_by_half_year(entries: list) -> list[tuple[str, list]]:
+    """entries를 6개월 단위로 분할. [(date_range, entries), ...] 반환."""
+    dated = sorted(
+        [e for e in entries if e["created_dt"]],
+        key=lambda e: e["created_dt"],
+    )
+    if not dated:
+        return [("전체", entries)]
 
-        # 닫히지 않은 괄호 수 계산하여 닫기
-        opens = text.count("[") - text.count("]")
-        opens_curly = text.count("{") - text.count("}")
-        text = text + "]" * opens + "}" * opens_curly
+    chunks: list[tuple[str, list]] = []
+    i = 0
+    while i < len(dated):
+        chunk_start = dated[i]["created_dt"]
+        chunk_end = chunk_start + timedelta(days=180)
+        chunk_entries = []
+        while i < len(dated) and dated[i]["created_dt"] < chunk_end:
+            chunk_entries.append(dated[i])
+            i += 1
+        if chunk_entries:
+            dr = (f"{chunk_entries[0]['created_dt'].strftime('%Y.%m.%d')}"
+                  f" ~ {chunk_entries[-1]['created_dt'].strftime('%Y.%m.%d')}")
+            chunks.append((dr, chunk_entries))
+    return chunks
 
-    return None
+
+def run_chunked_analysis(entries: list, months: int, date_range: str) -> dict:
+    """대량 데이터를 6개월 청크로 분할 분석 후 종합."""
+    client = anthropic.Anthropic()
+    chunks = split_entries_by_half_year(entries)
+    total_chunks = len(chunks)
+    print(f"  → 분할 분석 모드: {total_chunks}개 기간으로 나누어 분석\n")
+
+    # ── 1단계: 기간별 분석 ──
+    chunk_analyses = []
+    for idx, (chunk_range, chunk_entries) in enumerate(chunks, 1):
+        print(f"  [{idx}/{total_chunks}] {chunk_range} ({len(chunk_entries)}개) 분석 중...")
+        chunk_text = build_entries_text(chunk_entries)
+
+        prompt = f"""다음은 {chunk_range} 기간의 생각일기 항목들입니다 (총 {len(chunk_entries)}개).
+
+{chunk_text}
+
+---
+위 생각일기들을 분석해서 아래 JSON 형식으로만 응답하세요. 구체적으로 작성해주세요.
+
+{{
+  "period": "{chunk_range}",
+  "summary": "이 기간 핵심 요약 (4~5문장, 구체적 내용 포함)",
+  "main_themes": [{{"theme": "주제명", "description": "1~2문장 설명"}}],
+  "emotion_trend": "감정/에너지 흐름 (3~4문장)",
+  "notable_changes": "눈에 띄는 변화나 전환점 (2~3문장)",
+  "recurring_issues": ["반복 이슈 1", "반복 이슈 2"],
+  "growth_signals": "성장 신호 (2~3문장)"
+}}"""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        analysis = _parse_claude_json(message.content[0].text)
+        analysis["period"] = chunk_range
+        analysis["entry_count"] = len(chunk_entries)
+        chunk_analyses.append(analysis)
+
+    # ── 2단계: 종합 메타 분석 ──
+    print(f"\n  종합 분석 중... ({total_chunks}개 기간 결과 통합)")
+
+    chunks_summary = ""
+    for ca in chunk_analyses:
+        chunks_summary += f"\n--- {ca.get('period', '?')} ({ca.get('entry_count', '?')}개 항목) ---\n"
+        chunks_summary += json.dumps(ca, ensure_ascii=False, indent=2)
+        chunks_summary += "\n"
+
+    meta_prompt = f"""다음은 최근 {months}개월({date_range})의 생각일기를 6개월 단위로 분석한 {total_chunks}개의 기간별 결과입니다.
+총 {len(entries)}개 항목을 종합합니다.
+
+{chunks_summary}
+
+---
+위 기간별 분석들을 종합하여 전체 기간에 대한 최종 분석을 아래 JSON 형식으로 응답하세요.
+기간별 분석의 내용을 빠짐없이 반영하되, 장기적 흐름과 큰 그림에 초점을 맞추세요.
+
+{FINAL_RULES}
+
+{FINAL_JSON_SCHEMA}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
+        messages=[{"role": "user", "content": meta_prompt}],
+    )
+
+    if message.stop_reason == "max_tokens":
+        print("경고: 종합 분석 응답이 잘림, 복구 시도", file=sys.stderr)
+
+    return _parse_claude_json(message.content[0].text)
 
 
 # ---------------------------------------------------------------------------
@@ -526,12 +632,16 @@ def main():
     else:
         date_range = f"최근 {months}개월"
 
-    entries_text = build_entries_text(entries)
-    print(f"분석 텍스트 길이: {len(entries_text):,}자\n")
-
     # 3단계: AI 분석
     print("[3/3] Claude AI 종합 분석 중...")
-    analysis = generate_analysis(entries_text, len(entries), months, date_range)
+    if _needs_chunked_analysis(entries):
+        total_chars = sum(len(e.get("content", "")) for e in entries)
+        print(f"  총 원문: {total_chars:,}자 → 분할 분석 모드")
+        analysis = run_chunked_analysis(entries, months, date_range)
+    else:
+        entries_text = build_entries_text(entries)
+        print(f"  분석 텍스트: {len(entries_text):,}자 → 단일 분석 모드")
+        analysis = generate_analysis(entries_text, len(entries), months, date_range)
     now = datetime.now(KST)
 
     # Notion 이사회 DB에 저장
