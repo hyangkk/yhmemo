@@ -753,7 +753,11 @@
           <div style="font-family:monospace;font-weight:700;color:#ff9500">/생각일기 6시간</div>
           <div style="color:#555;margin-bottom:8px">최근 6시간 생각일기 이사회 분석</div>
           <div style="font-family:monospace;font-weight:700;color:#ff9500">/이사회 24시간</div>
-          <div style="color:#555">최근 24시간 생각일기 이사회 분석 (/이사회 도 동일하게 동작)</div>
+          <div style="color:#555;margin-bottom:8px">최근 24시간 생각일기 이사회 분석 (/이사회 도 동일하게 동작)</div>
+          <div style="font-family:monospace;font-weight:700;color:#ff9500">/안건 [내용]</div>
+          <div style="color:#555;margin-bottom:8px">이사회에 안건을 올려 5인 이사 의견 받기</div>
+          <div style="font-family:monospace;font-weight:700;color:#ff9500">/표결 [내용]</div>
+          <div style="color:#555">이사회 찬반 투표 (찬성/반대 + 사유 + 최종 결과)</div>
         </div>
 
         <div class="action-row">
@@ -1344,12 +1348,25 @@
     return div;
   }
 
+  const DEFAULT_BOARD_MEMBERS = [
+    {id:'_roi',key:'roi',name:'💰 냉정한 이익주의자',role:'ROI · 데이터',description:'ROI와 데이터를 중심으로 냉철하게 판단하는 분석가',personality:''},
+    {id:'_romantic',key:'romantic',name:'🌈 낭만 긍정주의자',role:'가능성 · 도전',description:'가능성과 설렘에 집중하며 도전을 응원하는 꿈꾸는 사람',personality:''},
+    {id:'_conservative',key:'conservative',name:'🛡️ 보수적 조심주의자',role:'리스크 · 안전',description:'리스크와 안전을 최우선으로 검토하는 신중한 이',personality:''},
+    {id:'_zen',key:'zen',name:'🧘 내면 평온주의자',role:'감정 · 균형추',description:'감정과 내면의 균형을 중시하며 삶의 질을 살피는 이',personality:''},
+    {id:'_challenger',key:'challenger',name:'🚀 도전과 발전주의자',role:'성장 · 돌파',description:'성장과 돌파를 추구하며 현실에 안주하지 않는 불굴의 도전가',personality:''},
+  ];
+
   async function loadBoardMembers() {
-    const data = await sbFetch('board_members?enabled=eq.true&order=sort_order.asc');
+    let data;
+    try {
+      data = await sbFetch('board_members?enabled=eq.true&order=sort_order.asc');
+    } catch (e) {
+      data = null;
+    }
     const list = document.getElementById('board-member-list');
     list.innerHTML = '';
-    if (!data || data.length === 0) return;
-    data.forEach(m => list.appendChild(buildMemberCard(m)));
+    const members = (data && data.length > 0) ? data : DEFAULT_BOARD_MEMBERS;
+    members.forEach(m => list.appendChild(buildMemberCard(m)));
   }
 
   async function saveBoardMember(btn) {
