@@ -183,8 +183,16 @@ async function handleCommand(
   // /안건 — 이사회 안건 의견 요청
   if (cmd === "/안건" || cmd === "/agenda") {
     const rest = text.trim().replace(/^\/\S+\s*/, "").trim();
-    if (!rest) {
-      await tgSend("사용법: /안건 [내용]\n예: /안건 회사를 그만둘까 말까", msgId);
+    if (!rest || rest.length < 5) {
+      await tgSend(
+        "📋 안건 내용을 구체적으로 작성해주세요.\n\n" +
+        "이사들이 의견을 낼 수 있도록 <b>상황과 고민</b>을 적어주세요.\n\n" +
+        "<b>예시:</b>\n" +
+        "  /안건 회사를 그만두고 창업할까\n" +
+        "  /안건 올해 목표를 수익에 집중할지 성장에 집중할지\n" +
+        "  /안건 새로운 사이드 프로젝트를 시작하고 싶은데 시간이 부족하다",
+        msgId
+      );
       return true;
     }
     const triggered = await triggerWorkflow("board-agenda-agent.yml", {
@@ -203,8 +211,16 @@ async function handleCommand(
   // /표결 — 이사회 찬반 표결
   if (cmd === "/표결" || cmd === "/vote") {
     const rest = text.trim().replace(/^\/\S+\s*/, "").trim();
-    if (!rest) {
-      await tgSend("사용법: /표결 [내용]\n예: /표결 이번 달에 새 프로젝트를 시작한다", msgId);
+    if (!rest || rest.length < 5) {
+      await tgSend(
+        "🗳️ 표결 안건을 구체적으로 작성해주세요.\n\n" +
+        "찬성/반대를 판단할 수 있도록 <b>명확한 아젠다</b>를 적어주세요.\n\n" +
+        "<b>예시:</b>\n" +
+        "  /표결 이번 달에 새 프로젝트를 시작한다\n" +
+        "  /표결 회사를 퇴사하고 6개월간 창업에 전념한다\n" +
+        "  /표결 월 50만원 자기계발 예산을 책정한다",
+        msgId
+      );
       return true;
     }
     const triggered = await triggerWorkflow("board-agenda-agent.yml", {
