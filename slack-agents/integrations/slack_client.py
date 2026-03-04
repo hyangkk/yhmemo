@@ -134,16 +134,29 @@ class SlackClient:
         return channel_name  # fallback
 
     async def ensure_channels_exist(self):
-        """필요한 채널들이 있는지 확인하고 없으면 생성"""
+        """필요한 채널들이 있는지 확인하고 없으면 생성, 봇을 join"""
         required = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
                     self.CHANNEL_CURATOR, self.CHANNEL_LOGS]
         try:
             result = await self.client.conversations_list(types="public_channel")
-            existing = {ch["name"] for ch in result["channels"]}
+            existing = {}
+            for ch in result["channels"]:
+                existing[ch["name"]] = ch["id"]
+
             for ch_name in required:
                 if ch_name not in existing:
                     logger.info(f"Creating channel: {ch_name}")
-                    await self.client.conversations_create(name=ch_name)
+                    resp = await self.client.conversations_create(name=ch_name)
+                    existing[ch_name] = resp["channel"]["id"]
+
+            # 봇을 모든 필수 채널에 join
+            for ch_name in required:
+                ch_id = existing.get(ch_name)
+                if ch_id:
+                    try:
+                        await self.client.conversations_join(channel=ch_id)
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning(f"Could not ensure channels: {e}")
 
@@ -163,7 +176,7 @@ class SlackClient:
             return
 
         try:
-            kwargs = {"channel": channel_id, "limit": 20}
+            kwargs = {"channel": channel_id, "limit": 10}
             if channel_id in self._last_ts:
                 kwargs["oldest"] = self._last_ts[channel_id]
 
@@ -188,12 +201,12 @@ class SlackClient:
                 text = msg.get("text", "")
                 user = msg.get("user", "")
                 channel = channel_id
+                logger.info(f"[poll] New message: '{text[:50]}' from {user}")
 
                 # 멘션 처리
                 if f"<@{bot_id}>" in text:
                     for handler in self._mention_handlers:
                         try:
-                            # say 함수 만들기
                             async def say(reply_text, ch=channel, ts=msg["ts"]):
                                 await self.send_thread_reply(ch, ts, reply_text)
                             await handler(text=text, user=user, channel=channel, say=say)
@@ -207,17 +220,16 @@ class SlackClient:
                     args = parts[1] if len(parts) > 1 else ""
                     handler = self._command_handlers.get(cmd)
                     if handler:
+                        logger.info(f"[poll] Executing command: !{cmd}")
                         try:
                             await handler(args=args, user=user, channel=channel)
                         except Exception as e:
                             logger.error(f"Command handler error: {e}")
 
         except Exception as e:
+            logger.warning(f"Poll error for {channel_name}: {e}")
             if "ratelimited" in str(e):
-                logger.debug(f"Rate limited on {channel_name}, backing off")
                 await asyncio.sleep(30)
-            else:
-                logger.warning(f"Poll error for {channel_name}: {e}")
 
     async def _init_channel_cache(self):
         """채널 캐시 초기화 (재시도 포함)"""
@@ -242,6 +254,7 @@ class SlackClient:
 
         # 명령어는 GENERAL 채널에서만 수신 (rate limit 방지)
         channels = [self.CHANNEL_GENERAL]
+
         for ch_name in channels:
             ch_id = self._channel_cache.get(ch_name)
             if ch_id:
@@ -326,7 +339,12 @@ class SlackClient:
         socket_ok = await self._try_socket_mode()
         if not socket_ok:
             self._running = True
-            asyncio.create_task(self._poll_loop())
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    async def run_poll(self):
+        """폴링 태스크가 완료될 때까지 대기 (orchestrator에서 태스크로 실행)"""
+        if hasattr(self, '_poll_task'):
+            await self._poll_task
 
     def stop(self):
         """폴링 중지"""

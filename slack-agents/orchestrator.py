@@ -194,6 +194,7 @@ async def main():
         asyncio.create_task(bus.run(), name="message_bus"),
         asyncio.create_task(collector.start(), name="collector"),
         asyncio.create_task(curator.start(), name="curator"),
+        asyncio.create_task(slack.run_poll(), name="slack_poll"),
     ]
 
     logger.info("All agents running. Waiting for shutdown signal...")
