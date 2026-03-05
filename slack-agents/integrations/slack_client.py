@@ -28,7 +28,7 @@ class SlackClient:
     CHANNEL_COLLECTOR = "ai-collector"
     CHANNEL_CURATOR = "ai-curator"
     CHANNEL_LOGS = "ai-agent-logs"
-    CHANNEL_QUOTE = "ai-quote"
+    CHANNEL_QUOTE = "명언"
 
     def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
