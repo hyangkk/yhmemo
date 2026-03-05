@@ -171,13 +171,15 @@ class CuratorAgent(BaseAgent):
 
     async def _curate_and_brief(self, decision: dict):
         """선별 → 노션 저장 → 슬랙 브리핑"""
-        general = "ai-agents-general"
+        query = decision.get("query", "")
+        thread_ts = decision.get("thread_ts")  # 유저 요청 시 스레드 ts
+        # 유저 요청이면 지정 채널(or general), 자율이면 ai-curator
+        general = decision.get("channel", "ai-agents-general") if query else "ai-curator"
 
         articles = decision.get("articles", [])
         selected = decision.get("selected", [])
         briefing = decision.get("briefing", "")
         rejected_reason = decision.get("rejected_reason", "")
-        query = decision.get("query", "")
 
         logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected")
 
@@ -191,7 +193,7 @@ class CuratorAgent(BaseAgent):
                 process_msg += ":x: 관련 기사 없음"
             if rejected_reason:
                 process_msg += f"\n:no_entry_sign: 제외 사유: _{rejected_reason}_"
-            await self.slack.send_message(general, process_msg)
+            await self._reply(general, process_msg, thread_ts)
         except Exception as e:
             logger.error(f"[curator] Failed to send process message: {e}")
 
@@ -272,7 +274,7 @@ class CuratorAgent(BaseAgent):
                 brief_msg += f"  (<{notion_urls[i]}|상세보기>)"
             brief_msg += "\n"
 
-        await self.slack.send_message(general, brief_msg)
+        await self._reply(general, brief_msg, thread_ts)
         logger.info("[curator] Briefing sent successfully")
 
         # 버퍼 비우기 & 쿼리 초기화
