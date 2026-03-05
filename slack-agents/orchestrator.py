@@ -647,14 +647,88 @@ async def main():
 
     logger.info("Agents started silently (no startup message to Slack)")
 
-    # 에이전트 태스크 실행
-    tasks = [
-        asyncio.create_task(bus.run(), name="message_bus"),
-        asyncio.create_task(collector.start(), name="collector"),
-        asyncio.create_task(curator.start(), name="curator"),
-        asyncio.create_task(quote.start(), name="quote"),
-        asyncio.create_task(proactive.start(), name="proactive"),
-    ]
+    # 에이전트 태스크 실행 (재시작 가능하도록 팩토리 패턴)
+    agent_starters = {
+        "message_bus": lambda: asyncio.create_task(bus.run(), name="message_bus"),
+        "collector": lambda: asyncio.create_task(collector.start(), name="collector"),
+        "curator": lambda: asyncio.create_task(curator.start(), name="curator"),
+        "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
+        "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
+    }
+    agent_tasks = {name: starter() for name, starter in agent_starters.items()}
+
+    # ── 마스터 워치독: 10분마다 전체 시스템 점검 ────────────
+    HEALTH_CHECK_INTERVAL = 600  # 10분 (초)
+    last_health_check_time = asyncio.get_event_loop().time()
+
+    async def master_health_check():
+        """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 보고"""
+        nonlocal agent_tasks
+        now = datetime.now(KST)
+        now_str = now.strftime("%H:%M")
+        issues = []
+        restarts = []
+
+        # 1. 에이전트 태스크 생존 확인 + 자동 재시작
+        for name, task in list(agent_tasks.items()):
+            if task.done():
+                exc = task.exception() if not task.cancelled() else None
+                err_msg = str(exc)[:100] if exc else "unknown"
+                logger.warning(f"[watchdog] Agent '{name}' is DEAD (error: {err_msg})")
+                agent_tracker.record_error(name, f"Task died: {err_msg}")
+
+                # 재시작
+                if name in agent_starters:
+                    try:
+                        agent_tasks[name] = agent_starters[name]()
+                        agent_tracker.register_agent(name, f"자동 재시작됨 ({now_str})")
+                        restarts.append(name)
+                        logger.info(f"[watchdog] Restarted agent: {name}")
+                    except Exception as e:
+                        issues.append(f"❌ {name}: 재시작 실패 ({e})")
+                        logger.error(f"[watchdog] Failed to restart {name}: {e}")
+                else:
+                    issues.append(f"❌ {name}: 죽음 (재시작 불가)")
+
+        # 2. heartbeat 체크 — 15분 이상 응답 없으면 경고
+        tracker_data = agent_tracker._load()
+        for name, info in tracker_data.get("agents", {}).items():
+            last_hb = info.get("last_heartbeat", "")
+            if last_hb:
+                try:
+                    hb_time = datetime.fromisoformat(last_hb)
+                    if hb_time.tzinfo is None:
+                        hb_time = hb_time.replace(tzinfo=KST)
+                    elapsed = (now - hb_time).total_seconds()
+                    if elapsed > 900:  # 15분 초과
+                        mins = int(elapsed / 60)
+                        issues.append(f"⚠️ {name}: heartbeat {mins}분 전 (무응답)")
+                except (ValueError, TypeError):
+                    pass
+
+        # 3. Slack 보고 (이슈/재시작 있거나 매시 정각)
+        is_hourly = now.minute < 10
+        if issues or restarts or is_hourly:
+            report_lines = [f"*🔍 마스터 점검* ({now_str} KST)"]
+            if restarts:
+                report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
+            if issues:
+                for issue in issues:
+                    report_lines.append(issue)
+            alive = sum(1 for t in agent_tasks.values() if not t.done())
+            total = len(agent_tasks)
+            report_lines.append(f"✅ 가동: {alive}/{total} 에이전트")
+            try:
+                await slack.send_message("ai-agent-logs", "\n".join(report_lines))
+            except Exception as e:
+                logger.error(f"[watchdog] Slack report failed: {e}")
+
+        if restarts:
+            logger.info(f"[watchdog] Restarted: {restarts}")
+        elif issues:
+            logger.warning(f"[watchdog] Issues: {len(issues)}")
+        else:
+            logger.info(f"[watchdog] All {len(agent_tasks)} agents OK")
 
     # ── 마스터 명령 큐 처리 ───────────────────────────────
     COMMAND_QUEUE_FILE = os.path.join(os.path.dirname(__file__), "data", "command_queue.json")
@@ -781,11 +855,23 @@ async def main():
 
     if socket_mode:
         # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
-        logger.info("All agents running. Socket Mode active (no polling needed)")
-        await shutdown_event.wait()
+        # 하지만 헬스체크는 여전히 10분마다 실행
+        logger.info("All agents running. Socket Mode active + watchdog enabled (10분 점검)")
+        while not shutdown_event.is_set():
+            loop_time = asyncio.get_event_loop().time()
+            if loop_time - last_health_check_time >= HEALTH_CHECK_INTERVAL:
+                last_health_check_time = loop_time
+                try:
+                    await master_health_check()
+                except Exception as e:
+                    logger.error(f"[watchdog] Health check error: {e}")
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
     else:
-        # 폴링 모드: 3초마다 메시지 확인 (실시간성 향상)
-        logger.info("All agents running. Starting polling loop (3s interval)...")
+        # 폴링 모드: 3초마다 메시지 확인 + 10분마다 헬스체크
+        logger.info("All agents running. Polling (3s) + watchdog (10분 점검) 시작...")
         poll_count = 0
         while not shutdown_event.is_set():
             poll_count += 1
@@ -798,6 +884,16 @@ async def main():
                 await process_command_queue()
             except Exception as e:
                 logger.error(f"Poll error: {e}")
+
+            # 10분마다 마스터 헬스체크
+            loop_time = asyncio.get_event_loop().time()
+            if loop_time - last_health_check_time >= HEALTH_CHECK_INTERVAL:
+                last_health_check_time = loop_time
+                try:
+                    await master_health_check()
+                except Exception as e:
+                    logger.error(f"[watchdog] Health check error: {e}")
+
             # shutdown 체크와 함께 3초 대기
             try:
                 await asyncio.wait_for(shutdown_event.wait(), timeout=3)
@@ -805,9 +901,9 @@ async def main():
                 pass
 
     # 태스크 정리
-    for task in tasks:
+    for task in agent_tasks.values():
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*agent_tasks.values(), return_exceptions=True)
 
     if notion:
         await notion.close()
@@ -817,7 +913,7 @@ async def main():
 
 if __name__ == "__main__":
     # 자동 재시작 래퍼: 예기치 않은 크래시 시 재기동
-    max_restarts = 5
+    max_restarts = 50  # 밤새 안정 운영을 위해 충분한 재시작 횟수
     restart_count = 0
     while restart_count < max_restarts:
         try:
