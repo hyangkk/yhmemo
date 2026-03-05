@@ -9,7 +9,9 @@ Slack 연동 클라이언트
 """
 
 import asyncio
+import json
 import logging
+import os
 import time
 from typing import Callable, Coroutine, Any
 
@@ -166,6 +168,24 @@ class SlackClient:
         except Exception as e:
             logger.warning(f"Could not ensure channels: {e}")
 
+    # ── 폴링 타임스탬프 영속 저장 ──────────────────────
+
+    _TS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "poll_last_ts.json")
+
+    def _load_last_ts(self) -> dict:
+        """저장된 채널별 마지막 ts 로드"""
+        try:
+            with open(self._TS_FILE, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_last_ts(self):
+        """현재 채널별 마지막 ts 저장"""
+        os.makedirs(os.path.dirname(self._TS_FILE), exist_ok=True)
+        with open(self._TS_FILE, "w") as f:
+            json.dump(self._last_ts, f)
+
     # ── 폴링 모드 ───────────────────────────────────────
 
     async def _get_bot_user_id(self):
@@ -194,9 +214,10 @@ class SlackClient:
 
             logger.info(f"[poll] {channel_name}: {len(messages)} new messages")
 
-            # 가장 최신 타임스탬프 저장
+            # 가장 최신 타임스탬프 저장 (디스크에도 영속)
             newest_ts = messages[0]["ts"]
             self._last_ts[channel_id] = newest_ts
+            self._save_last_ts()
 
             bot_id = await self._get_bot_user_id()
 
@@ -383,12 +404,16 @@ class SlackClient:
             except Exception:
                 pass  # 이미 참여 중이면 무시
 
-        # 모든 채널 폴링
+        # 모든 채널 폴링 — 저장된 ts 복원 또는 기동 시점 사용
         channels = list(self._channel_cache.keys())
+        saved_ts = self._load_last_ts()
         for ch_name in channels:
             ch_id = self._channel_cache.get(ch_name)
             if ch_id:
-                self._last_ts[ch_id] = str(time.time())
+                if ch_id in saved_ts:
+                    self._last_ts[ch_id] = saved_ts[ch_id]
+                else:
+                    self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
         self._poll_channels = channels
         logger.info(f"Polling mode ready (interval: {self._poll_interval}s)")
         logger.info(f"Polling channels: {channels}")
