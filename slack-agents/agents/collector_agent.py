@@ -154,25 +154,19 @@ class CollectorAgent(BaseAgent):
     async def _collect_by_keyword(self, query: str, requester: str, thread_ts: str = None):
         """키워드 기반 맞춤 수집 (유저 요청 → 스레드 답변)"""
         general = "ai-agents-general"
-        await self._reply(general, f":mag: *[collector]* '{query}' 관련 뉴스를 검색하고 있어요...", thread_ts)
+        await self._reply(general, f":mag: '{query}' 검색 중...", thread_ts)
 
         url = GOOGLE_NEWS_SEARCH.format(query=query)
         items = await self._fetch_rss(f"검색:{query}", url)
 
         if not items:
-            await self._reply(general, f":x: *[collector]* '{query}' 관련 결과를 찾지 못했어요.", thread_ts)
+            await self._reply(general, f"'{query}' 관련 결과를 찾지 못했어요.", thread_ts)
             return
 
-        await self._reply(general, f":newspaper: *[collector]* {len(items)}건 발견! 저장 중...", thread_ts)
         saved = await self._save_items(items)
 
         if saved:
-            preview = "\n".join(f"  • {item['title'][:60]}" for item in saved[:3])
-            result_msg = (
-                f":white_check_mark: *[collector]* '{query}' 관련 *{len(saved)}건* 수집 완료!\n{preview}"
-                + (f"\n  ... 외 {len(saved)-3}건" if len(saved) > 3 else "")
-            )
-            await self._reply(general, result_msg, thread_ts)
+            await self._reply(general, f":white_check_mark: {len(saved)}건 수집 완료, 선별 중...", thread_ts)
             await self.broadcast_event("new_articles", {
                 "count": len(saved),
                 "query": query,
@@ -180,7 +174,7 @@ class CollectorAgent(BaseAgent):
                 "items": saved,
             })
         else:
-            await self._reply(general, f":information_source: *[collector]* '{query}' — 새로운 정보는 없어요 (이미 수집된 항목).", thread_ts)
+            await self._reply(general, f"'{query}' — 새로운 정보가 없어요 (이미 수집됨).", thread_ts)
 
     async def _fetch_rss(self, source_name: str, url: str) -> list[dict]:
         """RSS 피드에서 항목 추출"""
