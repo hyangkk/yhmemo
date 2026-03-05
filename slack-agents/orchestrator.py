@@ -110,11 +110,14 @@ async def main():
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
-    # "!수집 AI뉴스" → 수집 에이전트에 키워드 수집 요청
+    # "!수집 AI뉴스" → 수집 에이전트에 키워드 수집 즉시 실행
     async def cmd_collect(args: str, user: str, channel: str):
         if args.strip():
-            await collector.ask_agent("collector", "collect_by_keyword", {"query": args.strip()})
-            await slack.send_message(channel, f"'{args.strip()}' 수집 요청을 보냈습니다.")
+            query = args.strip()
+            await slack.send_message(channel, f"'{query}' 수집을 시작합니다...")
+            await collector._collect_by_keyword(query, user)
+        else:
+            await slack.send_message(channel, "사용법: `!수집 키워드`")
 
     # "!브리핑" → 선별 에이전트에 즉시 브리핑 요청
     async def cmd_briefing(args: str, user: str, channel: str):

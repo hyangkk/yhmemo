@@ -152,11 +152,17 @@ class CuratorAgent(BaseAgent):
 
     async def _curate_and_brief(self, decision: dict):
         """선별 → 노션 저장 → 슬랙 브리핑 → 추가 수집 요청"""
+        general = "ai-agents-general"
 
         articles = decision.get("articles", [])
         selected = decision.get("selected", [])
         missing = decision.get("missing_topics", [])
         briefing = decision.get("briefing", "")
+
+        await self.slack.send_message(
+            general,
+            f":brain: *[curator]* {len(articles)}건 중 {len(selected)}건을 선별했어요. 저장 중..."
+        )
 
         # 1. 선별된 항목 저장
         curated_count = 0
@@ -211,9 +217,13 @@ class CuratorAgent(BaseAgent):
 
         # 3. 부족한 영역 → 수집 에이전트에 추가 요청
         if missing:
+            topics = ', '.join(missing[:3])
+            await self.slack.send_message(
+                general,
+                f":speech_balloon: *[curator → collector]* 부족한 영역이 있어요. 추가 수집 요청: _{topics}_"
+            )
             for keyword in missing[:3]:
                 await self.ask_agent("collector", "collect_by_keyword", {"query": keyword})
-            await self.say(f"추가 수집 요청: {', '.join(missing[:3])}")
 
         # 버퍼 비우기
         processed_count = len(articles)
