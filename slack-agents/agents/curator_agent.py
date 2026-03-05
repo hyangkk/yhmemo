@@ -12,6 +12,7 @@
 - Act: 선별 → 요약 → 노션 저장 → 슬랙 브리핑
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -170,11 +171,13 @@ class CuratorAgent(BaseAgent):
 
             # Supabase에 선별 결과 저장
             try:
-                self.supabase.table("curated_items").insert({
-                    "relevance_score": score,
-                    "ai_summary": summary,
-                    "ai_reasoning": sel.get("reason", ""),
-                }).execute()
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("curated_items").insert({
+                        "relevance_score": score,
+                        "ai_summary": summary,
+                        "ai_reasoning": sel.get("reason", ""),
+                    }).execute()
+                )
                 curated_count += 1
             except Exception as e:
                 logger.error(f"[curator] Save curated item failed: {e}")
@@ -242,13 +245,14 @@ class CuratorAgent(BaseAgent):
 
         if score != 0:
             try:
-                # 피드백 저장
-                self.supabase.table("curation_preferences").insert({
-                    "category": "reaction_feedback",
-                    "keywords": [message_data.get("text", "")[:200]],
-                    "weight": float(score),
-                    "learned_from": "user_feedback",
-                }).execute()
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("curation_preferences").insert({
+                        "category": "reaction_feedback",
+                        "keywords": [message_data.get("text", "")[:200]],
+                        "weight": float(score),
+                        "learned_from": "user_feedback",
+                    }).execute()
+                )
             except Exception as e:
                 logger.error(f"[curator] Save feedback failed: {e}")
 
@@ -268,7 +272,9 @@ class CuratorAgent(BaseAgent):
     async def _load_preferences(self) -> dict:
         """Supabase에서 사용자 선호도 로드"""
         try:
-            result = self.supabase.table("curation_preferences").select("*").execute()
+            result = await asyncio.to_thread(
+                lambda: self.supabase.table("curation_preferences").select("*").execute()
+            )
             prefs = {}
             for row in result.data or []:
                 cat = row.get("category", "general")

@@ -189,18 +189,30 @@ async def main():
         f"명령어: `!수집 키워드`, `!브리핑`, `!상태`",
     )
 
-    # 모든 태스크를 동시에 실행
+    # 에이전트 태스크 실행
     tasks = [
         asyncio.create_task(bus.run(), name="message_bus"),
         asyncio.create_task(collector.start(), name="collector"),
         asyncio.create_task(curator.start(), name="curator"),
-        asyncio.create_task(slack.run_poll(), name="slack_poll"),
     ]
 
-    logger.info("All agents running. Waiting for shutdown signal...")
+    logger.info("All agents running. Starting polling loop...")
 
-    # shutdown 대기
-    await shutdown_event.wait()
+    # 메인 루프: 폴링 + shutdown 대기
+    poll_count = 0
+    while not shutdown_event.is_set():
+        poll_count += 1
+        logger.info(f"[main] Poll tick #{poll_count}")
+        try:
+            await slack.poll_once()
+        except Exception as e:
+            logger.error(f"Poll error: {e}")
+        logger.info(f"[main] Poll tick #{poll_count} done, sleeping 30s")
+        # shutdown 체크와 함께 30초 대기
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            pass  # 30초 지남, 다시 폴링
 
     # 태스크 정리
     for task in tasks:

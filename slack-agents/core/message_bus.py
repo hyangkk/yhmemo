@@ -117,24 +117,28 @@ class MessageBus:
     async def _persist_task(self, task: TaskMessage):
         """Supabase에 작업 기록 저장"""
         try:
-            self._supabase.table("agent_tasks").insert({
-                "id": task.id,
-                "from_agent": task.from_agent,
-                "to_agent": task.to_agent,
-                "task_type": task.task_type,
-                "payload": task.payload,
-                "status": task.status.value,
-            }).execute()
+            await asyncio.to_thread(
+                lambda: self._supabase.table("agent_tasks").insert({
+                    "id": task.id,
+                    "from_agent": task.from_agent,
+                    "to_agent": task.to_agent,
+                    "task_type": task.task_type,
+                    "payload": task.payload,
+                    "status": task.status.value,
+                }).execute()
+            )
         except Exception as e:
             logger.error(f"Failed to persist task: {e}")
 
     async def _update_task(self, task: TaskMessage):
         """Supabase 작업 상태 업데이트"""
         try:
-            self._supabase.table("agent_tasks").update({
-                "status": task.status.value,
-                "result": task.result if isinstance(task.result, dict) else {"value": str(task.result)},
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", task.id).execute()
+            await asyncio.to_thread(
+                lambda: self._supabase.table("agent_tasks").update({
+                    "status": task.status.value,
+                    "result": task.result if isinstance(task.result, dict) else {"value": str(task.result)},
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", task.id).execute()
+            )
         except Exception as e:
             logger.error(f"Failed to update task: {e}")

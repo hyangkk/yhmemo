@@ -12,6 +12,7 @@
 - Act: 수집 → 저장 → 알림 → 선별 에이전트에 전달
 """
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
@@ -198,19 +199,21 @@ class CollectorAgent(BaseAgent):
 
     async def _save_items(self, items: list[dict]) -> list[dict]:
         """Supabase에 수집 항목 저장 (중복 제외)"""
-        saved = []
-        for item in items:
-            try:
-                result = self.supabase.table("collected_items").upsert(
-                    item, on_conflict="hash"
-                ).execute()
-                if result.data:
-                    saved.append(item)
-            except Exception as e:
-                # 중복이면 무시
-                if "duplicate" not in str(e).lower():
-                    logger.error(f"Save item failed: {e}")
-        return saved
+        def _sync_save():
+            saved = []
+            for item in items:
+                try:
+                    result = self.supabase.table("collected_items").upsert(
+                        item, on_conflict="hash"
+                    ).execute()
+                    if result.data:
+                        saved.append(item)
+                except Exception as e:
+                    if "duplicate" not in str(e).lower():
+                        logger.error(f"Save item failed: {e}")
+            return saved
+        # 동기 Supabase 호출을 스레드에서 실행 (이벤트 루프 블로킹 방지)
+        return await asyncio.to_thread(_sync_save)
 
     # ── 외부 작업 수신 (다른 에이전트로부터) ───────────
 

@@ -155,8 +155,9 @@ class SlackClient:
                 if ch_id:
                     try:
                         await self.client.conversations_join(channel=ch_id)
-                    except Exception:
-                        pass
+                        logger.info(f"Joined channel: {ch_name} ({ch_id})")
+                    except Exception as e:
+                        logger.warning(f"Failed to join {ch_name}: {e}")
         except Exception as e:
             logger.warning(f"Could not ensure channels: {e}")
 
@@ -274,7 +275,7 @@ class SlackClient:
 
     async def _try_socket_mode(self) -> bool:
         """Socket Mode 연결 시도. 성공하면 True."""
-        if not self._app_token:
+        if not self._app_token or not self._app_token.startswith("xapp-"):
             return False
         try:
             from slack_bolt.async_app import AsyncApp
@@ -289,6 +290,13 @@ class SlackClient:
             return True
         except Exception as e:
             logger.warning(f"Socket Mode 연결 실패, 폴링 모드로 전환: {e}")
+            # 내부 재시도 태스크 정리
+            try:
+                if hasattr(self, '_app') and self._app:
+                    await self._app.async_stop()
+            except Exception:
+                pass
+            self._app = None
             return False
 
     def _setup_socket_event_handlers(self):
@@ -333,18 +341,26 @@ class SlackClient:
     # ── 시작/종료 ──────────────────────────────────────
 
     async def start_background(self):
-        """백그라운드에서 Slack 연결 (Socket Mode 시도 → 실패 시 폴링)"""
+        """백그라운드에서 Slack 연결 (폴링 모드 초기화)"""
         await self.ensure_channels_exist()
+        self._running = True
+        # 폴링 채널 초기화
+        await self._init_channel_cache()
+        channels = [self.CHANNEL_GENERAL]
+        for ch_name in channels:
+            ch_id = self._channel_cache.get(ch_name)
+            if ch_id:
+                self._last_ts[ch_id] = str(time.time())
+        self._poll_channels = channels
+        logger.info(f"Polling mode ready (interval: {self._poll_interval}s)")
+        logger.info(f"Polling channels: {[self._channel_cache.get(ch, '?') for ch in channels]}")
 
-        socket_ok = await self._try_socket_mode()
-        if not socket_ok:
-            self._running = True
-            self._poll_task = asyncio.create_task(self._poll_loop())
-
-    async def run_poll(self):
-        """폴링 태스크가 완료될 때까지 대기 (orchestrator에서 태스크로 실행)"""
-        if hasattr(self, '_poll_task'):
-            await self._poll_task
+    async def poll_once(self):
+        """한 번 폴링 (외부에서 주기적으로 호출)"""
+        if not self._running:
+            return
+        for ch_name in self._poll_channels:
+            await self._poll_channel(ch_name)
 
     def stop(self):
         """폴링 중지"""
