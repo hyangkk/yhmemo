@@ -256,9 +256,8 @@ class SlackClient:
             if not active:
                 return
             stale_threads = []
-            # 최근 활성 스레드 10개 폴링 (최신 생성 기준으로 정렬)
-            # thread_ts 기준 정렬 = 가장 최근 생성된 스레드 우선
-            thread_items = sorted(active.items(), key=lambda x: x[0], reverse=True)[:10]
+            # 최근 활동 기준 10개 폴링 (last_reply_ts가 큰 = 최근 활동한 스레드 우선)
+            thread_items = sorted(active.items(), key=lambda x: max(x[0], x[1]), reverse=True)[:10]
             logger.info(f"[threads] Polling {len(thread_items)}/{len(active)} threads for {channel_id}")
             for thread_ts, last_reply_ts in thread_items:
                 try:
