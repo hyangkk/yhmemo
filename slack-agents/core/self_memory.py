@@ -331,7 +331,7 @@ class SelfMemory:
             self._save()
 
     def get_pending_actions(self, category: str = None) -> list[dict]:
-        items = [a for a in self._data["action_items"] if a["status"] == "pending"]
+        items = [a for a in self._data["action_items"] if a.get("status") == "pending"]
         if category:
             items = [a for a in items if a.get("category") == category]
         return sorted(items, key=lambda a: a.get("priority", 5))

@@ -883,6 +883,15 @@ JSON 응답:
 
     # ── 매시간 계획 대비 실적 체크 ────────────────────
 
+    async def _do_slot_check(self, ctx: dict):
+        """10분 슬롯 경계에서 이전 슬롯 평가 → _do_hourly_check로 위임"""
+        check_slot = ctx.get("check_slot", "")
+        check_hour = int(check_slot.split(":")[0]) if ":" in check_slot else ctx.get("hour", 0)
+        ctx["check_hour"] = check_hour
+        self._state["last_checked_slot"] = ctx.get("slot_key", check_slot)
+        self._save_state()
+        await self._do_hourly_check(ctx)
+
     async def _do_hourly_check(self, ctx: dict):
         """이전 시간의 계획 vs 실적을 체크하고 기록"""
         check_hour = ctx.get("check_hour", ctx["hour"] - 1)
