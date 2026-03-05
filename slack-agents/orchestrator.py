@@ -318,16 +318,9 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_handler)
 
-    # 시작 알림
+    # 시작 (알림 없이 조용히)
     await slack.start_background()
-    await slack.send_message(
-        SlackClient.CHANNEL_GENERAL,
-        f"*AI 에이전트 시스템 시작* ({datetime.now(KST).strftime('%Y-%m-%d %H:%M')})\n"
-        f"- Collector: {collector.loop_interval}초 간격 자율 수집\n"
-        f"- Curator: {curator.loop_interval}초 간격 자율 선별\n"
-        f"명령어: `!수집 키워드`, `!브리핑`, `!상태`\n"
-        f"자연어도 OK: \"봄 페스티벌 행사 찾아줘\" 처럼 편하게 말씀하세요!",
-    )
+    logger.info("Agents started silently (no startup message to Slack)")
 
     # 에이전트 태스크 실행
     tasks = [
