@@ -93,13 +93,14 @@ class SlackClient:
             attachments=attachments,
         )
 
-    async def send_thread_reply(self, channel: str, thread_ts: str, text: str):
-        """스레드에 답글"""
+    async def send_thread_reply(self, channel: str, thread_ts: str, text: str, also_send_to_channel: bool = False):
+        """스레드에 답글 (also_send_to_channel=True면 채널에도 표시)"""
         channel_id = await self._resolve_channel(channel)
         await self.client.chat_postMessage(
             channel=channel_id,
             text=text,
             thread_ts=thread_ts,
+            reply_broadcast=also_send_to_channel,
         )
 
     # ── 핸들러 등록 ────────────────────────────────────

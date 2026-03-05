@@ -170,10 +170,10 @@ class BaseAgent(ABC):
         if ch and self.slack:
             await self.slack.send_message(ch, f"*[{self.name}]* {message}")
 
-    async def _reply(self, channel: str, text: str, thread_ts: str = None):
-        """스레드가 있으면 스레드로, 없으면 채널에 직접 전송"""
+    async def _reply(self, channel: str, text: str, thread_ts: str = None, broadcast: bool = False):
+        """스레드가 있으면 스레드로, 없으면 채널에 직접 전송. broadcast=True면 채널에도 표시"""
         if thread_ts and self.slack:
-            await self.slack.send_thread_reply(channel, thread_ts, text)
+            await self.slack.send_thread_reply(channel, thread_ts, text, also_send_to_channel=broadcast)
         elif self.slack:
             await self.slack.send_message(channel, text)
 
