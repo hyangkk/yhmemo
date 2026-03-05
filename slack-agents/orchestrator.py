@@ -44,6 +44,7 @@ from integrations.slack_client import SlackClient
 from integrations.notion_client import NotionClient
 from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
+from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -207,7 +208,10 @@ async def main():
         """자연어 메시지를 분석하고 대화형으로 소통한 뒤 실행"""
         import json as _json
 
-        # 1단계: 과거 경험 로드
+        # 0단계: 유저 메시지 메모리에 저장
+        save_turn(user, "user", text)
+
+        # 1단계: 과거 경험 + 대화 맥락 로드
         past_exp = load_experience()
         exp_summary = ""
         if past_exp:
@@ -215,25 +219,27 @@ async def main():
             exp_lines = [f"- {e['task_type']}: \"{e.get('query','')}\" → {e.get('result','')}" for e in recent]
             exp_summary = "\n".join(exp_lines)
 
-        # 2단계: LLM으로 의도 파악 + 대화형 응답 생성
+        user_context = get_user_summary(user)
+
+        # 2단계: LLM으로 의도 파악
         intent_response = await curator.ai_think(
             system_prompt=f"""당신은 슬랙에서 사용자를 도와주는 AI 어시스턴트입니다.
-사용자의 메시지를 분석하여 의도를 파악하고, 자연스러운 한국어로 응답하세요.
+사용자의 메시지를 분석하여 의도를 파악하세요.
 
 당신이 할 수 있는 업무:
 - collect: 뉴스/정보 수집 (구글뉴스 RSS 기반)
 - briefing: 수집된 정보 브리핑/요약
 - status: 시스템 상태 확인
-- chat: 일반 대화
+- chat: 일반 대화, 질문, 잡담, 조언 요청 등 위 업무가 아닌 모든 것
 
-{("과거 작업 이력:" + chr(10) + exp_summary + chr(10) + "이 경험을 참고하여 더 나은 방법을 제안하세요.") if exp_summary else "아직 작업 경험이 없습니다. 처음 하는 업무라면 솔직하게 말하세요."}
+{("과거 작업 이력:" + chr(10) + exp_summary) if exp_summary else ""}
+{user_context}
 
-응답 형식 (반드시 JSON):
+응답 형식 (반드시 JSON만):
 {{
   "intent": "collect|briefing|status|chat|ignore",
   "query": "수집 키워드 (collect일 때만)",
-  "ack_message": "사용자에게 먼저 보낼 확인 메시지. 자연스럽고 친근하게. 어떤 업무인지 설명하고 어떻게 진행할지 간단히 안내. 과거에 비슷한 경험이 있으면 언급. 처음이면 '처음 해보는 유형이라 최선을 다해볼게요' 같이.",
-  "approach": "이번 작업에서 사용할 방법/전략 (나중에 경험으로 저장됨)"
+  "approach": "작업 전략 (collect/briefing/status일 때만)"
 }}""",
             user_prompt=text,
         )
@@ -248,7 +254,6 @@ async def main():
             return
 
         action = parsed.get("intent", "ignore")
-        ack = parsed.get("ack_message", "")
         approach = parsed.get("approach", "")
         query = parsed.get("query", "").strip()
 
@@ -286,16 +291,39 @@ async def main():
                 await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "상태 확인 완료"
             elif action == "chat":
-                # 대화는 ack 메시지가 곧 응답
-                if ack:
-                    await _reply(channel, ack, thread_ts)
+                # 대화 이력을 포함한 깊은 대화
+                chat_history = build_chat_context(user)
+                chat_response = await curator.ai_think(
+                    system_prompt=f"""당신은 슬랙에서 사용자와 대화하는 AI 어시스턴트 'Agent 01'입니다.
+
+성격:
+- 친근하고 자연스러운 한국어 (반말/존댓말은 유저에 맞춰서)
+- 질문에 깊이 있게 답변 (피상적 답변 금지)
+- 모르는 건 솔직히 모른다고 하되, 아는 범위에서 최선을 다함
+- 스타트업, 비즈니스, 기술, 일상 등 모든 주제 OK
+
+{("이전 대화 이력:" + chr(10) + chat_history + chr(10) + chr(10) + "위 대화 맥락을 참고하여 자연스럽게 이어가세요. 이전에 나눈 내용을 기억하고 활용하세요.") if chat_history else "첫 대화입니다."}
+
+{("과거 작업 이력:" + chr(10) + exp_summary + chr(10) + "유저가 이전에 요청한 작업들입니다. 대화에 자연스럽게 참고하세요.") if exp_summary else ""}
+
+규칙:
+- 슬랙 메시지답게 간결하지만 내용은 충실하게
+- 필요하면 구조화 (불릿, 번호 등) 사용
+- 링크나 출처가 필요한 정보는 '정확하지 않을 수 있다'고 언급
+- 대화가 수집/브리핑으로 이어질 수 있으면 자연스럽게 제안""",
+                    user_prompt=text,
+                )
+                if chat_response:
+                    await _reply(channel, chat_response, thread_ts)
+                    # 어시스턴트 응답도 메모리에 저장
+                    save_turn(user, "assistant", chat_response, {"action": "chat"})
                 result_text = "대화 응답"
         except Exception as e:
             result_text = f"오류: {str(e)[:100]}"
             success = False
             logger.error(f"[NL] Execution error: {e}")
 
-        # 5단계: 경험 저장
+        # 5단계: 경험 저장 + 대화 메모리 (chat 외 액션)
         if action != "chat":
             save_experience({
                 "task_type": action,
@@ -306,6 +334,8 @@ async def main():
                 "success": success,
                 "timestamp": datetime.now(KST).isoformat(),
             })
+            # 작업 결과도 대화 메모리에 기록
+            save_turn(user, "assistant", f"[{action}] {result_text}", {"action": action})
 
     slack.on_natural_language(on_natural_language)
 
