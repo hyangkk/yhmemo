@@ -148,6 +148,7 @@ class ProactiveAgent(BaseAgent):
         """24시간 풀가동. 쉬지 않는다. 결과물을 만든다."""
         now = self.now_kst()
         hour = now.hour
+        minute = now.minute
         today = now.strftime("%Y-%m-%d")
         weekday = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
 
@@ -168,8 +169,22 @@ class ProactiveAgent(BaseAgent):
             "action": None,
         }
 
+        # ── 0순위: 24시간 계획 없으면 생성 ──
+
+        current_plan = self.memory.get_current_plan()
+        if not current_plan or current_plan.get("date") != today:
+            context["action"] = "generate_daily_plan"
+            return context
+
+        # ── 0.5순위: 매시간 정각 근처(0-5분)에 이전 시간 체크 ──
+
+        last_checked_hour = self._state.get("last_hourly_check_hour", -1)
+        if minute <= 5 and hour != last_checked_hour and hour > 0:
+            context["action"] = "hourly_check"
+            context["check_hour"] = hour - 1
+            return context
+
         # ── 최우선: 목표 기반 다음 스텝 실행 (항상) ──
-        # 베타 런칭이 1순위, 나머지 목표도 순서대로
 
         next_action = self.planner.pick_next_action()
         if next_action:
@@ -480,6 +495,139 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
                 f"❌ *목표 실패: {goal.title}*\n{goal.feedback_history[-1].get('reason', '') if goal.feedback_history else ''}",
             )
 
+    # ── 24시간 계획 생성 ────────────────────────────
+
+    async def _do_generate_daily_plan(self, ctx: dict):
+        """오늘의 24시간 시간대별 작업 계획을 AI가 생성"""
+        goals_summary = self.planner.get_status_summary()
+        memory_ctx = self.memory.get_decision_context()
+
+        # 어제 일일 로그가 있으면 참조
+        yesterday_log = ""
+        logs = self.memory.get_recent_daily_logs(1)
+        if logs:
+            yl = logs[-1]
+            yesterday_log = f"""어제 ({yl.get('date', '')}):
+  등급: {yl.get('grade', '?')}
+  요약: {yl.get('summary', '')}
+  결과물: {', '.join(yl.get('deliverables', [])[:3])}
+  달성률: {yl.get('plan_achievement', {}).get('rate', 0)}%"""
+
+        now_hour = ctx["hour"]
+        response = await self.ai_think(
+            system_prompt=f"""당신은 24시간 자율 운영 에이전트입니다. 오늘의 시간대별 작업 계획을 세우세요.
+
+{memory_ctx}
+
+규칙:
+- 현재 시각부터 밤 11시(daily review)까지 계획
+- 시간대별로 구체적 작업 + 방법(build/research/measure/communicate) + 예상 결과
+- 베타 서비스 런칭이 최우선 (3/8 마감)
+- 빌드 작업은 연속 2-3시간 블록으로 잡을 것
+- 매시간 체크가 가능하도록 측정 가능한 예상 결과를 명시
+
+JSON 응답:
+{{
+    "hours": {{
+        "{str(now_hour).zfill(2)}": {{"task": "구체적 작업", "method": "build|research|measure|communicate", "expected": "이 시간 끝나면 뭐가 되어있어야 하는지"}},
+        ...
+        "23": {{"task": "일일 리뷰", "method": "measure", "expected": "하루 종합 평가 완료"}}
+    }}
+}}""",
+            user_prompt=f"""오늘: {ctx['today']} ({ctx['weekday']})
+현재 시각: {ctx['current_time']}
+
+활성 목표:
+{goals_summary}
+
+{yesterday_log if yesterday_log else '어제 로그: 없음 (첫 실행)'}""",
+        )
+
+        try:
+            parsed = self._parse_json(response)
+            self.memory.set_daily_plan(parsed)
+
+            # 슬랙에 계획 공유 (로그 채널)
+            hours = parsed.get("hours", {})
+            plan_lines = []
+            for h in sorted(hours.keys()):
+                info = hours[h]
+                plan_lines.append(f"  {h}:00 [{info.get('method', '?')}] {info.get('task', '?')}")
+
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"📅 *오늘의 계획* ({ctx['today']})\n\n" + "\n".join(plan_lines),
+            )
+            logger.info(f"[proactive] Daily plan generated: {len(hours)} hours")
+
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"[proactive] Daily plan parse error: {e}")
+
+    # ── 매시간 계획 대비 실적 체크 ────────────────────
+
+    async def _do_hourly_check(self, ctx: dict):
+        """이전 시간의 계획 vs 실적을 체크하고 기록"""
+        check_hour = ctx.get("check_hour", ctx["hour"] - 1)
+        hour_plan = self.memory.get_hour_plan(check_hour)
+
+        if not hour_plan:
+            self._state["last_hourly_check_hour"] = ctx["hour"]
+            self._save_state()
+            return
+
+        planned_task = hour_plan.get("task", "")
+        expected = hour_plan.get("expected", "")
+
+        # 이전 시간의 실행 결과 수집
+        recent_evals = self.memory.get_recent_evaluations(5)
+        recent_results = "\n".join(
+            f"  [{e['grade']}] {e['action']}: {e['result'][:100]}"
+            for e in recent_evals
+        ) if recent_evals else "실행 기록 없음"
+
+        response = await self.ai_think(
+            system_prompt="""이전 시간의 계획 대비 실적을 평가하세요.
+
+JSON 응답:
+{
+    "actual": "실제로 한 일 (한줄)",
+    "grade": "A|B|C|D|F",
+    "gap_analysis": "계획과 실적의 차이 분석 (한줄)",
+    "adjustment": "다음 시간 조정 사항 (있으면)"
+}""",
+            user_prompt=f"""{check_hour}시 계획: {planned_task}
+예상 결과: {expected}
+
+실제 실행 기록:
+{recent_results}""",
+        )
+
+        try:
+            parsed = self._parse_json(response)
+            self.memory.record_hourly_check(
+                hour=check_hour,
+                planned=planned_task,
+                actual=parsed.get("actual", ""),
+                grade=parsed.get("grade", "C"),
+                gap_analysis=parsed.get("gap_analysis", ""),
+            )
+
+            grade = parsed.get("grade", "C")
+            if grade in ("D", "F"):
+                await self.slack.send_message(
+                    "ai-agent-logs",
+                    f"⚠️ *[{check_hour}시 체크: {grade}]* "
+                    f"계획: {planned_task[:60]}\n"
+                    f"실제: {parsed.get('actual', '')[:60]}\n"
+                    f"차이: {parsed.get('gap_analysis', '')[:80]}",
+                )
+
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"[proactive] Hourly check parse error: {e}")
+
+        self._state["last_hourly_check_hour"] = ctx["hour"]
+        self._save_state()
+
     # ── 승인된 제안 실행 ────────────────────────────
 
     async def _do_execute_approved(self, ctx: dict):
@@ -493,39 +641,69 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
     # ── 모닝 브리핑 ──────────────────────────────────
 
     async def _do_morning_briefing(self, ctx: dict):
+        """아침 종합 보고: 어제 밤새 뭘 했는지 + 오늘 계획"""
         from core.tools import _weather, _crypto_price, _exchange_rate, _web_search
 
         results = await asyncio.gather(
             _weather("서울"),
             _crypto_price("비트코인"),
-            _crypto_price("이더리움"),
             _exchange_rate("USD", "KRW"),
-            _web_search("오늘 주요 뉴스 AI 스타트업"),
             return_exceptions=True,
         )
 
         data_parts = []
-        labels = ["날씨", "비트코인", "이더리움", "환율", "뉴스"]
+        labels = ["날씨", "비트코인", "환율"]
         for label, r in zip(labels, results):
             if not isinstance(r, Exception):
-                data_parts.append(f"[{label}]\n{str(r)[:300]}")
+                data_parts.append(f"[{label}]\n{str(r)[:200]}")
 
-        # 목표 현황 추가
+        # 목표 현황
         goals_summary = self.planner.get_status_summary()
         proposal_stats = self.proposals.get_stats()
 
-        briefing = await self.ai_think(
-            system_prompt="""매일 아침 파트너에게 보내는 모닝 브리핑.
+        # 어제 밤새 실행 결과 종합 (핵심: 아침 보고용)
+        yesterday_checks = self.memory.get_today_checks()  # 아직 오늘이니 어제 데이터
+        achievement = self.memory.get_plan_achievement_rate()
+        recent_evals = self.memory.get_recent_evaluations(15)
+        grade_stats = self.memory.get_grade_stats()
+        recent_insights = self.memory.get_recent_insights(5)
 
-규칙:
-- 슬랙 마크다운, 15줄 이내
-- 시장 상황 + 기회/위험
-- 오늘 목표와 계획
-- 제안 현황 (대기 중/실행 중)
-- 파트너에게 요청할 것""",
+        overnight_summary = ""
+        if recent_evals:
+            overnight_summary = "\n".join(
+                f"  [{e['grade']}] {e['action'][:60]}"
+                for e in recent_evals[-10:]
+            )
+
+        insights_summary = "\n".join(
+            f"  - {i['insight']}" for i in recent_insights
+        ) if recent_insights else "없음"
+
+        briefing = await self.ai_think(
+            system_prompt="""파트너에게 보내는 아침 종합 보고.
+
+핵심: "밤새 뭘 했고, 뭘 만들었고, 오늘 뭘 할 건지"
+
+구조:
+1. 밤새 실행 결과 요약 (결과물 중심)
+2. 계획 달성률
+3. 핵심 깨달음 1-2개
+4. 오늘 목표와 계획 (시간대별 핵심만)
+5. 파트너에게 필요한 것 (API 키 등)
+
+슬랙 마크다운, 20줄 이내.""",
             user_prompt=f"""날짜: {ctx['today']} ({ctx['weekday']})
 
 {chr(10).join(data_parts)}
+
+밤새 실행 결과:
+{overnight_summary if overnight_summary else '실행 기록 없음'}
+
+등급 통계: {json.dumps(grade_stats, ensure_ascii=False)}
+계획 달성률: {json.dumps(achievement, ensure_ascii=False)}
+
+최근 깨달음:
+{insights_summary}
 
 활성 목표:
 {goals_summary}
@@ -536,7 +714,21 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
         if briefing:
             await self.slack.send_message(
                 "ai-agents-general",
-                f"☀️ *모닝 브리핑* ({ctx['today']} {ctx['weekday']})\n\n{briefing}",
+                f"☀️ *아침 종합 보고* ({ctx['today']} {ctx['weekday']})\n\n{briefing}",
+            )
+
+        # 어제 daily log 기록 (아직 안 했으면)
+        yesterday = (self.now_kst() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if not self.memory.get_daily_log(yesterday) and recent_evals:
+            deliverables = [
+                e['action'][:60] for e in recent_evals if e.get('grade') in ('A', 'B')
+            ]
+            self.memory.record_daily_log(
+                summary=briefing[:200] if briefing else "",
+                grade=max(grade_stats, key=grade_stats.get) if grade_stats.get("total") else "C",
+                deliverables=deliverables,
+                insights_count=len(recent_insights),
+                plan_achievement=achievement,
             )
 
         self._state["last_morning_briefing"] = ctx["today"]
@@ -996,9 +1188,68 @@ fix_prompt는 Claude Code가 실행할 수 있는 구체적 지시.""",
                 self.planner.complete_goal(goal_id, "일일 리뷰에서 폐기 결정")
                 logger.info(f"[daily_review] Retired goal: {goal.title}")
 
+        # 7단계: 노션 타임라인 업데이트
+        await self._update_notion_timeline(ctx, parsed)
+
+        # 8단계: daily log 기록 (아침 보고용)
+        achievement = self.memory.get_plan_achievement_rate()
+        recent_insights = self.memory.get_recent_insights(10)
+        deliverables = [
+            p.title for p in self.proposals.get_recent_completed(5)
+            if p.execution_result
+        ]
+        self.memory.record_daily_log(
+            summary=summary,
+            grade=grade,
+            deliverables=deliverables,
+            insights_count=len([i for i in recent_insights
+                               if ctx["today"] in i.get("ts", "")]),
+            plan_achievement=achievement,
+            key_decisions=[imp.get("title", "") for imp in improvements[:3]],
+            blockers=[],
+        )
+
         self._state["last_daily_review"] = ctx["today"]
         self._save_state()
         logger.info(f"[proactive] Daily review completed. Grade: {grade}")
+
+    async def _update_notion_timeline(self, ctx: dict, review_parsed: dict):
+        """노션 타임라인 DB에 목표/작업 업데이트"""
+        if not self.notion:
+            return
+
+        timeline_db_id = self._state.get("notion_timeline_db_id", "")
+        if not timeline_db_id:
+            # 아직 타임라인 DB가 없으면 로그만
+            logger.info("[proactive] No Notion timeline DB ID configured. "
+                        "Set 'notion_timeline_db_id' in proactive_state.json")
+            return
+
+        try:
+            # 활성 목표를 타임라인에 추가/업데이트
+            for goal in self.planner.get_active_goals():
+                status = "진행중" if goal.progress_pct() > 0 else "대기"
+                if goal.progress_pct() >= 100:
+                    status = "완료"
+
+                priority_map = {1: "P1-긴급", 2: "P2-높음", 3: "P3-보통", 4: "P4-낮음"}
+
+                await self.notion.add_timeline_item(
+                    db_id=timeline_db_id,
+                    name=goal.title,
+                    status=status,
+                    assignee="마스터에이전트",
+                    start=goal.created_at[:10] if goal.created_at else ctx["today"],
+                    end=goal.deadline or "2026-03-08",
+                    priority=priority_map.get(goal.priority, "P3-보통"),
+                    category="베타런칭" if goal.priority <= 2 else "인프라",
+                    progress=goal.progress_pct() / 100,
+                    memo=f"진행률: {goal.progress_pct()}%, 재계획: {goal.replan_count}회",
+                )
+
+            logger.info("[proactive] Notion timeline updated")
+        except Exception as e:
+            logger.warning(f"[proactive] Notion timeline update failed: {e}")
 
     # ── 이모지 반응으로 제안 승인 처리 ────────────────
 
