@@ -40,9 +40,14 @@ class CuratorAgent(BaseAgent):
         self._notion_db_id = notion_db_id
         self._new_articles_buffer: list[dict] = []
         self._user_preferences: dict = {}
+        self._current_query: str = ""  # 사용자가 요청한 검색 키워드
 
         # 수집 에이전트의 new_articles 이벤트 구독
         self.bus.subscribe("new_articles", self._on_new_articles)
+
+    def set_query_context(self, query: str):
+        """사용자 검색 키워드 컨텍스트 설정"""
+        self._current_query = query
 
     async def _on_new_articles(self, task: TaskMessage):
         """수집 에이전트에서 새 정보 도착 시 → 즉시 선별"""
@@ -105,27 +110,27 @@ class CuratorAgent(BaseAgent):
         # AI에게 선별 요청
         articles_text = self._format_articles(context["new_articles"])
         prefs_text = json.dumps(context.get("user_preferences", {}), ensure_ascii=False)
+        query = self._current_query
 
-        system_prompt = """당신은 정보 선별 전문가입니다.
+        system_prompt = f"""당신은 정보 선별 전문가입니다.
 수집된 뉴스/정보 목록을 분석하여 사용자에게 가치 있는 것을 선별합니다.
 
-사용자 선호도를 참고하여 각 정보의 관련성 점수(0.0~1.0)를 매기고,
-0.6 이상인 것만 선별합니다.
+{"[중요] 사용자가 '" + query + "'에 대해 검색을 요청했습니다. 이 주제와 직접 관련된 기사만 선별하세요. 관련 없는 기사는 score를 0으로 주세요." if query else "사용자 선호도를 참고하여 선별합니다."}
 
-또한 현재 수집된 정보에서 부족한 영역이 있다면 추가 수집이 필요한 키워드를 제안합니다.
+각 정보의 관련성 점수(0.0~1.0)를 매기고, 0.6 이상인 것만 선별합니다.
+최대 3건만 선별하세요 (정말 관련 높은 것만).
 
 반드시 아래 JSON 형식으로만 응답하세요:
-{
+{{
   "selected": [
-    {"index": 0, "score": 0.85, "reason": "선별 이유", "summary": "한줄 요약"},
-    ...
+    {{"index": 0, "score": 0.85, "reason": "선별 이유 (15자 이내)", "summary": "핵심 한줄 요약 (30자 이내)"}}
   ],
-  "missing_topics": ["추가 수집 필요한 키워드1", "키워드2"],
-  "briefing": "전체 브리핑 요약 (2-3문장)"
-}"""
+  "rejected_reason": "선별에서 제외된 기사들의 공통적인 이유 (한줄)",
+  "briefing": "전체 브리핑 한줄 요약"
+}}"""
 
-        user_prompt = f"""사용자 선호도:
-{prefs_text}
+        user_prompt = f"""{"검색 키워드: " + query if query else ""}
+사용자 선호도: {prefs_text}
 
 수집된 정보 목록:
 {articles_text}"""
@@ -147,7 +152,9 @@ class CuratorAgent(BaseAgent):
             "selected": result.get("selected", []),
             "missing_topics": result.get("missing_topics", []),
             "briefing": result.get("briefing", ""),
+            "rejected_reason": result.get("rejected_reason", ""),
             "articles": context["new_articles"],
+            "query": query,
         }
 
     # ── Act: 실행 ──────────────────────────────────────
@@ -163,27 +170,39 @@ class CuratorAgent(BaseAgent):
             await self._process_action_items(decision.get("items", []))
 
     async def _curate_and_brief(self, decision: dict):
-        """선별 → 노션 저장 → 슬랙 브리핑 → 추가 수집 요청"""
+        """선별 → 노션 저장 → 슬랙 브리핑"""
         general = "ai-agents-general"
 
         articles = decision.get("articles", [])
         selected = decision.get("selected", [])
-        missing = decision.get("missing_topics", [])
         briefing = decision.get("briefing", "")
+        rejected_reason = decision.get("rejected_reason", "")
+        query = decision.get("query", "")
 
         logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected")
 
+        # ── 1. 선별 과정 소통 ──
         try:
-            await self.slack.send_message(
-                general,
-                f":brain: *[curator]* {len(articles)}건 중 {len(selected)}건을 선별했어요. 저장 중..."
-            )
-            logger.info("[curator] Sent brain message to general")
+            query_label = f" (`{query}`)" if query else ""
+            process_msg = f":mag: *선별 중*{query_label} — {len(articles)}건 분석 완료\n"
+            if selected:
+                process_msg += f":white_check_mark: {len(selected)}건 선별"
+            else:
+                process_msg += ":x: 관련 기사 없음"
+            if rejected_reason:
+                process_msg += f"\n:no_entry_sign: 제외 사유: _{rejected_reason}_"
+            await self.slack.send_message(general, process_msg)
         except Exception as e:
-            logger.error(f"[curator] Failed to send brain message: {e}")
+            logger.error(f"[curator] Failed to send process message: {e}")
 
-        # 1. 선별된 항목 저장
-        curated_count = 0
+        if not selected:
+            self._current_query = ""
+            processed_count = len(articles)
+            self._new_articles_buffer = self._new_articles_buffer[processed_count:]
+            return
+
+        # ── 2. 노션에 상세 저장 + URL 수집 ──
+        notion_urls = []
         for sel in selected:
             idx = sel.get("index", 0)
             if idx >= len(articles):
@@ -193,7 +212,7 @@ class CuratorAgent(BaseAgent):
             score = sel.get("score", 0)
             summary = sel.get("summary", "")
 
-            # Supabase에 선별 결과 저장
+            # Supabase
             try:
                 await asyncio.to_thread(
                     lambda: self.supabase.table("curated_items").insert({
@@ -202,13 +221,22 @@ class CuratorAgent(BaseAgent):
                         "ai_reasoning": sel.get("reason", ""),
                     }).execute()
                 )
-                curated_count += 1
             except Exception as e:
                 logger.error(f"[curator] Save curated item failed: {e}")
 
-            # 노션에 저장
+            # 노션에 상세 저장 (본문 포함)
+            notion_url = None
             if self.notion and self._notion_db_id:
-                await self.notion.create_page(
+                content_blocks = [
+                    NotionClient.block_paragraph(f"요약: {summary}"),
+                    NotionClient.block_paragraph(f"선별 이유: {sel.get('reason', '')}"),
+                    NotionClient.block_paragraph(f"원문: {article.get('url', '')}"),
+                ]
+                if article.get("content"):
+                    content_blocks.append(
+                        NotionClient.block_paragraph(f"본문:\n{article['content'][:1500]}")
+                    )
+                result = await self.notion.create_page(
                     self._notion_db_id,
                     properties={
                         "Name": NotionClient.prop_title(article.get("title", "")),
@@ -217,35 +245,38 @@ class CuratorAgent(BaseAgent):
                         "URL": NotionClient.prop_url(article.get("url", "")),
                         "Summary": NotionClient.prop_rich_text(summary),
                     },
+                    content_blocks=content_blocks,
                 )
+                if result:
+                    notion_url = result.get("url")
 
-        # 2. 슬랙 브리핑
-        if selected:
-            brief_msg = f"*정보 브리핑* ({self.now_str()})\n\n"
-            brief_msg += f"{briefing}\n\n"
-            brief_msg += f"선별된 정보 {curated_count}건:\n"
-            for sel in selected[:5]:
-                idx = sel.get("index", 0)
-                if idx < len(articles):
-                    art = articles[idx]
-                    brief_msg += f"- [{art.get('title', '')}]({art.get('url', '')}) "
-                    brief_msg += f"(관련도: {sel.get('score', 0):.0%})\n"
-                    brief_msg += f"  _{sel.get('summary', '')}_\n"
-            logger.info(f"[curator] Sending briefing ({len(brief_msg)} chars) to {general}")
-            await self.slack.send_message(general, brief_msg)
-            logger.info("[curator] Briefing sent successfully")
+            notion_urls.append(notion_url)
 
-        # 3. 부족한 영역 → 수집 에이전트에 추가 요청
-        if missing:
-            topics = ', '.join(missing[:3])
-            await self.slack.send_message(
-                general,
-                f":speech_balloon: *[curator → collector]* 부족한 영역이 있어요. 추가 수집 요청: _{topics}_"
-            )
-            for keyword in missing[:3]:
-                await self.ask_agent("collector", "collect_by_keyword", {"query": keyword})
+        # ── 3. 슬랙 브리핑 (간결 + 하이퍼링크) ──
+        brief_msg = f":newspaper: *{briefing}*\n\n"
+        for i, sel in enumerate(selected[:3]):
+            idx = sel.get("index", 0)
+            if idx >= len(articles):
+                continue
+            art = articles[idx]
+            title = art.get("title", "제목없음")
+            url = art.get("url", "")
+            summary = sel.get("summary", "")
 
-        # 버퍼 비우기
+            # Slack mrkdwn 하이퍼링크
+            brief_msg += f"• <{url}|{title}>\n"
+            brief_msg += f"  {summary}"
+
+            # 노션 링크 추가
+            if i < len(notion_urls) and notion_urls[i]:
+                brief_msg += f"  (<{notion_urls[i]}|상세보기>)"
+            brief_msg += "\n"
+
+        await self.slack.send_message(general, brief_msg)
+        logger.info("[curator] Briefing sent successfully")
+
+        # 버퍼 비우기 & 쿼리 초기화
+        self._current_query = ""
         processed_count = len(articles)
         self._new_articles_buffer = self._new_articles_buffer[processed_count:]
 
