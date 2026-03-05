@@ -144,6 +144,59 @@ async def main():
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
 
+    # 자연어 메시지 → LLM 의도 파악 후 명령 실행
+    async def on_natural_language(text: str, user: str, channel: str, thread_ts: str = None):
+        """자연어 메시지를 LLM으로 분석해 적절한 명령 실행"""
+        intent = await curator.ai_think(
+            system_prompt="""당신은 슬랙 메시지의 의도를 파악하는 분류기입니다.
+사용자 메시지를 보고 아래 중 하나로 분류하세요.
+
+의도 목록:
+- collect: 정보/뉴스/기사 수집 요청 (예: "봄 페스티벌 행사 찾아줘", "AI 관련 소식 모아줘", "스타트업 뉴스 수집해줘")
+- briefing: 브리핑/요약 요청 (예: "오늘 뉴스 요약해줘", "브리핑 해줘", "모은거 정리해줘")
+- status: 시스템 상태 확인 (예: "지금 어떤 상태야?", "잘 돌아가고 있어?")
+- chat: 일반 대화/질문 (예: "안녕", "뭐 할 수 있어?")
+- ignore: 봇과 관련없는 메시지
+
+반드시 아래 JSON 형식으로만 응답하세요:
+{"intent": "collect|briefing|status|chat|ignore", "query": "수집 키워드 (collect일 때만)", "reply": "사용자에게 보낼 간단한 답변 (chat일 때만)"}""",
+            user_prompt=text,
+        )
+
+        try:
+            import json
+            # JSON 파싱 (마크다운 코드블록 제거)
+            clean = intent.strip()
+            if clean.startswith("```"):
+                clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = json.loads(clean)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"[NL] Failed to parse intent: {e}, raw: {intent[:100]}")
+            return
+
+        action = parsed.get("intent", "ignore")
+        logger.info(f"[NL] Intent: {action}, query: {parsed.get('query', '')}")
+
+        if action == "collect":
+            query = parsed.get("query", "").strip()
+            if query:
+                await cmd_collect(args=query, user=user, channel=channel)
+            else:
+                await slack.send_message(channel, "무엇을 수집할까요? 키워드를 알려주세요.")
+        elif action == "briefing":
+            await cmd_briefing(args="", user=user, channel=channel)
+        elif action == "status":
+            await cmd_status(args="", user=user, channel=channel)
+        elif action == "chat":
+            reply = parsed.get("reply", "")
+            if reply:
+                if thread_ts:
+                    await slack.send_thread_reply(channel, thread_ts, reply)
+                else:
+                    await slack.send_message(channel, reply)
+
+    slack.on_natural_language(on_natural_language)
+
     # 이모지 반응 → 선별 에이전트 피드백 학습
     async def on_reaction(reaction: str, item: dict, user: str):
         await curator.handle_reaction_feedback(reaction, item)
@@ -189,7 +242,8 @@ async def main():
         f"*AI 에이전트 시스템 시작* ({datetime.now(KST).strftime('%Y-%m-%d %H:%M')})\n"
         f"- Collector: {collector.loop_interval}초 간격 자율 수집\n"
         f"- Curator: {curator.loop_interval}초 간격 자율 선별\n"
-        f"명령어: `!수집 키워드`, `!브리핑`, `!상태`",
+        f"명령어: `!수집 키워드`, `!브리핑`, `!상태`\n"
+        f"자연어도 OK: \"봄 페스티벌 행사 찾아줘\" 처럼 편하게 말씀하세요!",
     )
 
     # 에이전트 태스크 실행

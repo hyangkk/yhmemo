@@ -36,6 +36,7 @@ class SlackClient:
         self._command_handlers: dict[str, Callable] = {}
         self._reaction_handlers: list[Callable] = []
         self._mention_handlers: list[Callable] = []
+        self._natural_language_handler: Callable | None = None
         self._running = False
         self._bot_user_id: str = ""
 
@@ -108,6 +109,10 @@ class SlackClient:
     def on_mention(self, handler: Callable):
         """멘션 핸들러 등록"""
         self._mention_handlers.append(handler)
+
+    def on_natural_language(self, handler: Callable):
+        """자연어 메시지 핸들러 등록 (명령어가 아닌 일반 메시지)"""
+        self._natural_language_handler = handler
 
     def on_reaction(self, handler: Callable):
         """이모지 반응 핸들러 등록"""
@@ -226,6 +231,17 @@ class SlackClient:
                             await handler(args=args, user=user, channel=channel)
                         except Exception as e:
                             logger.error(f"Command handler error: {e}")
+
+                # 자연어 메시지 처리
+                elif self._natural_language_handler and text.strip():
+                    logger.info(f"[poll] Natural language: '{text[:50]}'")
+                    try:
+                        await self._natural_language_handler(
+                            text=text, user=user, channel=channel,
+                            thread_ts=msg.get("ts"),
+                        )
+                    except Exception as e:
+                        logger.error(f"Natural language handler error: {e}")
 
         except Exception as e:
             logger.warning(f"Poll error for {channel_name}: {e}")
