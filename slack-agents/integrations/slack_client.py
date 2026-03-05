@@ -383,18 +383,32 @@ class SlackClient:
 
         @self._app.event("message")
         async def handle_message(event):
-            if event.get("bot_id"):
+            if event.get("bot_id") or event.get("subtype"):
                 return
             text = event.get("text", "")
             user = event.get("user", "")
             channel = event.get("channel", "")
+            thread_ts = event.get("ts")
+
+            if not text.strip():
+                return
+
             if text.startswith("!"):
                 parts = text[1:].split(maxsplit=1)
                 cmd = parts[0]
                 args = parts[1] if len(parts) > 1 else ""
                 handler = self._command_handlers.get(cmd)
                 if handler:
-                    await handler(args=args, user=user, channel=channel)
+                    await handler(args=args, user=user, channel=channel, thread_ts=thread_ts)
+            elif self._natural_language_handler:
+                logger.info(f"[socket] Natural language: '{text[:50]}'")
+                try:
+                    await self._natural_language_handler(
+                        text=text, user=user, channel=channel,
+                        thread_ts=thread_ts,
+                    )
+                except Exception as e:
+                    logger.error(f"[socket] Natural language handler error: {e}")
 
     # ── 시작/종료 ──────────────────────────────────────
 
