@@ -129,21 +129,21 @@ class ProactiveAgent(BaseAgent):
 
         # ── 주기적 작업 ──
 
-        # 트렌드 체크 (1시간마다)
-        if self._hours_since(self._state.get("last_trend_check", "")) >= 1:
+        # 트렌드 체크 (30분마다)
+        if self._hours_since(self._state.get("last_trend_check", "")) >= 0.5:
             context["actions_to_take"].append("trend_check")
 
-        # 유저에게 보고 (4시간마다)
-        if self._hours_since(self._state.get("last_report", "")) >= 4:
+        # 유저에게 보고 (2시간마다)
+        if self._hours_since(self._state.get("last_report", "")) >= 2:
             context["actions_to_take"].append("progress_report")
 
-        # 주도적 제안 (2시간마다, 하루 최대 5회)
-        if self._hours_since(self._state.get("last_initiative", "")) >= 2:
-            if self._state.get("initiatives_today", 0) < 5:
+        # 주도적 제안 (1시간마다, 하루 최대 10회)
+        if self._hours_since(self._state.get("last_initiative", "")) >= 1:
+            if self._state.get("initiatives_today", 0) < 10:
                 context["actions_to_take"].append("propose_initiative")
 
-        # 시장/사업 리서치 (3시간마다)
-        if self._hours_since(self._state.get("last_research", "")) >= 3:
+        # 시장/사업 리서치 (1시간마다)
+        if self._hours_since(self._state.get("last_research", "")) >= 1:
             context["actions_to_take"].append("business_research")
 
         # 날짜가 바뀌면 카운터 리셋

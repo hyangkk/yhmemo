@@ -417,6 +417,18 @@ async def main():
                     if thread_context:
                         full_prompt = f"[이전 대화 맥락]\n{thread_context}\n\n[요청]\n{dev_task}"
 
+                    # 자율 실행 지침 추가
+                    full_prompt += """
+
+[자율 실행 지침]
+- 권한 요청하지 말고 바로 실행하세요. 모든 파일 쓰기/수정 권한이 있습니다.
+- 작업 완료 후 git add, git commit, git push까지 자동으로 하세요.
+- 커밋 메시지는 한국어로, 변경 내용을 요약하세요.
+- git push는 현재 브랜치로 하세요.
+- 사용자에게 승인을 묻지 마세요. 모든 것이 사전 승인됨.
+- 작업 디렉토리: /home/user/yhmemo
+- 결과를 간결하게 요약하세요 (무엇을 만들었는지, 어떤 파일, 다음 단계)."""
+
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
@@ -425,6 +437,7 @@ async def main():
                         proc = await asyncio.create_subprocess_exec(
                             "claude", "-p", full_prompt,
                             "--output-format", "text",
+                            "--dangerously-skip-permissions",
                             cwd="/home/user/yhmemo",
                             env=clean_env,
                             stdout=asyncio.subprocess.PIPE,
