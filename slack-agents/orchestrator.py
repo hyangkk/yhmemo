@@ -48,6 +48,7 @@ from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
+from core import agent_tracker
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -216,11 +217,17 @@ async def main():
         except Exception as e:
             await _reply(channel, f"로그 로드 실패: {e}", thread_ts)
 
+    # "!현황" → 에이전트 가동 현황 보기
+    async def cmd_dashboard(args: str, user: str, channel: str, thread_ts: str = None):
+        report = agent_tracker.get_status_report()
+        await _reply(channel, report, thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
     slack.on_command("로그", cmd_log)
+    slack.on_command("현황", cmd_dashboard)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -462,6 +469,10 @@ async def main():
 
     # ── 모든 비동기 태스크 시작 ─────────────────────────
 
+    # 오케스트레이터 자체를 추적 대상으로 등록
+    agent_tracker.register_agent("orchestrator", "메인 폴링 루프 + 메시지 라우터", 3)
+    agent_tracker.register_agent("message_bus", "에이전트 간 메시지 버스", 0)
+
     logger.info("Starting all agents...")
 
     # Graceful shutdown
@@ -513,6 +524,7 @@ async def main():
         poll_count = 0
         while not shutdown_event.is_set():
             poll_count += 1
+            agent_tracker.heartbeat("orchestrator")
             if poll_count % 20 == 1:  # 1분마다 로그
                 thread_count = sum(len(v) for v in slack._active_threads.values())
                 logger.info(f"[main] Poll tick #{poll_count} (alive, {thread_count} threads tracked)")

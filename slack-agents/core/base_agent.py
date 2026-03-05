@@ -16,6 +16,7 @@ from typing import Any
 import anthropic
 
 from core.message_bus import MessageBus, TaskMessage
+from core import agent_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class BaseAgent(ABC):
         # 메시지 버스에 자신 등록
         self.bus.register_agent(self.name, self._handle_task)
 
+        # 가동 추적 등록
+        agent_tracker.register_agent(self.name, self.description, self.loop_interval)
+
     # ── 자율 판단 루프 ──────────────────────────────────
 
     async def start(self):
@@ -59,6 +63,7 @@ class BaseAgent(ABC):
         logger.info(f"[{self.name}] Agent started (interval: {self.loop_interval}s)")
         while self._running:
             try:
+                agent_tracker.heartbeat(self.name)
                 context = await self.observe()
                 if context:
                     decision = await self.think(context)
@@ -66,11 +71,13 @@ class BaseAgent(ABC):
                         await self.act(decision)
             except Exception as e:
                 logger.error(f"[{self.name}] Loop error: {e}", exc_info=True)
+                agent_tracker.record_error(self.name, e)
                 await self.log(f"오류 발생: {e}")
             await asyncio.sleep(self.loop_interval)
 
     def stop(self):
         self._running = False
+        agent_tracker.mark_stopped(self.name)
         logger.info(f"[{self.name}] Agent stopped")
 
     @abstractmethod
