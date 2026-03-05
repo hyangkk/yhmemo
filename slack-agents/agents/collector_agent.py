@@ -123,8 +123,8 @@ class CollectorAgent(BaseAgent):
             await self._collect_from_rss(sources)
 
     async def _collect_from_rss(self, source_names: list[str]):
-        """RSS 소스에서 정보 수집 (자율 작업 → ai-curator 채널)"""
-        log_channel = "ai-curator"
+        """RSS 소스에서 정보 수집 (자율 작업 → 로그 채널)"""
+        log_channel = "ai-agent-logs"
         all_items = []
 
         for name in source_names:

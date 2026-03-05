@@ -44,6 +44,8 @@ class SlackClient:
 
         # 폴링용 타임스탬프 (채널별 마지막 확인 시각)
         self._last_ts: dict[str, str] = {}
+        # 활성 스레드 추적: {channel_id: {thread_ts: last_reply_ts}}
+        self._active_threads: dict[str, dict[str, str]] = {}
         # Socket Mode 객체 (사용 가능할 때만)
         self._socket_handler = None
         self._app = None
@@ -104,12 +106,17 @@ class SlackClient:
     async def send_thread_reply(self, channel: str, thread_ts: str, text: str, also_send_to_channel: bool = False):
         """스레드에 답글 (also_send_to_channel=True면 채널에도 표시)"""
         channel_id = await self._resolve_channel(channel)
-        await self.client.chat_postMessage(
+        result = await self.client.chat_postMessage(
             channel=channel_id,
             text=text,
             thread_ts=thread_ts,
             reply_broadcast=also_send_to_channel,
         )
+        # 봇이 답글 단 스레드를 활성 스레드로 추적 → 유저 답글 감지
+        if channel_id not in self._active_threads:
+            self._active_threads[channel_id] = {}
+        reply_ts = result.get("ts", str(time.time()))
+        self._active_threads[channel_id][thread_ts] = reply_ts
 
     # ── 핸들러 등록 ────────────────────────────────────
 
@@ -276,10 +283,44 @@ class SlackClient:
                     except Exception as e:
                         logger.error(f"Natural language handler error: {e}")
 
+            # 스레드 답글 폴링: 봇이 답한 활성 스레드의 새 답글 감지
+            active = self._active_threads.get(channel_id, {})
+            stale_threads = []
+            for thread_ts, last_reply_ts in list(active.items()):
+                try:
+                    reply_result = await self.client.conversations_replies(
+                        channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=10,
+                    )
+                    replies = reply_result.get("messages", [])
+                    for reply in replies:
+                        if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
+                            continue  # 이미 처리된 메시지
+                        if reply.get("bot_id") or reply.get("user") == bot_id:
+                            continue
+                        reply_text = reply.get("text", "")
+                        reply_user = reply.get("user", "")
+                        if reply_text.strip() and self._natural_language_handler:
+                            logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
+                            try:
+                                await self._natural_language_handler(
+                                    text=reply_text, user=reply_user, channel=channel_id,
+                                    thread_ts=thread_ts,
+                                )
+                            except Exception as e:
+                                logger.error(f"Thread reply handler error: {e}")
+                        # 마지막 처리 ts 갱신
+                        active[thread_ts] = reply["ts"]
+                except Exception as e:
+                    if "thread_not_found" in str(e):
+                        stale_threads.append(thread_ts)
+                    else:
+                        logger.debug(f"Thread poll error: {e}")
+            for t in stale_threads:
+                active.pop(t, None)
+
         except Exception as e:
             err_str = str(e)
             if "not_in_channel" in err_str:
-                # 자동 join 시도
                 try:
                     await self.client.conversations_join(channel=channel_id)
                     logger.info(f"Auto-joined channel: {channel_name}")
