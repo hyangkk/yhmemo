@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import FeedbackButton from "@/components/FeedbackButton";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="ko">
       <body className="antialiased">
         {children}
+        <FeedbackButton />
       </body>
     </html>
   );

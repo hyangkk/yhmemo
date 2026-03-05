@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // 5분마다 ISR 재검증
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
