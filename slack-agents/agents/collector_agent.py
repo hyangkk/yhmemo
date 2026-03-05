@@ -152,9 +152,8 @@ class CollectorAgent(BaseAgent):
                 })
 
     async def _collect_by_keyword(self, query: str, requester: str, thread_ts: str = None):
-        """키워드 기반 맞춤 수집 (유저 요청 → 스레드 답변)"""
+        """키워드 기반 맞춤 수집 — 과정 메시지 없이 결과만 전달"""
         general = "ai-agents-general"
-        await self._reply(general, f":mag: '{query}' 검색 중...", thread_ts)
 
         url = GOOGLE_NEWS_SEARCH.format(query=query)
         items = await self._fetch_rss(f"검색:{query}", url)
@@ -166,7 +165,6 @@ class CollectorAgent(BaseAgent):
         saved = await self._save_items(items)
 
         if saved:
-            await self._reply(general, f":white_check_mark: {len(saved)}건 수집 완료, 선별 중...", thread_ts)
             await self.broadcast_event("new_articles", {
                 "count": len(saved),
                 "query": query,

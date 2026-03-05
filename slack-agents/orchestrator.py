@@ -238,9 +238,9 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 먼저 확인 메시지 전송 (스레드로만)
-        if ack:
-            await _reply(channel, ack, thread_ts)
+        # 3단계: 리액션으로 접수 표시 (메시지 없이)
+        if thread_ts:
+            await slack.add_reaction(channel, thread_ts, "eyes")
 
         # 4단계: 실제 업무 실행 (유저 요청이므로 스레드로 답변)
         result_text = ""

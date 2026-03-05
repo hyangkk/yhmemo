@@ -93,6 +93,14 @@ class SlackClient:
             attachments=attachments,
         )
 
+    async def add_reaction(self, channel: str, timestamp: str, emoji: str = "eyes"):
+        """메시지에 이모지 리액션 추가"""
+        channel_id = await self._resolve_channel(channel)
+        try:
+            await self.client.reactions_add(channel=channel_id, timestamp=timestamp, name=emoji)
+        except Exception:
+            pass  # 이미 리액션이 있거나 실패해도 무시
+
     async def send_thread_reply(self, channel: str, thread_ts: str, text: str, also_send_to_channel: bool = False):
         """스레드에 답글 (also_send_to_channel=True면 채널에도 표시)"""
         channel_id = await self._resolve_channel(channel)
