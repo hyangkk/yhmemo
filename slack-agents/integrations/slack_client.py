@@ -192,6 +192,8 @@ class SlackClient:
             if not messages:
                 return
 
+            logger.debug(f"[poll] {channel_name}: {len(messages)} new messages")
+
             # 가장 최신 타임스탬프 저장
             newest_ts = messages[0]["ts"]
             self._last_ts[channel_id] = newest_ts
@@ -244,9 +246,18 @@ class SlackClient:
                         logger.error(f"Natural language handler error: {e}")
 
         except Exception as e:
-            logger.warning(f"Poll error for {channel_name}: {e}")
-            if "ratelimited" in str(e):
+            err_str = str(e)
+            if "not_in_channel" in err_str:
+                # 자동 join 시도
+                try:
+                    await self.client.conversations_join(channel=channel_id)
+                    logger.info(f"Auto-joined channel: {channel_name}")
+                except Exception:
+                    pass
+            elif "ratelimited" in err_str:
                 await asyncio.sleep(30)
+            else:
+                logger.warning(f"Poll error for {channel_name}: {e}")
 
     async def _init_channel_cache(self):
         """채널 캐시 초기화 (재시도 포함)"""
@@ -362,14 +373,24 @@ class SlackClient:
         self._running = True
         # 폴링 채널 초기화
         await self._init_channel_cache()
-        channels = [self.CHANNEL_GENERAL]
+
+        # 모든 public 채널에 봇 join
+        for ch_name, ch_id in self._channel_cache.items():
+            try:
+                await self.client.conversations_join(channel=ch_id)
+                logger.info(f"Joined channel: {ch_name} ({ch_id})")
+            except Exception:
+                pass  # 이미 참여 중이면 무시
+
+        # 모든 채널 폴링
+        channels = list(self._channel_cache.keys())
         for ch_name in channels:
             ch_id = self._channel_cache.get(ch_name)
             if ch_id:
                 self._last_ts[ch_id] = str(time.time())
         self._poll_channels = channels
         logger.info(f"Polling mode ready (interval: {self._poll_interval}s)")
-        logger.info(f"Polling channels: {[self._channel_cache.get(ch, '?') for ch in channels]}")
+        logger.info(f"Polling channels: {channels}")
 
     async def poll_once(self):
         """한 번 폴링 (외부에서 주기적으로 호출)"""

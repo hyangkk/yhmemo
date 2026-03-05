@@ -171,10 +171,16 @@ class CuratorAgent(BaseAgent):
         missing = decision.get("missing_topics", [])
         briefing = decision.get("briefing", "")
 
-        await self.slack.send_message(
-            general,
-            f":brain: *[curator]* {len(articles)}건 중 {len(selected)}건을 선별했어요. 저장 중..."
-        )
+        logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected")
+
+        try:
+            await self.slack.send_message(
+                general,
+                f":brain: *[curator]* {len(articles)}건 중 {len(selected)}건을 선별했어요. 저장 중..."
+            )
+            logger.info("[curator] Sent brain message to general")
+        except Exception as e:
+            logger.error(f"[curator] Failed to send brain message: {e}")
 
         # 1. 선별된 항목 저장
         curated_count = 0
@@ -225,7 +231,9 @@ class CuratorAgent(BaseAgent):
                     brief_msg += f"- [{art.get('title', '')}]({art.get('url', '')}) "
                     brief_msg += f"(관련도: {sel.get('score', 0):.0%})\n"
                     brief_msg += f"  _{sel.get('summary', '')}_\n"
+            logger.info(f"[curator] Sending briefing ({len(brief_msg)} chars) to {general}")
             await self.slack.send_message(general, brief_msg)
+            logger.info("[curator] Briefing sent successfully")
 
         # 3. 부족한 영역 → 수집 에이전트에 추가 요청
         if missing:
