@@ -256,9 +256,15 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 접수 표시
-        if thread_ts and action != "chat":
+        # 3단계: 접수 표시 (눈 리액션 + 한줄 접수 메시지)
+        ACK_MESSAGES = {
+            "collect": "👀 수집 시작합니다! 잠시만요~",
+            "briefing": "👀 브리핑 준비 중! 금방 가져올게요~",
+            "status": "👀 상태 확인 중! 잠깐만요~",
+        }
+        if thread_ts and action in ACK_MESSAGES:
             await slack.add_reaction(channel, thread_ts, "eyes")
+            await _reply(channel, ACK_MESSAGES[action], thread_ts)
 
         # 4단계: 실제 업무 실행
         result_text = ""
