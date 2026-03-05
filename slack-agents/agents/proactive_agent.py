@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from core.base_agent import BaseAgent
 from core.goal_planner import GoalPlanner, GoalStatus, PlanStepStatus

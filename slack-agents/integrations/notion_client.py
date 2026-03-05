@@ -159,6 +159,10 @@ class NotionClient:
         }
 
     @staticmethod
+    def block_bookmark(url: str) -> dict:
+        return {"type": "bookmark", "bookmark": {"url": url}}
+
+    @staticmethod
     def block_divider() -> dict:
         return {"type": "divider", "divider": {}}
 
@@ -272,6 +276,51 @@ class NotionClient:
             properties["메모"] = self.prop_rich_text(memo)
 
         return await self.create_page(db_id, properties)
+
+    # ── 검색 ─────────────────────────────────────────
+
+    async def search_pages(self, query: str = "", filter_type: str = "page") -> list[dict]:
+        """노션 워크스페이스에서 페이지/데이터베이스 검색"""
+        body: dict[str, Any] = {"page_size": 10}
+        if query:
+            body["query"] = query
+        if filter_type:
+            body["filter"] = {"property": "object", "value": filter_type}
+
+        try:
+            resp = await self._http.post("/search", json=body)
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception as e:
+            logger.error(f"Notion search failed: {e}")
+            return []
+
+    async def create_page_in_workspace(self, title: str) -> dict | None:
+        """워크스페이스 최상위에 빈 페이지 생성 (데이터베이스 부모용)"""
+        body = {
+            "parent": {"type": "page_id", "page_id": ""},
+            "properties": {
+                "title": [{"text": {"content": title}}]
+            },
+        }
+        # page_id 없이는 최상위 생성 불가 → search로 아무 페이지 찾아서 거기에 생성
+        pages = await self.search_pages()
+        if not pages:
+            logger.error("No pages found in Notion workspace")
+            return None
+
+        parent_id = pages[0]["id"]
+        body["parent"] = {"type": "page_id", "page_id": parent_id}
+
+        try:
+            resp = await self._http.post("/pages", json=body)
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(f"Notion page created: {result.get('id')} under {parent_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Notion create page in workspace failed: {e}")
+            return None
 
     async def close(self):
         await self._http.aclose()
