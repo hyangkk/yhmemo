@@ -287,20 +287,21 @@ async def main():
 당신이 할 수 있는 업무:
 - collect: 뉴스 기사 수집만 (구글뉴스 RSS). "~에 대한 뉴스 모아줘" 같은 명확한 수집 요청만 해당
 - briefing: 이미 수집된 정보 브리핑/요약
-- status: 시스템 상태 확인
+- dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인. "에이전트 상태", "현황", "뭐 하고 있어?", "잘 돌아가?", "에이전트 몇 개야" 등
 - quote: 명언 보내기. "명언 하나 보내줘", "오늘의 명언", "힘이 되는 말 해줘", "동기부여 좀", "영감 주는 말", "좋은 말 해줘" 등 명언/격언/영감을 요청하는 경우
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
 
 중요: 가격, 날씨, 환율, 분석, 비교, 추이, 의견 요청 등은 모두 chat입니다. collect가 아닙니다.
+중요: 시스템/에이전트 상태, 현황, 가동률 질문은 dashboard입니다.
 
 {("과거 작업 이력:" + chr(10) + exp_summary) if exp_summary else ""}
 {user_context}
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|status|quote|chat|ignore",
+  "intent": "collect|briefing|dashboard|quote|chat|ignore",
   "query": "수집 키워드 (collect일 때만)",
-  "approach": "작업 전략 (collect/briefing/status일 때만)"
+  "approach": "작업 전략 (collect/briefing일 때만)"
 }}""",
             user_prompt=text,
         )
@@ -331,7 +332,7 @@ async def main():
         ACK_MESSAGES = {
             "collect": "👀 수집 시작합니다! 잠시만요~",
             "briefing": "👀 브리핑 준비 중! 금방 가져올게요~",
-            "status": "👀 상태 확인 중! 잠깐만요~",
+            "dashboard": "👀 현황 확인 중!",
             "quote": "✨ 좋은 말 하나 찾아볼게요~",
         }
         if thread_ts and action in ACK_MESSAGES:
@@ -353,9 +354,9 @@ async def main():
             elif action == "briefing":
                 await cmd_briefing(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "브리핑 완료"
-            elif action == "status":
-                await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
-                result_text = "상태 확인 완료"
+            elif action in ("status", "dashboard"):
+                await cmd_dashboard(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "현황 확인 완료"
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
