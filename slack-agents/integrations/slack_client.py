@@ -255,19 +255,20 @@ class SlackClient:
             active = self._active_threads.get(channel_id, {})
             if not active:
                 return
-            logger.info(f"[threads] Polling {len(active)} threads for channel {channel_id}")
             stale_threads = []
-            # 최근 활성 스레드 3개만 (가장 최근 답글 기준)
-            thread_items = sorted(active.items(), key=lambda x: x[1], reverse=True)[:3]
+            # 최근 활동 기준 10개 폴링 (last_reply_ts가 큰 = 최근 활동한 스레드 우선)
+            thread_items = sorted(active.items(), key=lambda x: max(x[0], x[1]), reverse=True)[:10]
+            logger.info(f"[threads] Polling {len(thread_items)}/{len(active)} threads for {channel_id}")
             for thread_ts, last_reply_ts in thread_items:
                 try:
                     reply_result = await asyncio.wait_for(
                         self.client.conversations_replies(
                             channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=5,
                         ),
-                        timeout=5.0,  # 개별 API 콜 5초 타임아웃
+                        timeout=5.0,
                     )
                     replies = reply_result.get("messages", [])
+                    new_reply_found = False
                     for reply in replies:
                         if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
                             continue
@@ -277,25 +278,32 @@ class SlackClient:
                         reply_text = reply.get("text", "")
                         reply_user = reply.get("user", "")
                         if reply_text.strip() and self._natural_language_handler:
-                            logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
+                            new_reply_found = True
+                            logger.info(f"[poll] Thread reply detected: '{reply_text[:80]}' from {reply_user} in thread {thread_ts}")
                             asyncio.create_task(self._safe_nl_handler(
                                 text=reply_text, user=reply_user, channel=channel_id,
                                 thread_ts=thread_ts,
                             ))
                         active[thread_ts] = reply["ts"]
-                    self._save_active_threads()
+                    if new_reply_found:
+                        self._save_active_threads()
+                    await asyncio.sleep(0.5)  # API 레이트 리밋 방지
                 except asyncio.TimeoutError:
-                    pass  # 타임아웃은 조용히 무시 (다음 사이클에 재시도)
+                    pass
                 except Exception as e:
                     err = str(e)
                     if "thread_not_found" in err:
                         stale_threads.append(thread_ts)
                     elif "ratelimited" in err:
+                        logger.warning(f"[threads] Rate limited, backing off")
+                        await asyncio.sleep(5)
                         break
                     else:
                         logger.debug(f"Thread poll: {type(e).__name__}: {err[:60]}")
             for t in stale_threads:
                 active.pop(t, None)
+            if stale_threads:
+                self._save_active_threads()
         except Exception as e:
             logger.debug(f"Thread polling: {e}")
 
@@ -401,12 +409,18 @@ class SlackClient:
             else:
                 logger.warning(f"Poll error for {channel_name}: {type(e).__name__}: {e}")
 
-        # ── 2. 스레드 답글 폴링 (항상 실행, 위의 try/except와 무관) ──
+        # ── 2. 스레드 답글 폴링 (10초마다, 레이트 리밋 방지) ──
         try:
             active = self._active_threads.get(channel_id, {})
             if active:
-                bot_id = await self._get_bot_user_id()
-                asyncio.create_task(self._poll_threads(channel_id, bot_id))
+                now = time.time()
+                last_thread_poll = getattr(self, '_last_thread_poll', {}).get(channel_id, 0)
+                if now - last_thread_poll >= 10:  # 10초 간격
+                    if not hasattr(self, '_last_thread_poll'):
+                        self._last_thread_poll = {}
+                    self._last_thread_poll[channel_id] = now
+                    bot_id = await self._get_bot_user_id()
+                    asyncio.create_task(self._poll_threads(channel_id, bot_id))
         except Exception as e:
             logger.debug(f"Thread poll dispatch error: {e}")
 
