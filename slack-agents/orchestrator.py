@@ -186,8 +186,8 @@ async def main():
         try:
             recent = await quote._fetch_recent_messages()
             context["recent_conversations"] = recent[:20]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[quote] Recent messages fetch failed: {e}")
         decision = await quote.think(context)
         if decision:
             decision["action"] = "send_quote"
@@ -354,7 +354,7 @@ async def main():
             if clean.startswith("```"):
                 clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
             parsed = _json.loads(clean)
-        except (Exception,) as e:
+        except Exception as e:
             logger.warning(f"[NL] Parse error: {e}, raw: {intent_response[:100]}")
             return
 
@@ -429,7 +429,7 @@ async def main():
 - 작업 디렉토리: /home/user/yhmemo
 - 결과를 간결하게 요약하세요 (무엇을 만들었는지, 어떤 파일, 다음 단계)."""
 
-                    await _reply(channel, "🔨 *[Agent 01]* 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
+                    await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
                         # CLAUDECODE를 빈 문자열로 설정 (중첩 세션 체크 우회)
@@ -463,13 +463,13 @@ async def main():
                                     system_prompt="아래 Claude Code 실행 결과를 슬랙 메시지로 요약하세요. 무엇을 만들었는지, 어떤 파일을 생성/수정했는지, 다음 단계는 무엇인지 핵심만. 최대 1500자.",
                                     user_prompt=output,
                                 )
-                                await _reply(channel, f"✅ *[Agent 01]* 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
+                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
                             else:
-                                await _reply(channel, f"✅ *[Agent 01]* 작업 완료!\n\n{output}", thread_ts)
+                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output}", thread_ts)
                             result_text = f"dev 완료: {dev_task[:50]}"
                         else:
                             error_msg = err_output or output or "알 수 없는 오류"
-                            await _reply(channel, f"⚠️ *[Agent 01]* 작업 중 문제가 생겼어요:\n```\n{error_msg[:1000]}\n```\n다시 시도하거나 작업을 수정해서 알려주세요.", thread_ts)
+                            await _reply(channel, f"⚠️ *[마스터]* 작업 중 문제가 생겼어요:\n```\n{error_msg[:1000]}\n```\n다시 시도하거나 작업을 수정해서 알려주세요.", thread_ts)
                             result_text = f"dev 오류: {error_msg[:100]}"
                             success = False
                     except asyncio.TimeoutError:
@@ -503,7 +503,7 @@ async def main():
 
                 # 2차: 도구 결과 포함해서 답변 생성
                 chat_response = await curator.ai_think(
-                    system_prompt=f"""당신은 슬랙에서 사용자와 대화하는 AI 어시스턴트 'Agent 01'입니다.
+                    system_prompt=f"""당신은 슬랙에서 사용자와 대화하는 AI 어시스턴트입니다.
 당신은 AGI입니다. 모든 것을 할 수 있습니다. 못하는 게 있으면 도구를 써서라도 해냅니다.
 
 성격:
@@ -567,8 +567,30 @@ async def main():
 
     slack.on_natural_language(on_natural_language)
 
-    # 이모지 반응 → 선별 에이전트 피드백 학습
+    # 이모지 반응 → 선별 에이전트 피드백 학습 + 제안 승인/거절
     async def on_reaction(reaction: str, item: dict, user: str):
+        # 1. 제안 승인/거절 처리
+        message_ts = item.get("ts", "")
+        if message_ts:
+            result = proactive.handle_proposal_reaction(reaction, message_ts)
+            if result:
+                state = result["new_state"]
+                title = result["title"]
+                if state == "approved":
+                    await _reply(
+                        item.get("channel", "ai-agents-general"),
+                        f"✅ *'{title}' 승인됨!* 다음 사이클에서 실행을 시작합니다.",
+                        message_ts,
+                    )
+                elif state == "rejected":
+                    await _reply(
+                        item.get("channel", "ai-agents-general"),
+                        f"❌ *'{title}' 거절됨.* 피드백이 있으면 알려주세요.",
+                        message_ts,
+                    )
+                return  # 제안 반응이면 피드백 학습 스킵
+
+        # 2. 선별 에이전트 피드백 학습
         await curator.handle_reaction_feedback(reaction, item)
 
     slack.on_reaction(on_reaction)
