@@ -408,11 +408,13 @@ async def main():
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
-                        import subprocess
+                        # CLAUDECODE 환경변수 제거 (중첩 세션 방지)
+                        clean_env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
                         proc = await asyncio.create_subprocess_exec(
                             "claude", "-p", full_prompt,
                             "--output-format", "text",
                             cwd="/home/user/yhmemo",
+                            env=clean_env,
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
                         )
