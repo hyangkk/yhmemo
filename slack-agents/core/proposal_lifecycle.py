@@ -129,13 +129,17 @@ REJECT_REACTIONS = {"x", "thumbsdown", "-1", "no_entry"}
 
 
 class ProposalLifecycle:
-    """제안 라이프사이클 관리"""
+    """제안 라이프사이클 관리
 
-    def __init__(self, ai_think_fn=None, slack_client=None):
+    auto_approve=True: 마스터 에이전트가 자동 승인 (파트너 승인 불필요)
+    """
+
+    def __init__(self, ai_think_fn=None, slack_client=None, auto_approve: bool = False):
         self._proposals_file = os.path.join(DATA_DIR, "proposals.json")
         self._proposals: list[Proposal] = self._load()
         self._ai_think = ai_think_fn
         self._slack = slack_client
+        self._auto_approve = auto_approve
         os.makedirs(DATA_DIR, exist_ok=True)
 
     # ── 영속성 ──────────────────────────────────────
@@ -161,7 +165,7 @@ class ProposalLifecycle:
     async def propose(self, title: str, content: str, proposal_type: str,
                       action_needed: str, potential_impact: str,
                       urgency: str = "medium") -> Optional[Proposal]:
-        """제안을 생성하고 슬랙에 전송 (승인 이모지 대기)"""
+        """제안을 생성하고 슬랙에 전송. auto_approve면 즉시 승인."""
         now = datetime.now(KST)
         proposal = Proposal(
             id=f"prop_{int(now.timestamp())}",
@@ -174,6 +178,11 @@ class ProposalLifecycle:
             created_at=now.isoformat(),
         )
 
+        # 자동 승인 모드: 마스터 에이전트가 바로 승인
+        if self._auto_approve:
+            proposal.state = ProposalState.APPROVED
+            proposal.approved_at = now.isoformat()
+
         # 슬랙에 전송
         if self._slack:
             type_emoji = {
@@ -183,20 +192,27 @@ class ProposalLifecycle:
             emoji = type_emoji.get(proposal_type, "💡")
             urgency_tag = " 🔴" if urgency == "high" else ""
 
+            auto_tag = " ⚡자동승인" if self._auto_approve else ""
+            footer = (
+                f"_⚡ 마스터 에이전트가 자동 승인. 실행을 시작합니다._"
+                if self._auto_approve else
+                f"_✅ 승인 | ❌ 거절 — 이모지로 응답해주세요_"
+            )
+
             msg = (
-                f"{emoji} *제안{urgency_tag}*\n\n"
+                f"{emoji} *제안{urgency_tag}{auto_tag}*\n\n"
                 f"*{title}*\n\n"
                 f"{content}\n\n"
                 f"📌 *다음 단계:* {action_needed}\n"
                 f"📈 *예상 임팩트:* {potential_impact}\n\n"
-                f"_✅ 승인 | ❌ 거절 — 이모지로 응답해주세요_"
+                f"{footer}"
             )
 
             try:
                 result = await self._slack.send_message("ai-agents-general", msg)
                 proposal.slack_ts = result.get("ts", "")
                 proposal.slack_channel = "ai-agents-general"
-                logger.info(f"[proposal] Sent: '{title}' (ts={proposal.slack_ts})")
+                logger.info(f"[proposal] Sent: '{title}' (auto_approve={self._auto_approve})")
             except Exception as e:
                 logger.error(f"[proposal] Failed to send: {e}")
                 return None
