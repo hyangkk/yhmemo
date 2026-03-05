@@ -143,10 +143,10 @@ class ProactiveAgent(BaseAgent):
 
         logger.info("[proactive] Goals seeded: beta launch + impact + revenue")
 
-    # ── Observe: 24시간 자율 운영 ─────────────────────
+    # ── Observe: 시간별 계획 기반 자율 운영 ─────────────
 
     async def observe(self) -> dict | None:
-        """24시간 풀가동. 쉬지 않는다. 결과물을 만든다."""
+        """매시간 계획을 확인하고 실행한다. 계획이 곧 실행이다."""
         now = self.now_kst()
         hour = now.hour
         minute = now.minute
@@ -177,16 +177,41 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "generate_daily_plan"
             return context
 
-        # ── 0.5순위: 매시간 정각 근처(0-5분)에 이전 시간 체크 ──
+        # ── 매일 밤 11시 자동 리뷰 (계획보다 우선) ──
 
+        if hour == 23 and self._state.get("last_daily_review") != today:
+            context["action"] = "daily_review"
+            return context
+
+        # ── 모닝 브리핑 (6시) — 파트너가 6시에 보고 요청 ──
+
+        if 6 <= hour <= 7 and self._state.get("last_morning_briefing") != today:
+            context["action"] = "morning_briefing"
+            return context
+
+        # ══════════════════════════════════════════════
+        #  핵심: 매시간 계획을 보고 실행한다
+        # ══════════════════════════════════════════════
+
+        # 1단계: 매시간 정각(0-5분)에 이전 시간 체크 → 평가
         last_checked_hour = self._state.get("last_hourly_check_hour", -1)
         if minute <= 5 and hour != last_checked_hour and hour > 0:
             context["action"] = "hourly_check"
             context["check_hour"] = hour - 1
             return context
 
-        # ── 최우선: 목표 기반 다음 스텝 실행 (항상) ──
+        # 2단계: 현재 시간의 계획 항목 실행
+        current_hour_task = self.memory.get_hour_plan(hour)
+        last_executed_hour = self._state.get("last_executed_hour", -1)
 
+        if current_hour_task and last_executed_hour != hour:
+            # 이 시간의 계획이 있고 아직 실행 안 했으면 → 실행
+            context["action"] = "execute_hourly_task"
+            context["hour_task"] = current_hour_task
+            context["task_hour"] = hour
+            return context
+
+        # 3단계: 이 시간의 메인 작업 완료 후 → 목표 스텝 실행
         next_action = self.planner.pick_next_action()
         if next_action:
             goal, step = next_action
@@ -199,29 +224,14 @@ class ProactiveAgent(BaseAgent):
                 context["step"] = step
             return context
 
-        # ── 승인된 제안 실행 ──
-
+        # 4단계: 승인된 제안 실행
         approved = self.proposals.get_approved()
         if approved:
             context["action"] = "execute_approved"
             context["proposal"] = approved[0]
             return context
 
-        # ── 매일 밤 11시 자동 리뷰 ──
-
-        if hour == 23 and self._state.get("last_daily_review") != today:
-            context["action"] = "daily_review"
-            return context
-
-        # ── 모닝 브리핑 (6시) — 파트너가 6시에 보고 요청 ──
-
-        if 6 <= hour <= 7 and self._state.get("last_morning_briefing") != today:
-            context["action"] = "morning_briefing"
-            return context
-
-        # ── 새 목표/제안 자동 생성 (목표가 부족할 때) ──
-        # 목표 스텝이 모두 소진되면 → 새 제안 생성 → 자동 승인 → 바로 실행
-
+        # 5단계: 계획에 없는 빈 시간 → 자율 행동
         active_goals = self.planner.get_active_goals()
         all_done = all(g.is_done() for g in active_goals) if active_goals else True
 
@@ -229,17 +239,13 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "propose_initiative"
             return context
 
-        # ── 트렌드/리서치 (빈 시간 활용) ──
-
-        if self._hours_since(self._state.get("last_trend_check", "")) >= 1:
+        if self._hours_since(self._state.get("last_trend_check", "")) >= 2:
             context["action"] = "trend_check"
             return context
 
-        if self._hours_since(self._state.get("last_research", "")) >= 1:
+        if self._hours_since(self._state.get("last_research", "")) >= 2:
             context["action"] = "business_research"
             return context
-
-        # ── 진행 보고 — 결과물 있을 때만, 6시간마다 ──
 
         if self._hours_since(self._state.get("last_report", "")) >= 6:
             context["action"] = "progress_report"
@@ -263,21 +269,286 @@ class ProactiveAgent(BaseAgent):
         if not action:
             return
 
+        # 시간별 작업은 빌드 시 10분 타임아웃, 나머지 3분
+        timeout = 600 if action == "execute_hourly_task" else 180
+
         try:
             handler = getattr(self, f"_do_{action}", None)
             if handler:
                 logger.info(f"[proactive] Executing: {action}")
-                await asyncio.wait_for(handler(decision), timeout=180)
+                await asyncio.wait_for(handler(decision), timeout=timeout)
             else:
                 logger.warning(f"[proactive] Unknown action: {action}")
         except asyncio.TimeoutError:
-            logger.error(f"[proactive] Action '{action}' timed out (180s)")
+            logger.error(f"[proactive] Action '{action}' timed out ({timeout}s)")
         except Exception as e:
             logger.error(f"[proactive] Action '{action}' failed: {e}", exc_info=True)
 
     # ══════════════════════════════════════════════════
     #  액션 구현
     # ══════════════════════════════════════════════════
+
+    # ── 시간별 계획 실행 (핵심 루프) ──────────────────
+
+    async def _do_execute_hourly_task(self, ctx: dict):
+        """노션/메모리의 시간별 계획 항목을 실제로 실행한다.
+
+        method에 따라:
+        - build → Claude Code CLI로 코드 작성
+        - research → 웹 검색 + AI 분석
+        - measure → 성과 측정 + 평가
+        - communicate → 슬랙 보고/외부 공유
+        """
+        hour_task = ctx["hour_task"]
+        task_hour = ctx["task_hour"]
+        task_desc = hour_task.get("task", "")
+        method = hour_task.get("method", "build")
+        expected = hour_task.get("expected", "")
+
+        h_str = str(task_hour).zfill(2)
+        logger.info(f"[proactive] ▶ [{h_str}:00] Executing: {task_desc} (method={method})")
+
+        await self.slack.send_message(
+            "ai-agent-logs",
+            f"⏰ *[{h_str}:00 계획 실행]* [{method}] {task_desc}\n"
+            f"예상 결과: {expected}",
+        )
+
+        result = ""
+        success = True
+
+        try:
+            if method == "build":
+                result = await self._hourly_build(task_desc, expected)
+            elif method == "research":
+                result = await self._hourly_research(task_desc)
+            elif method == "measure":
+                result = await self._hourly_measure(task_desc, expected)
+            elif method == "communicate":
+                result = await self._hourly_communicate(task_desc)
+            else:
+                result = await self._hourly_build(task_desc, expected)
+
+        except Exception as e:
+            result = f"실행 실패: {str(e)[:200]}"
+            success = False
+            logger.error(f"[proactive] Hourly task failed: {e}")
+
+        # 결과 평가
+        grade = await self._evaluate_hourly_result(
+            task_desc, expected, result, success
+        )
+
+        # 상태 저장 — 이 시간 실행 완료
+        self._state["last_executed_hour"] = task_hour
+        self._state[f"hour_{h_str}_result"] = {
+            "task": task_desc,
+            "result": result[:300],
+            "grade": grade,
+            "success": success,
+        }
+        self._save_state()
+
+        # 노션 업데이트
+        await self._update_notion_hourly_status(task_hour, grade)
+
+        # 결과가 D/F면 계획 수정 검토
+        if grade in ("D", "F"):
+            await self._consider_plan_adjustment(task_hour, task_desc, result)
+
+    async def _hourly_build(self, task_desc: str, expected: str) -> str:
+        """build 메서드: Claude Code CLI로 실제 코드 작성"""
+        clean_env = {k: v for k, v in os.environ.items()}
+        clean_env["CLAUDECODE"] = ""
+        if "ANTHROPIC_API_KEY" not in clean_env:
+            from dotenv import dotenv_values
+            env_vals = dotenv_values()
+            if "ANTHROPIC_API_KEY" in env_vals:
+                clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
+
+        # 메모리 컨텍스트를 프롬프트에 포함
+        memory_ctx = self.memory.get_decision_context()
+
+        prompt = f"""{task_desc}
+
+예상 결과물: {expected}
+
+{memory_ctx}
+
+[자율 실행 지침]
+- 모든 권한이 부여됨. 바로 실행.
+- 작업 완료 후 git add, git commit, git push까지 자동.
+- 작업 디렉토리: /home/user/yhmemo
+- 기존 slack-agents/ 코드를 깨뜨리지 마세요.
+- 웹 서비스는 /home/user/yhmemo/web-service/ 에 있습니다.
+- Supabase collected_items, curated_items 테이블에 수집 데이터가 있습니다.
+- 결과를 간결하게 요약하세요."""
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "claude", "-p", prompt,
+                "--output-format", "text",
+                "--permission-mode", "acceptEdits",
+                cwd="/home/user/yhmemo",
+                env=clean_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+            output = stdout.decode("utf-8", errors="replace").strip()
+
+            if proc.returncode == 0 and output:
+                await self.slack.send_message(
+                    "ai-agent-logs",
+                    f"✅ *[빌드 완료]* {task_desc[:100]}\n```{output[:400]}```",
+                )
+                return output[:800]
+
+            err = stderr.decode("utf-8", errors="replace").strip()
+            return f"빌드 실패: {err[:300]}"
+
+        except asyncio.TimeoutError:
+            return "빌드 타임아웃 (10분 초과)"
+        except Exception as e:
+            return f"빌드 에러: {str(e)[:200]}"
+
+    async def _hourly_research(self, task_desc: str) -> str:
+        """research 메서드: 웹 검색 + AI 분석"""
+        from core.tools import _web_search
+
+        # AI가 검색 키워드 생성
+        keywords_resp = await self.ai_think(
+            system_prompt='검색 키워드 1개를 생성하세요. JSON: {"query": "검색어"}',
+            user_prompt=f"리서치 주제: {task_desc}",
+        )
+        try:
+            parsed = self._parse_json(keywords_resp)
+            query = parsed.get("query", task_desc[:50])
+        except (json.JSONDecodeError, KeyError):
+            query = task_desc[:50]
+
+        search_result = await _web_search(query)
+
+        analysis = await self.ai_think(
+            system_prompt="검색 결과를 분석하고 핵심 발견을 3줄로 요약하세요.",
+            user_prompt=f"주제: {task_desc}\n\n검색 결과:\n{search_result[:1500]}",
+        )
+
+        if analysis:
+            self.memory.record_insight(analysis[:200], context=task_desc[:50])
+
+        return analysis[:500] if analysis else "리서치 결과 없음"
+
+    async def _hourly_measure(self, task_desc: str, expected: str) -> str:
+        """measure 메서드: 성과 측정"""
+        goals_summary = self.planner.get_status_summary()
+        achievement = self.memory.get_plan_achievement_rate()
+
+        analysis = await self.ai_think(
+            system_prompt="현재 성과를 측정하고 구체적 수치로 보고하세요. 3줄.",
+            user_prompt=f"측정 대상: {task_desc}\n예상: {expected}\n\n"
+                        f"목표 현황:\n{goals_summary}\n"
+                        f"계획 달성률: {json.dumps(achievement, ensure_ascii=False)}",
+        )
+        return analysis[:500] if analysis else "측정 실패"
+
+    async def _hourly_communicate(self, task_desc: str) -> str:
+        """communicate 메서드: 보고/공유"""
+        goals_summary = self.planner.get_status_summary()
+        recent_evals = self.memory.get_recent_evaluations(5)
+        evals_text = "\n".join(
+            f"[{e['grade']}] {e['action'][:60]}" for e in recent_evals
+        ) if recent_evals else "없음"
+
+        msg = await self.ai_think(
+            system_prompt="파트너에게 보낼 진행 보고를 슬랙 형식으로 작성. 결과물 중심. 10줄 이내.",
+            user_prompt=f"보고 주제: {task_desc}\n\n"
+                        f"최근 실행:\n{evals_text}\n\n"
+                        f"목표:\n{goals_summary}",
+        )
+        if msg:
+            await self.slack.send_message("ai-agents-general", f"📋 {msg}")
+            return "보고 전송 완료"
+        return "보고 생성 실패"
+
+    async def _evaluate_hourly_result(self, task: str, expected: str,
+                                       result: str, success: bool) -> str:
+        """시간별 작업 결과 평가 → 등급 + 기록"""
+        try:
+            eval_resp = await self.ai_think(
+                system_prompt="""작업 결과를 평가하세요. JSON:
+{"grade": "A|B|C|D|F", "insight": "배운 점 (한줄)", "next": "다음에 할 것 (있으면)"}
+
+A=외부 공개 가능한 결과물, B=의미있는 진전, C=약간의 진전, D=거의 없음, F=실패""",
+                user_prompt=f"작업: {task}\n예상: {expected}\n성공: {success}\n결과: {result[:300]}",
+            )
+            parsed = self._parse_json(eval_resp)
+            grade = parsed.get("grade", "C")
+            insight = parsed.get("insight", "")
+            next_action = parsed.get("next", "")
+
+            self.memory.record_evaluation(
+                action=task[:60],
+                result=result[:200],
+                grade=grade,
+                lesson=insight,
+            )
+            if insight:
+                self.memory.record_insight(insight, context=task[:50])
+            if next_action:
+                self.memory.add_action_item(next_action, priority=2)
+
+            return grade
+        except Exception as e:
+            logger.debug(f"[proactive] Hourly eval error: {e}")
+            return "C"
+
+    async def _consider_plan_adjustment(self, hour: int, task: str, result: str):
+        """D/F 등급 시 남은 계획을 수정할지 검토"""
+        remaining_plan = {}
+        for h in range(hour + 1, 24):
+            p = self.memory.get_hour_plan(h)
+            if p:
+                remaining_plan[str(h).zfill(2)] = p
+
+        if not remaining_plan:
+            return
+
+        adjustment = await self.ai_think(
+            system_prompt="""이전 시간의 작업이 실패했습니다. 남은 계획을 수정해야 할까요?
+
+규칙:
+- 실패한 작업이 이후 작업의 전제조건이면 계획 수정
+- 아니면 그대로 진행
+- 수정 시 실패 원인을 우회하는 대안 작업으로 교체
+
+JSON: {"adjust": true/false, "reason": "이유", "changes": {"HH": {"task": "새 작업", "method": "build|research|measure|communicate", "expected": "예상 결과"}}}""",
+            user_prompt=f"실패한 작업: {task}\n결과: {result[:200]}\n\n남은 계획:\n{json.dumps(remaining_plan, ensure_ascii=False)}",
+        )
+
+        try:
+            parsed = self._parse_json(adjustment)
+            if parsed.get("adjust") and parsed.get("changes"):
+                # 메모리의 계획 업데이트
+                current_plan = self.memory.get_current_plan()
+                hours = current_plan.get("hours", {})
+                for h_str, new_task in parsed["changes"].items():
+                    hours[h_str] = new_task
+                self.memory.set_daily_plan(current_plan)
+
+                await self.slack.send_message(
+                    "ai-agent-logs",
+                    f"🔄 *[계획 수정]* {parsed.get('reason', '')[:100]}\n"
+                    f"변경: {json.dumps(parsed['changes'], ensure_ascii=False)[:300]}",
+                )
+                logger.info(f"[proactive] Plan adjusted: {parsed.get('reason', '')[:80]}")
+
+                # 노션에도 수정된 계획 동기화
+                await self._sync_hourly_plan_to_notion(
+                    self._state.get("_today", ""), hours
+                )
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.debug(f"[proactive] Plan adjustment parse error: {e}")
 
     # ── 목표 스텝 실행 ──────────────────────────────
 
