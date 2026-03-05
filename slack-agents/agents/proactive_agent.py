@@ -380,9 +380,11 @@ class ProactiveAgent(BaseAgent):
             task_desc, expected, result, success
         )
 
-        # 상태 저장 — 이 시간 실행 완료
+        # 상태 저장 — 이 슬롯 실행 완료
+        slot_key = ctx.get("slot_key", h_str)
+        self._state["last_executed_slot"] = slot_key
         self._state["last_executed_hour"] = task_hour
-        self._state[f"hour_{h_str}_result"] = {
+        self._state[f"slot_{slot_key}_result"] = {
             "task": task_desc,
             "result": result[:300],
             "grade": grade,
