@@ -37,6 +37,10 @@ RSS_SOURCES = {
     "한국경제": "https://www.hankyung.com/feed/all-news",
     # 스타트업/사업공고
     "케이스타트업": "https://www.k-startup.go.kr/web/contents/rss/startupnews.do",
+    # 테크/AI 전문
+    "구글뉴스_AI": "https://news.google.com/rss/search?q=AI+artificial+intelligence&hl=ko&gl=KR&ceid=KR:ko",
+    "TechCrunch": "https://techcrunch.com/feed/",
+    "GeekNews": "https://news.hada.io/rss/topics",
 }
 
 # 키워드별 구글뉴스 검색 URL 패턴
