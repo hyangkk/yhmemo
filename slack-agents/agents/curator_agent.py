@@ -43,6 +43,7 @@ class CuratorAgent(BaseAgent):
         self._current_query: str = ""
         self._request_thread_ts: str = None
         self._request_channel: str = None
+        self._curate_lock = asyncio.Lock()
 
         # 수집 에이전트의 new_articles 이벤트 구독
         self.bus.subscribe("new_articles", self._on_new_articles)
@@ -54,27 +55,34 @@ class CuratorAgent(BaseAgent):
         self._request_channel = channel
 
     async def _on_new_articles(self, task: TaskMessage):
-        """수집 에이전트에서 새 정보 도착 시 → 즉시 선별"""
+        """수집 에이전트에서 새 정보 도착 시"""
         items = task.payload.get("items", [])
         is_user_request = bool(task.payload.get("query"))
         self._new_articles_buffer.extend(items)
         logger.info(f"[curator] Received {len(items)} articles (user_request={is_user_request})")
 
         if not is_user_request:
-            # 정기 수집은 버퍼만 쌓고 주기적 루프에서 처리
             return
 
-        # 유저 요청 수집만 즉시 선별
-        if len(self._new_articles_buffer) >= 5:
+        # 유저 요청만 즉시 선별 (lock으로 동시 실행 방지)
+        async with self._curate_lock:
+            if not self._new_articles_buffer:
+                return
             logger.info(f"[curator] Curating {len(self._new_articles_buffer)} articles for user request")
             try:
-                context = await self.observe()
-                if context:
-                    decision = await self.think(context)
-                    if decision:
-                        await self.act(decision)
+                await self._do_curate()
             except Exception as e:
                 logger.error(f"[curator] Curate error: {e}")
+
+    async def _do_curate(self):
+        """실제 선별 실행 (lock 안에서 호출)"""
+        context = await self.observe()
+        if not context:
+            return
+        decision = await self.think(context)
+        if not decision:
+            return
+        await self.act(decision)
 
     # ── Observe: 환경 감지 ─────────────────────────────
 
@@ -165,8 +173,8 @@ class CuratorAgent(BaseAgent):
             "articles": context["new_articles"],
             "query": query,
         }
-        # 유저 요청 컨텍스트가 있으면 전달
-        if query and getattr(self, "_request_thread_ts", None):
+        # 유저 요청 컨텍스트 전달
+        if query and self._request_thread_ts:
             decision["thread_ts"] = self._request_thread_ts
             decision["channel"] = self._request_channel or "ai-agents-general"
         return decision
@@ -186,29 +194,24 @@ class CuratorAgent(BaseAgent):
     async def _curate_and_brief(self, decision: dict):
         """선별 → 노션 저장 → 슬랙 브리핑"""
         query = decision.get("query", "")
-        thread_ts = decision.get("thread_ts")  # 유저 요청 시 스레드 ts
-        # 유저 요청이면 지정 채널(or general), 자율이면 ai-curator
-        general = decision.get("channel", "ai-agents-general") if query else "ai-curator"
+        thread_ts = decision.get("thread_ts")
+        # 유저 요청이면 지정 채널, 자율이면 ai-curator
+        target_channel = decision.get("channel", "ai-agents-general") if thread_ts else "ai-curator"
 
         articles = decision.get("articles", [])
         selected = decision.get("selected", [])
         briefing = decision.get("briefing", "")
-        rejected_reason = decision.get("rejected_reason", "")
 
-        logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected")
+        logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected, channel={target_channel}")
 
-        # ── 1. 선별 과정 (스레드에만, 간결하게) ──
         if not selected:
             if thread_ts:
-                await self._reply(general, f"{len(articles)}건 분석했지만 관련 기사가 없어요.", thread_ts)
-            self._current_query = ""
-            self._request_thread_ts = None
-            self._request_channel = None
-            processed_count = len(articles)
-            self._new_articles_buffer = self._new_articles_buffer[processed_count:]
+                await self._reply(target_channel, f"'{query}' 관련 기사를 찾지 못했어요.", thread_ts)
+            self._clear_context()
+            self._consume_buffer(len(articles))
             return
 
-        # ── 2. 노션에 상세 저장 + URL 수집 ──
+        # ── 노션에 상세 저장 + URL 수집 ──
         notion_urls = []
         for sel in selected:
             idx = sel.get("index", 0)
@@ -231,20 +234,17 @@ class CuratorAgent(BaseAgent):
             except Exception as e:
                 logger.error(f"[curator] Save curated item failed: {e}")
 
-            # 노션에 상세 저장 (본문 포함)
+            # Notion
             notion_url = None
             if self.notion and self._notion_db_id:
                 content_blocks = [
-                    NotionClient.block_paragraph(f"요약: {summary}"),
-                    NotionClient.block_paragraph(f"선별 이유: {sel.get('reason', '')}"),
-                    NotionClient.block_paragraph(f"원문: {article.get('url', '')}"),
+                    NotionClient.block_heading("AI 요약"),
+                    NotionClient.block_paragraph(summary),
+                    NotionClient.block_heading("원문 링크"),
+                    NotionClient.block_bookmark(article.get("url", "")),
                 ]
-                if article.get("content"):
-                    content_blocks.append(
-                        NotionClient.block_paragraph(f"본문:\n{article['content'][:1500]}")
-                    )
                 result = await self.notion.create_page(
-                    self._notion_db_id,
+                    database_id=self._notion_db_id,
                     properties={
                         "Name": NotionClient.prop_title(article.get("title", "")),
                         "Source": NotionClient.prop_select(article.get("source", "")),
@@ -259,9 +259,9 @@ class CuratorAgent(BaseAgent):
 
             notion_urls.append(notion_url)
 
-        # ── 3. 슬랙 브리핑 (깔끔한 포맷) ──
+        # ── 슬랙 브리핑 (최종 결과 1개만) ──
         lines = []
-        if thread_ts and query:
+        if query:
             lines.append(f"> {query}\n")
         lines.append(f"*{briefing}*\n")
 
@@ -284,18 +284,23 @@ class CuratorAgent(BaseAgent):
         brief_msg = "\n".join(lines)
 
         if thread_ts:
-            # 스레드에 달고, 채널에도 표시
-            await self._reply(general, brief_msg, thread_ts, broadcast=True)
+            await self._reply(target_channel, brief_msg, thread_ts, broadcast=True)
         else:
-            await self._reply(general, brief_msg)
-        logger.info("[curator] Briefing sent successfully")
+            await self._reply(target_channel, brief_msg)
+        logger.info(f"[curator] Briefing sent to {target_channel}")
 
-        # 버퍼 비우기 & 컨텍스트 초기화
+        self._clear_context()
+        self._consume_buffer(len(articles))
+
+    def _clear_context(self):
+        """유저 요청 컨텍스트 초기화"""
         self._current_query = ""
         self._request_thread_ts = None
         self._request_channel = None
-        processed_count = len(articles)
-        self._new_articles_buffer = self._new_articles_buffer[processed_count:]
+
+    def _consume_buffer(self, count: int):
+        """처리된 기사를 버퍼에서 제거"""
+        self._new_articles_buffer = self._new_articles_buffer[count:]
 
     async def _process_action_items(self, items: list):
         """노션 액션아이템 처리"""
@@ -304,84 +309,72 @@ class CuratorAgent(BaseAgent):
             await self.say(f"액션아이템 처리 중: {title}")
             # AI가 액션아이템 해석 → 적절한 에이전트에 작업 할당
             decision = await self.ai_decide(
-                context={"action_item": title},
-                options=["collect_info", "analyze", "summarize", "delegate"],
+                f"노션 액션아이템: '{title}'",
+                ["collect_info", "create_summary", "skip"],
             )
             if decision.get("action") == "collect_info":
-                query = decision.get("details", {}).get("query", title)
-                await self.ask_agent("collector", "collect_by_keyword", {"query": query})
+                await self.bus.send(TaskMessage(
+                    from_agent="curator",
+                    to_agent="collector",
+                    task_type="keyword_collect",
+                    payload={"query": title},
+                ))
 
-    # ── 사용자 피드백 학습 ─────────────────────────────
+    # ── 유틸리티 ──────────────────────────────────────
 
-    async def handle_reaction_feedback(self, reaction: str, message_data: dict):
-        """슬랙 이모지 반응으로부터 피드백 학습"""
-        score = 0
-        if reaction in ("+1", "thumbsup", "heart", "star"):
-            score = 1
-        elif reaction in ("-1", "thumbsdown"):
-            score = -1
-
-        if score != 0:
-            try:
-                await asyncio.to_thread(
-                    lambda: self.supabase.table("curation_preferences").insert({
-                        "category": "reaction_feedback",
-                        "keywords": [message_data.get("text", "")[:200]],
-                        "weight": float(score),
-                        "learned_from": "user_feedback",
-                    }).execute()
-                )
-            except Exception as e:
-                logger.error(f"[curator] Save feedback failed: {e}")
-
-    # ── 외부 작업 수신 ─────────────────────────────────
-
-    async def handle_external_task(self, task: TaskMessage) -> Any:
-        """다른 에이전트의 선별 요청 처리"""
-        if task.task_type == "curate_items":
-            items = task.payload.get("items", [])
-            self._new_articles_buffer.extend(items)
-            return {"status": "queued", "count": len(items)}
-
-        return await super().handle_external_task(task)
-
-    # ── 유틸리티 ───────────────────────────────────────
-
-    async def _load_preferences(self) -> dict:
-        """Supabase에서 사용자 선호도 로드"""
-        try:
-            result = await asyncio.to_thread(
-                lambda: self.supabase.table("curation_preferences").select("*").execute()
-            )
-            prefs = {}
-            for row in result.data or []:
-                cat = row.get("category", "general")
-                if cat not in prefs:
-                    prefs[cat] = []
-                prefs[cat].append({
-                    "keywords": row.get("keywords", []),
-                    "weight": row.get("weight", 1.0),
-                })
-            return prefs
-        except Exception:
-            return {}
-
-    def _format_articles(self, articles: list[dict]) -> str:
+    def _format_articles(self, articles: list) -> str:
         """기사 목록을 텍스트로 포맷"""
         lines = []
         for i, art in enumerate(articles):
-            lines.append(f"[{i}] {art.get('title', '제목없음')} ({art.get('source', '')})")
-            if art.get("content"):
-                lines.append(f"    {art['content'][:100]}")
-            lines.append("")
+            lines.append(f"[{i}] {art.get('title', '제목없음')} — {art.get('source', '출처불명')}")
+            if art.get("summary"):
+                lines.append(f"    요약: {art['summary'][:100]}")
         return "\n".join(lines)
 
     def _extract_notion_title(self, page: dict) -> str:
         """노션 페이지에서 제목 추출"""
         props = page.get("properties", {})
-        for key in ("Name", "이름", "Title", "제목"):
-            if key in props:
-                title_arr = props[key].get("title", [])
-                if title_arr:
-                    return title_arr[0].get("plain_text", "")
+        name_prop = props.get("Name", {})
+        title_arr = name_prop.get("title", [])
+        if title_arr:
+            return title_arr[0].get("plain_text", "")
         return ""
+
+    async def _load_preferences(self) -> dict:
+        """사용자 선호도 로드"""
+        try:
+            result = await asyncio.to_thread(
+                lambda: self.supabase.table("user_preferences")
+                .select("*")
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            logger.debug(f"[curator] Preferences load failed: {e}")
+        return self._user_preferences
+
+    async def handle_reaction_feedback(self, reaction: str, item: dict):
+        """이모지 반응을 피드백으로 학습"""
+        positive = ["thumbsup", "+1", "heart", "star", "fire"]
+        negative = ["thumbsdown", "-1", "x"]
+
+        if reaction in positive:
+            feedback_type = "positive"
+        elif reaction in negative:
+            feedback_type = "negative"
+        else:
+            return
+
+        try:
+            await asyncio.to_thread(
+                lambda: self.supabase.table("feedback_log").insert({
+                    "reaction": reaction,
+                    "feedback_type": feedback_type,
+                    "message_ts": item.get("ts", ""),
+                }).execute()
+            )
+        except Exception as e:
+            logger.error(f"[curator] Feedback save failed: {e}")
