@@ -187,8 +187,8 @@ async def main():
         """작업 경험 저장"""
         data = load_experience()
         data.append(entry)
-        # 최근 100건만 유지
-        data = data[-100:]
+        # 최근 500건 유지
+        data = data[-500:]
         with open(experience_file, "w", encoding="utf-8") as f:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -215,7 +215,7 @@ async def main():
         past_exp = load_experience()
         exp_summary = ""
         if past_exp:
-            recent = past_exp[-5:]
+            recent = past_exp[-15:]
             exp_lines = [f"- {e['task_type']}: \"{e.get('query','')}\" → {e.get('result','')}" for e in recent]
             exp_summary = "\n".join(exp_lines)
 
