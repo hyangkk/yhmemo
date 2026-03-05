@@ -361,14 +361,15 @@ async def main():
         action = parsed.get("intent", "ignore")
         approach = parsed.get("approach", "")
         query = parsed.get("query", "").strip()
+        dev_task_raw = parsed.get("dev_task", "")
+        ack_msg = parsed.get("ack", "").strip()
 
-        logger.info(f"[NL] Intent: {action}, query: {query}")
+        logger.info(f"[NL] Intent: {action}, query: {query}, dev_task: {dev_task_raw[:80] if dev_task_raw else ''}, ack: {ack_msg[:30] if ack_msg else ''}, thread_ts: {thread_ts}")
 
         if action == "ignore":
             return
 
         # 3단계: 접수 표시 (눈 리액션 + LLM이 맥락에 맞게 생성한 착수 멘트)
-        ack_msg = parsed.get("ack", "").strip()
         if thread_ts and action != "ignore" and ack_msg:
             await slack.add_reaction(channel, thread_ts, "eyes")
             await _reply(channel, ack_msg, thread_ts)
@@ -397,13 +398,16 @@ async def main():
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
+                logger.info(f"[dev] Initial dev_task: '{dev_task[:80]}', thread_context exists: {bool(thread_context)}")
                 # dev_task가 비어있고 스레드 맥락이 있으면, 원래 요청(첫 유저 메시지)을 사용
                 if not dev_task and thread_context:
                     for line in thread_context.split("\n"):
                         if line.startswith("[유저]"):
                             dev_task = line.replace("[유저]", "").strip()[:500]
+                            logger.info(f"[dev] Extracted dev_task from thread: '{dev_task[:80]}'")
                             break
                 if not dev_task:
+                    logger.info(f"[dev] No dev_task found, asking user")
                     await _reply(channel, "어떤 걸 만들면 될까요? 좀 더 구체적으로 알려주세요.", thread_ts)
                     result_text = "dev 작업 미지정"
                     success = False
