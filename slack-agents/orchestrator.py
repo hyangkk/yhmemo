@@ -318,16 +318,9 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_handler)
 
-    # 시작 알림
+    # 시작 (알림 없이 조용히)
     await slack.start_background()
-    await slack.send_message(
-        SlackClient.CHANNEL_GENERAL,
-        f"*AI 에이전트 시스템 시작* ({datetime.now(KST).strftime('%Y-%m-%d %H:%M')})\n"
-        f"- Collector: {collector.loop_interval}초 간격 자율 수집\n"
-        f"- Curator: {curator.loop_interval}초 간격 자율 선별\n"
-        f"명령어: `!수집 키워드`, `!브리핑`, `!상태`\n"
-        f"자연어도 OK: \"봄 페스티벌 행사 찾아줘\" 처럼 편하게 말씀하세요!",
-    )
+    logger.info("Agents started silently (no startup message to Slack)")
 
     # 에이전트 태스크 실행
     tasks = [
@@ -366,4 +359,21 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 자동 재시작 래퍼: 예기치 않은 크래시 시 재기동
+    max_restarts = 5
+    restart_count = 0
+    while restart_count < max_restarts:
+        try:
+            asyncio.run(main())
+            break  # 정상 종료 (shutdown signal)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            restart_count += 1
+            logger.error(f"Orchestrator crashed ({restart_count}/{max_restarts}): {e}")
+            if restart_count < max_restarts:
+                import time
+                logger.info(f"Restarting in 10 seconds...")
+                time.sleep(10)
+            else:
+                logger.critical("Max restarts reached. Exiting.")
