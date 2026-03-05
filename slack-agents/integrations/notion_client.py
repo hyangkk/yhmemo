@@ -159,6 +159,10 @@ class NotionClient:
         }
 
     @staticmethod
+    def block_bookmark(url: str) -> dict:
+        return {"type": "bookmark", "bookmark": {"url": url}}
+
+    @staticmethod
     def block_divider() -> dict:
         return {"type": "divider", "divider": {}}
 
@@ -177,6 +181,146 @@ class NotionClient:
         await self.update_page(page_id, {
             "Status": {"status": {"name": "Done"}},
         })
+
+    # ── 데이터베이스 생성 ────────────────────────────────
+
+    async def create_database(self, parent_page_id: str, title: str,
+                              properties: dict) -> dict | None:
+        """노션 데이터베이스 생성"""
+        body = {
+            "parent": {"type": "page_id", "page_id": parent_page_id},
+            "title": [{"type": "text", "text": {"content": title}}],
+            "properties": properties,
+        }
+        try:
+            resp = await self._http.post("/databases", json=body)
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(f"Notion database created: {result.get('id')}")
+            return result
+        except Exception as e:
+            logger.error(f"Notion create database failed: {e}")
+            return None
+
+    # ── 타임라인/간트차트용 DB 생성 ────────────────────
+
+    async def create_timeline_database(self, parent_page_id: str) -> dict | None:
+        """타임라인(간트차트) 데이터베이스 생성
+
+        Properties: 작업명, 상태, 담당, 시작일, 마감일, 우선순위, 카테고리, 진행률
+        """
+        properties = {
+            "작업명": {"title": {}},
+            "상태": {
+                "select": {
+                    "options": [
+                        {"name": "대기", "color": "gray"},
+                        {"name": "진행중", "color": "blue"},
+                        {"name": "완료", "color": "green"},
+                        {"name": "블로커", "color": "red"},
+                    ]
+                }
+            },
+            "담당": {
+                "select": {
+                    "options": [
+                        {"name": "마스터에이전트", "color": "purple"},
+                        {"name": "Collector", "color": "blue"},
+                        {"name": "Curator", "color": "green"},
+                        {"name": "파트너", "color": "orange"},
+                    ]
+                }
+            },
+            "기간": {"date": {}},
+            "우선순위": {
+                "select": {
+                    "options": [
+                        {"name": "P1-긴급", "color": "red"},
+                        {"name": "P2-높음", "color": "orange"},
+                        {"name": "P3-보통", "color": "yellow"},
+                        {"name": "P4-낮음", "color": "gray"},
+                    ]
+                }
+            },
+            "카테고리": {
+                "select": {
+                    "options": [
+                        {"name": "베타런칭", "color": "red"},
+                        {"name": "영향력", "color": "blue"},
+                        {"name": "수익화", "color": "green"},
+                        {"name": "인프라", "color": "gray"},
+                    ]
+                }
+            },
+            "진행률": {"number": {"format": "percent"}},
+            "메모": {"rich_text": {}},
+        }
+
+        return await self.create_database(parent_page_id, "에이전트 타임라인", properties)
+
+    async def add_timeline_item(self, db_id: str, name: str, status: str,
+                                 assignee: str, start: str, end: str,
+                                 priority: str, category: str,
+                                 progress: float = 0, memo: str = "") -> dict | None:
+        """타임라인 DB에 항목 추가"""
+        properties = {
+            "작업명": self.prop_title(name),
+            "상태": self.prop_select(status),
+            "담당": self.prop_select(assignee),
+            "기간": self.prop_date(start, end),
+            "우선순위": self.prop_select(priority),
+            "카테고리": self.prop_select(category),
+            "진행률": self.prop_number(progress),
+        }
+        if memo:
+            properties["메모"] = self.prop_rich_text(memo)
+
+        return await self.create_page(db_id, properties)
+
+    # ── 검색 ─────────────────────────────────────────
+
+    async def search_pages(self, query: str = "", filter_type: str = "page") -> list[dict]:
+        """노션 워크스페이스에서 페이지/데이터베이스 검색"""
+        body: dict[str, Any] = {"page_size": 10}
+        if query:
+            body["query"] = query
+        if filter_type:
+            body["filter"] = {"property": "object", "value": filter_type}
+
+        try:
+            resp = await self._http.post("/search", json=body)
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception as e:
+            logger.error(f"Notion search failed: {e}")
+            return []
+
+    async def create_page_in_workspace(self, title: str) -> dict | None:
+        """워크스페이스 최상위에 빈 페이지 생성 (데이터베이스 부모용)"""
+        body = {
+            "parent": {"type": "page_id", "page_id": ""},
+            "properties": {
+                "title": [{"text": {"content": title}}]
+            },
+        }
+        # page_id 없이는 최상위 생성 불가 → search로 아무 페이지 찾아서 거기에 생성
+        pages = await self.search_pages()
+        if not pages:
+            logger.error("No pages found in Notion workspace")
+            return None
+
+        parent_id = pages[0]["id"]
+        body["parent"] = {"type": "page_id", "page_id": parent_id}
+
+        try:
+            resp = await self._http.post("/pages", json=body)
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(f"Notion page created: {result.get('id')} under {parent_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Notion create page in workspace failed: {e}")
+            return None
 
     async def close(self):
         await self._http.aclose()
