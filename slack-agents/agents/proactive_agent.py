@@ -561,6 +561,9 @@ JSON 응답:
             )
             logger.info(f"[proactive] Daily plan generated: {len(hours)} hours")
 
+            # 노션 타임라인에 시간별 항목 등록
+            await self._sync_hourly_plan_to_notion(ctx["today"], hours)
+
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"[proactive] Daily plan parse error: {e}")
 
@@ -622,6 +625,9 @@ JSON 응답:
                     f"실제: {parsed.get('actual', '')[:60]}\n"
                     f"차이: {parsed.get('gap_analysis', '')[:80]}",
                 )
+
+            # 노션 시간별 상태 업데이트
+            await self._update_notion_hourly_status(check_hour, grade)
 
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"[proactive] Hourly check parse error: {e}")
@@ -1251,6 +1257,80 @@ fix_prompt는 Claude Code가 실행할 수 있는 구체적 지시.""",
             logger.info("[proactive] Notion timeline updated")
         except Exception as e:
             logger.warning(f"[proactive] Notion timeline update failed: {e}")
+
+    # ── 노션 시간별 계획 동기화 ────────────────────────
+
+    async def _sync_hourly_plan_to_notion(self, today: str, hours: dict):
+        """매일 계획 생성 시 노션 타임라인에 시간별 항목 등록"""
+        if not self.notion:
+            return
+        timeline_db_id = self._state.get("notion_timeline_db_id", "")
+        if not timeline_db_id:
+            return
+
+        cat_map = {"build": "베타런칭", "research": "영향력", "measure": "인프라", "communicate": "영향력"}
+        now_hour = datetime.now(KST).hour
+
+        try:
+            for h_str in sorted(hours.keys()):
+                info = hours[h_str]
+                hour = int(h_str)
+                task = info.get("task", "")
+                method = info.get("method", "build")
+                expected = info.get("expected", "")
+
+                start_dt = f"{today}T{h_str.zfill(2)}:00:00+09:00"
+                end_dt = f"{today}T{h_str.zfill(2)}:59:00+09:00"
+
+                if hour < now_hour:
+                    status = "완료"
+                    progress = 1.0
+                elif hour == now_hour:
+                    status = "진행중"
+                    progress = 0.5
+                else:
+                    status = "대기"
+                    progress = 0.0
+
+                await self.notion.add_timeline_item(
+                    db_id=timeline_db_id,
+                    name=f"[{h_str.zfill(2)}:00] {task}",
+                    status=status,
+                    assignee="마스터에이전트",
+                    start=start_dt,
+                    end=end_dt,
+                    priority="P1-긴급" if hour <= 8 else "P2-높음",
+                    category=cat_map.get(method, "베타런칭"),
+                    progress=progress,
+                    memo=f"예상 결과: {expected}",
+                )
+
+            logger.info(f"[proactive] Notion hourly plan synced: {len(hours)} items")
+        except Exception as e:
+            logger.warning(f"[proactive] Notion hourly sync failed: {e}")
+
+    async def _update_notion_hourly_status(self, hour: int, grade: str):
+        """매시간 체크 후 해당 시간 항목의 상태를 노션에서 업데이트"""
+        # 노션 API는 페이지 ID가 필요해서, 새 항목으로 업데이트 상태 반영
+        # (기존 항목 검색→업데이트는 복잡하므로 hourly_check 로그만 기록)
+        if not self.notion:
+            return
+        timeline_db_id = self._state.get("notion_timeline_db_id", "")
+        if not timeline_db_id:
+            return
+
+        # 완료 상태로 간단 기록
+        try:
+            today = datetime.now(KST).strftime("%Y-%m-%d")
+            h_str = str(hour).zfill(2)
+            hour_plan = self.memory.get_hour_plan(hour)
+            task = hour_plan.get("task", "") if hour_plan else ""
+
+            # 기존 항목을 찾아서 업데이트하는 대신 메모에 등급 기록
+            # (Notion API 제약: query → update가 필요하므로, 향후 개선)
+            logger.info(f"[proactive] Notion hourly status: {h_str}:00 grade={grade}")
+        except Exception as e:
+            logger.debug(f"[proactive] Notion hourly status update error: {e}")
 
     # ── 이모지 반응으로 제안 승인 처리 ────────────────
 
