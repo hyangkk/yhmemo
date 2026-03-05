@@ -225,7 +225,7 @@ class CuratorAgent(BaseAgent):
                     brief_msg += f"- [{art.get('title', '')}]({art.get('url', '')}) "
                     brief_msg += f"(관련도: {sel.get('score', 0):.0%})\n"
                     brief_msg += f"  _{sel.get('summary', '')}_\n"
-            await self.say(brief_msg)
+            await self.slack.send_message(general, brief_msg)
 
         # 3. 부족한 영역 → 수집 에이전트에 추가 요청
         if missing:
