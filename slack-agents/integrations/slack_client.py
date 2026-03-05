@@ -304,7 +304,8 @@ class SlackClient:
                     except Exception as e:
                         logger.error(f"Natural language handler error: {e}")
 
-            # 스레드 자동 발견: reply_count > 0인 메시지의 스레드 등록
+            # 스레드 자동 발견 (ai-agents-general만)
+            general_id = self._channel_cache.get(self.CHANNEL_GENERAL)
             for msg in messages:
                 if msg.get("reply_count", 0) > 0 and msg.get("ts"):
                     if channel_id not in self._active_threads:
@@ -313,40 +314,52 @@ class SlackClient:
                         self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
                         logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
 
-            # 스레드 답글 폴링: 활성 스레드의 새 답글 감지
-            active = self._active_threads.get(channel_id, {})
-            stale_threads = []
-            for thread_ts, last_reply_ts in list(active.items()):
-                try:
-                    reply_result = await self.client.conversations_replies(
-                        channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=10,
-                    )
-                    replies = reply_result.get("messages", [])
-                    for reply in replies:
-                        if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
-                            continue  # 이미 처리된 메시지
-                        if reply.get("bot_id") or reply.get("user") == bot_id:
-                            continue
-                        reply_text = reply.get("text", "")
-                        reply_user = reply.get("user", "")
-                        if reply_text.strip() and self._natural_language_handler:
-                            logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
-                            try:
-                                await self._natural_language_handler(
-                                    text=reply_text, user=reply_user, channel=channel_id,
-                                    thread_ts=thread_ts,
-                                )
-                            except Exception as e:
-                                logger.error(f"Thread reply handler error: {e}")
-                        # 마지막 처리 ts 갱신
-                        active[thread_ts] = reply["ts"]
-                except Exception as e:
-                    if "thread_not_found" in str(e):
-                        stale_threads.append(thread_ts)
-                    else:
-                        logger.debug(f"Thread poll error: {e}")
-            for t in stale_threads:
-                active.pop(t, None)
+            # 스레드 답글 폴링: ai-agents-general만 (rate limit 방지)
+            if channel_id != general_id:
+                return
+            try:
+                active = self._active_threads.get(channel_id, {})
+                stale_threads = []
+                # rate limit 방지: 한 번에 최대 3개 스레드만 폴링
+                thread_items = list(active.items())[-3:]
+                for thread_ts, last_reply_ts in thread_items:
+                    try:
+                        reply_result = await self.client.conversations_replies(
+                            channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=5,
+                        )
+                        replies = reply_result.get("messages", [])
+                        for reply in replies:
+                            if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
+                                continue
+                            if reply.get("bot_id") or reply.get("user") == bot_id:
+                                # 봇 답글이면 ts만 갱신
+                                active[thread_ts] = reply["ts"]
+                                continue
+                            reply_text = reply.get("text", "")
+                            reply_user = reply.get("user", "")
+                            if reply_text.strip() and self._natural_language_handler:
+                                logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
+                                try:
+                                    await self._natural_language_handler(
+                                        text=reply_text, user=reply_user, channel=channel_id,
+                                        thread_ts=thread_ts,
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Thread reply handler error: {e}")
+                            active[thread_ts] = reply["ts"]
+                        self._save_active_threads()
+                    except Exception as e:
+                        err = str(e)
+                        if "thread_not_found" in err:
+                            stale_threads.append(thread_ts)
+                        elif "ratelimited" in err:
+                            break  # rate limit이면 나머지 스레드 스킵
+                        else:
+                            logger.warning(f"Thread poll error ({thread_ts[:10]}): {err[:80]}")
+                for t in stale_threads:
+                    active.pop(t, None)
+            except Exception as e:
+                logger.warning(f"Thread polling failed: {e}")
 
         except Exception as e:
             err_str = str(e)
