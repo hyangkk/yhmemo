@@ -123,8 +123,8 @@ class CollectorAgent(BaseAgent):
             await self._collect_from_rss(sources)
 
     async def _collect_from_rss(self, source_names: list[str]):
-        """RSS 소스에서 정보 수집"""
-        general = "ai-agents-general"
+        """RSS 소스에서 정보 수집 (자율 작업 → ai-curator 채널)"""
+        log_channel = "ai-curator"
         all_items = []
 
         for name in source_names:
@@ -142,7 +142,7 @@ class CollectorAgent(BaseAgent):
             if saved:
                 sources = ', '.join(list({item["source"] for item in saved})[:3])
                 await self.slack.send_message(
-                    general,
+                    log_channel,
                     f":satellite: *[collector]* 정기 수집 완료 — *{len(saved)}건* (출처: {sources})"
                 )
                 await self.broadcast_event("new_articles", {
@@ -151,28 +151,28 @@ class CollectorAgent(BaseAgent):
                     "items": saved[:10],
                 })
 
-    async def _collect_by_keyword(self, query: str, requester: str):
-        """키워드 기반 맞춤 수집"""
+    async def _collect_by_keyword(self, query: str, requester: str, thread_ts: str = None):
+        """키워드 기반 맞춤 수집 (유저 요청 → 스레드 답변)"""
         general = "ai-agents-general"
-        await self.slack.send_message(general, f":mag: *[collector]* '{query}' 관련 뉴스를 검색하고 있어요...")
+        await self._reply(general, f":mag: *[collector]* '{query}' 관련 뉴스를 검색하고 있어요...", thread_ts)
 
         url = GOOGLE_NEWS_SEARCH.format(query=query)
         items = await self._fetch_rss(f"검색:{query}", url)
 
         if not items:
-            await self.slack.send_message(general, f":x: *[collector]* '{query}' 관련 결과를 찾지 못했어요.")
+            await self._reply(general, f":x: *[collector]* '{query}' 관련 결과를 찾지 못했어요.", thread_ts)
             return
 
-        await self.slack.send_message(general, f":newspaper: *[collector]* {len(items)}건 발견! 저장 중...")
+        await self._reply(general, f":newspaper: *[collector]* {len(items)}건 발견! 저장 중...", thread_ts)
         saved = await self._save_items(items)
 
         if saved:
-            # 상위 3개 제목 미리보기
             preview = "\n".join(f"  • {item['title'][:60]}" for item in saved[:3])
-            await self.slack.send_message(
+            await self._reply(
                 general,
                 f":white_check_mark: *[collector]* '{query}' 관련 *{len(saved)}건* 수집 완료!\n{preview}"
-                + (f"\n  ... 외 {len(saved)-3}건" if len(saved) > 3 else "")
+                + (f"\n  ... 외 {len(saved)-3}건" if len(saved) > 3 else ""),
+                thread_ts,
             )
             await self.broadcast_event("new_articles", {
                 "count": len(saved),
@@ -181,7 +181,7 @@ class CollectorAgent(BaseAgent):
                 "items": saved,
             })
         else:
-            await self.slack.send_message(general, f":information_source: *[collector]* '{query}' — 새로운 정보는 없어요 (이미 수집된 항목).")
+            await self._reply(general, f":information_source: *[collector]* '{query}' — 새로운 정보는 없어요 (이미 수집된 항목).", thread_ts)
 
     async def _fetch_rss(self, source_name: str, url: str) -> list[dict]:
         """RSS 피드에서 항목 추출"""

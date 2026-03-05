@@ -112,36 +112,45 @@ async def main():
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
     # "!수집 AI뉴스" → 수집 에이전트에 키워드 수집 즉시 실행
-    async def cmd_collect(args: str, user: str, channel: str):
+    async def cmd_collect(args: str, user: str, channel: str, thread_ts: str = None):
         if args.strip():
             query = args.strip()
-            await slack.send_message(channel, f":satellite: `{query}` 수집을 시작합니다...")
-            # curator에 검색 키워드 컨텍스트 전달
+            await _reply(channel, f":satellite: `{query}` 수집을 시작합니다...", thread_ts)
             curator.set_query_context(query)
-            await collector._collect_by_keyword(query, user)
+            await collector._collect_by_keyword(query, user, thread_ts=thread_ts)
         else:
-            await slack.send_message(channel, "사용법: `!수집 키워드`")
+            await _reply(channel, "사용법: `!수집 키워드`", thread_ts)
 
     # "!브리핑" → 선별 에이전트에 즉시 브리핑 요청
-    async def cmd_briefing(args: str, user: str, channel: str):
-        await slack.send_message(channel, "브리핑을 준비합니다...")
-        # 강제로 observe → think → act 실행
+    async def cmd_briefing(args: str, user: str, channel: str, thread_ts: str = None):
+        await _reply(channel, "브리핑을 준비합니다...", thread_ts)
         context = await curator.observe()
         if context:
             decision = await curator.think(context)
             if decision:
+                # 유저 요청 브리핑은 해당 채널+스레드로 전달
+                if thread_ts:
+                    decision["thread_ts"] = thread_ts
+                    decision["channel"] = channel
                 await curator.act(decision)
         else:
-            await slack.send_message(channel, "현재 새로운 정보가 없습니다.")
+            await _reply(channel, "현재 새로운 정보가 없습니다.", thread_ts)
 
     # "!상태" → 전체 시스템 상태 확인
-    async def cmd_status(args: str, user: str, channel: str):
+    async def cmd_status(args: str, user: str, channel: str, thread_ts: str = None):
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         status_msg = f"*시스템 상태* ({now})\n"
         status_msg += f"- Collector: 실행 중 (간격: {collector.loop_interval}초)\n"
         status_msg += f"- Curator: 실행 중 (간격: {curator.loop_interval}초)\n"
         status_msg += f"- Curator 대기 버퍼: {len(curator._new_articles_buffer)}건\n"
-        await slack.send_message(channel, status_msg)
+        await _reply(channel, status_msg, thread_ts)
+
+    async def _reply(channel: str, text: str, thread_ts: str = None):
+        """스레드가 있으면 스레드로, 없으면 채널에 직접 전송"""
+        if thread_ts:
+            await slack.send_thread_reply(channel, thread_ts, text)
+        else:
+            await slack.send_message(channel, text)
 
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
@@ -241,23 +250,23 @@ async def main():
             else:
                 await slack.send_message(channel, ack)
 
-        # 4단계: 실제 업무 실행
+        # 4단계: 실제 업무 실행 (유저 요청이므로 스레드로 답변)
         result_text = ""
         success = True
         try:
             if action == "collect":
                 if query:
-                    await cmd_collect(args=query, user=user, channel=channel)
+                    await cmd_collect(args=query, user=user, channel=channel, thread_ts=thread_ts)
                     result_text = f"'{query}' 수집 완료"
                 else:
-                    await slack.send_message(channel, "무엇을 수집할까요? 키워드를 알려주세요.")
+                    await _reply(channel, "무엇을 수집할까요? 키워드를 알려주세요.", thread_ts)
                     result_text = "키워드 미지정"
                     success = False
             elif action == "briefing":
-                await cmd_briefing(args="", user=user, channel=channel)
+                await cmd_briefing(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "브리핑 완료"
             elif action == "status":
-                await cmd_status(args="", user=user, channel=channel)
+                await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "상태 확인 완료"
             elif action == "chat":
                 result_text = "대화 응답"
