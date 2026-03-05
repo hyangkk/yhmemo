@@ -927,7 +927,8 @@
       if (!data || data.length === 0) return;
       const s = data[0];
       document.getElementById('interview-enabled').checked = s.interview_enabled !== false;
-      const iEvery = parseInt(s.interview_interval_hours || 3);
+      const iMins = parseInt(s.interview_interval_minutes || 0);
+      const iEvery = iMins > 0 ? Math.round(iMins / 60) || 1 : parseInt(s.interview_interval_hours || 3);
       document.getElementById('interview-interval-hours').value = iEvery;
       document.getElementById('interview-notion-db-id').value = s.interview_notion_database_id || '';
       const iBadgeMap = {1:'매 시간', 2:'2시간마다', 3:'3시간마다', 6:'6시간마다', 12:'12시간마다', 24:'하루 1회'};
@@ -1019,6 +1020,7 @@
     const payload = {
       interview_enabled: document.getElementById('interview-enabled').checked,
       interview_interval_hours: iEvery,
+      interview_interval_minutes: iEvery * 60,
       interview_notion_database_id: document.getElementById('interview-notion-db-id').value.trim(),
       updated_at: new Date().toISOString(),
     };
