@@ -40,18 +40,32 @@ CITY_COORDS = {
     "bangkok": (13.7563, 100.5018), "sydney": (-33.8688, 151.2093),
 }
 
+# CoinGecko 자산 ID 매핑
+CRYPTO_IDS = {
+    "비트코인": "bitcoin", "btc": "bitcoin", "bitcoin": "bitcoin",
+    "이더리움": "ethereum", "eth": "ethereum", "ethereum": "ethereum",
+    "금": "pax-gold", "gold": "pax-gold", "골드": "pax-gold",
+    "리플": "ripple", "xrp": "ripple",
+    "솔라나": "solana", "sol": "solana",
+    "도지코인": "dogecoin", "doge": "dogecoin",
+    "에이다": "cardano", "ada": "cardano",
+}
+
 # 도구 정의 (LLM에게 알려줄 목록)
 TOOL_DEFINITIONS = """사용 가능한 도구:
 1. weather(location) - 실시간 날씨 조회. 예: weather("서울"), weather("부산")
 2. search(query) - 웹 검색으로 최신 정보 조회. 예: search("테슬라 주가"), search("손흥민 경기결과")
 3. exchange(from_currency, to_currency) - 환율 조회. 예: exchange("USD", "KRW")
 4. now() - 현재 한국 시간
+5. crypto(asset) - 암호화폐/금 현재가 + 24시간 변동. 예: crypto("비트코인"), crypto("금"), crypto("이더리움")
+6. price_chart(asset, days) - 가격 추이 차트 데이터. 예: price_chart("비트코인", 30), price_chart("금", 7)
+7. compare_assets(asset1, asset2, days) - 두 자산 가격 추이 비교. 예: compare_assets("금", "비트코인", 30)
 
 도구가 필요하면 반드시 이 형식으로 응답:
 {"needs_tool": true, "tool_calls": [{"tool": "weather", "args": ["서울"]}]}
 
 여러 도구 동시 호출 가능:
-{"needs_tool": true, "tool_calls": [{"tool": "weather", "args": ["서울"]}, {"tool": "now", "args": []}]}
+{"needs_tool": true, "tool_calls": [{"tool": "crypto", "args": ["비트코인"]}, {"tool": "crypto", "args": ["금"]}]}
 
 도구 없이 답할 수 있으면:
 {"needs_tool": false}"""
@@ -70,6 +84,17 @@ async def execute_tool(tool_name: str, args: list) -> str:
             return await _exchange_rate(from_c, to_c)
         elif tool_name == "now":
             return _current_time()
+        elif tool_name == "crypto":
+            return await _crypto_price(args[0] if args else "비트코인")
+        elif tool_name == "price_chart":
+            asset = args[0] if args else "비트코인"
+            days = int(args[1]) if len(args) > 1 else 30
+            return await _price_chart(asset, days)
+        elif tool_name == "compare_assets":
+            a1 = args[0] if args else "금"
+            a2 = args[1] if len(args) > 1 else "비트코인"
+            days = int(args[2]) if len(args) > 2 else 30
+            return await _compare_assets(a1, a2, days)
         else:
             return f"알 수 없는 도구: {tool_name}"
     except Exception as e:
@@ -234,3 +259,153 @@ def _current_time() -> str:
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     wd = weekdays[now.weekday()]
     return f"{now.strftime('%Y-%m-%d')} ({wd}) {now.strftime('%H:%M:%S')} KST"
+
+
+def _resolve_crypto_id(name: str) -> str:
+    """자산명 → CoinGecko ID"""
+    key = name.strip().lower()
+    return CRYPTO_IDS.get(key, key)
+
+
+async def _crypto_price(asset: str) -> str:
+    """암호화폐/금 현재가 조회 (CoinGecko)"""
+    coin_id = _resolve_crypto_id(asset)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd,krw&include_24hr_change=true&include_market_cap=true"
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if coin_id not in data:
+            return f"'{asset}'을(를) 찾을 수 없습니다"
+
+        info = data[coin_id]
+        usd = info.get("usd", 0)
+        krw = info.get("krw", 0)
+        change_24h = info.get("usd_24h_change", 0)
+        market_cap = info.get("usd_market_cap", 0)
+
+        arrow = "📈" if change_24h >= 0 else "📉"
+        sign = "+" if change_24h >= 0 else ""
+
+        # 금은 온스당 가격이므로 추가 안내
+        gold_note = "\n(PAX Gold 기준, 금 1온스 ≈ 토큰 1개)" if coin_id == "pax-gold" else ""
+
+        return f"""{arrow} {asset} 현재가
+💰 ${usd:,.2f} (₩{krw:,.0f})
+📊 24시간 변동: {sign}{change_24h:.2f}%
+🏦 시가총액: ${market_cap/1e9:,.1f}B{gold_note}"""
+
+
+async def _price_chart(asset: str, days: int = 30) -> str:
+    """가격 추이 데이터 (텍스트 차트)"""
+    coin_id = _resolve_crypto_id(asset)
+    days = min(days, 365)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days={days}&interval=daily"
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+
+        prices = data.get("prices", [])
+        if not prices:
+            return f"'{asset}' 가격 데이터를 가져올 수 없습니다"
+
+        # 주요 포인트 추출
+        first_price = prices[0][1]
+        last_price = prices[-1][1]
+        max_price = max(p[1] for p in prices)
+        min_price = min(p[1] for p in prices)
+        change_pct = ((last_price - first_price) / first_price) * 100
+
+        # 텍스트 미니 차트 (블록 문자)
+        chart_data = [p[1] for p in prices]
+        chart_min = min(chart_data)
+        chart_max = max(chart_data)
+        chart_range = chart_max - chart_min if chart_max != chart_min else 1
+        bars = "▁▂▃▄▅▆▇█"
+        # 20개 포인트로 리샘플링
+        step = max(1, len(chart_data) // 20)
+        sampled = chart_data[::step][:20]
+        chart_str = "".join(bars[min(int((v - chart_min) / chart_range * 7), 7)] for v in sampled)
+
+        sign = "+" if change_pct >= 0 else ""
+        arrow = "📈" if change_pct >= 0 else "📉"
+
+        from datetime import datetime as dt
+        start_date = dt.fromtimestamp(prices[0][0] / 1000, tz=KST).strftime("%m/%d")
+        end_date = dt.fromtimestamp(prices[-1][0] / 1000, tz=KST).strftime("%m/%d")
+
+        return f"""{arrow} {asset} {days}일 가격 추이
+{chart_str}
+{start_date} ────────── {end_date}
+
+💰 현재: ${last_price:,.2f}
+📊 변동: {sign}{change_pct:.1f}%
+⬆️ 최고: ${max_price:,.2f}
+⬇️ 최저: ${min_price:,.2f}"""
+
+
+async def _compare_assets(asset1: str, asset2: str, days: int = 30) -> str:
+    """두 자산 가격 추이 비교"""
+    id1 = _resolve_crypto_id(asset1)
+    id2 = _resolve_crypto_id(asset2)
+    days = min(days, 365)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        url1 = f"https://api.coingecko.com/api/v3/coins/{id1}/market_chart?vs_currency=usd&days={days}&interval=daily"
+        url2 = f"https://api.coingecko.com/api/v3/coins/{id2}/market_chart?vs_currency=usd&days={days}&interval=daily"
+
+        r1 = await client.get(url1)
+        r2 = await client.get(url2)
+        r1.raise_for_status()
+        r2.raise_for_status()
+
+        prices1 = r1.json().get("prices", [])
+        prices2 = r2.json().get("prices", [])
+
+        if not prices1 or not prices2:
+            return "가격 데이터를 가져올 수 없습니다"
+
+        # 수익률 계산
+        base1, last1 = prices1[0][1], prices1[-1][1]
+        base2, last2 = prices2[0][1], prices2[-1][1]
+        ret1 = ((last1 - base1) / base1) * 100
+        ret2 = ((last2 - base2) / base2) * 100
+
+        # 미니 차트 (수익률 기준으로 정규화)
+        bars = "▁▂▃▄▅▆▇█"
+
+        def make_chart(prices_list):
+            data = [p[1] for p in prices_list]
+            # 수익률 기준
+            base = data[0]
+            returns = [(v / base - 1) * 100 for v in data]
+            r_min, r_max = min(returns), max(returns)
+            r_range = r_max - r_min if r_max != r_min else 1
+            step = max(1, len(returns) // 20)
+            sampled = returns[::step][:20]
+            return "".join(bars[min(int((v - r_min) / r_range * 7), 7)] for v in sampled)
+
+        chart1 = make_chart(prices1)
+        chart2 = make_chart(prices2)
+
+        sign1 = "+" if ret1 >= 0 else ""
+        sign2 = "+" if ret2 >= 0 else ""
+        winner = asset1 if ret1 > ret2 else asset2
+
+        from datetime import datetime as dt
+        start = dt.fromtimestamp(prices1[0][0] / 1000, tz=KST).strftime("%m/%d")
+        end = dt.fromtimestamp(prices1[-1][0] / 1000, tz=KST).strftime("%m/%d")
+
+        return f"""📊 {asset1} vs {asset2} ({days}일 비교, {start}~{end})
+
+{asset1}: {chart1}
+  ${base1:,.2f} → ${last1:,.2f} ({sign1}{ret1:.1f}%)
+
+{asset2}: {chart2}
+  ${base2:,.2f} → ${last2:,.2f} ({sign2}{ret2:.1f}%)
+
+🏆 승자: {winner} ({sign1 if winner == asset1 else sign2}{ret1 if winner == asset1 else ret2:.1f}%)"""
