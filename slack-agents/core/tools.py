@@ -194,43 +194,97 @@ async def _weather(location: str) -> str:
 
 
 async def _web_search(query: str) -> str:
-    """DuckDuckGo로 웹 검색"""
+    """다중 소스 웹 검색 (DDG HTML → DDG Lite → DDG Instant Answer)"""
     if not query:
         return "검색어가 없습니다"
 
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        # DuckDuckGo Lite
-        resp = await client.post(
-            "https://lite.duckduckgo.com/lite/",
-            data={"q": query, "kl": "kr-kr"},
-        )
-        resp.raise_for_status()
-        html = resp.text
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }
 
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
         results = []
-        snippets = re.findall(r'<td class="result-snippet">(.*?)</td>', html, re.DOTALL)
-        links = re.findall(r'<a rel="nofollow" href="(.*?)" class=\'result-link\'>(.*?)</a>', html)
 
-        for i, (link, title) in enumerate(links[:5]):
-            snippet = snippets[i].strip() if i < len(snippets) else ""
-            snippet = re.sub(r'<.*?>', '', snippet).strip()
-            title = re.sub(r'<.*?>', '', title).strip()
-            results.append(f"• {title}\n  {snippet}")
+        # 1차: DuckDuckGo HTML 버전 (가장 풍부한 결과)
+        try:
+            resp = await client.get(
+                f"https://html.duckduckgo.com/html/?q={quote(query)}",
+            )
+            if resp.status_code == 200:
+                html = resp.text
+                # 제목 추출 (result__a 클래스)
+                titles = re.findall(
+                    r'class="result__a" href="([^"]+)"[^>]*>(.*?)</a>',
+                    html, re.DOTALL,
+                )
+                # 스니펫 추출 (result__snippet 클래스 - <a> 태그 안에 있음)
+                snippets = re.findall(
+                    r'class="result__snippet" href="[^"]+"[^>]*>(.*?)</a>',
+                    html, re.DOTALL,
+                )
+                for i, (raw_url, raw_title) in enumerate(titles[:7]):
+                    title = re.sub(r'<.*?>', '', raw_title).strip()
+                    snippet = re.sub(r'<.*?>', '', snippets[i]).strip() if i < len(snippets) else ""
+                    # URL 디코딩 (DDG 리다이렉트 URL에서 실제 URL 추출)
+                    url_match = re.search(r'uddg=([^&]+)', raw_url)
+                    url = quote(url_match.group(1), safe='/:?=&%') if url_match else raw_url
+                    from urllib.parse import unquote
+                    url = unquote(url)
+                    if title and (snippet or url):
+                        results.append(f"• {title}\n  {snippet[:200]}\n  🔗 {url[:100]}")
+        except Exception as e:
+            logger.debug(f"DDG HTML search error: {e}")
 
         if results:
-            return f"'{query}' 검색 결과:\n\n" + "\n\n".join(results)
+            return f"'{query}' 검색 결과:\n\n" + "\n\n".join(results[:5])
 
-        # 폴백: Instant Answer API
-        api_url = f"https://api.duckduckgo.com/?q={quote(query)}&format=json&no_html=1&skip_disambig=1"
-        resp2 = await client.get(api_url)
-        data = resp2.json()
-        abstract = data.get("AbstractText", "")
-        answer = data.get("Answer", "")
-        if answer:
-            return f"'{query}': {answer}"
-        if abstract:
-            return f"'{query}' 관련:\n{abstract}"
-        return f"'{query}'에 대한 검색 결과를 가져오지 못했습니다."
+        # 2차: DuckDuckGo Lite (텍스트 기반)
+        try:
+            resp = await client.post(
+                "https://lite.duckduckgo.com/lite/",
+                data={"q": query, "kl": "kr-kr"},
+            )
+            if resp.status_code == 200:
+                html = resp.text
+                snippets = re.findall(r'<td class="result-snippet">(.*?)</td>', html, re.DOTALL)
+                links = re.findall(r'<a rel="nofollow" href="(.*?)" class=\'result-link\'>(.*?)</a>', html)
+                for i, (link, title) in enumerate(links[:5]):
+                    snippet = snippets[i].strip() if i < len(snippets) else ""
+                    snippet = re.sub(r'<.*?>', '', snippet).strip()
+                    title = re.sub(r'<.*?>', '', title).strip()
+                    if title:
+                        results.append(f"• {title}\n  {snippet[:200]}")
+        except Exception as e:
+            logger.debug(f"DDG Lite search error: {e}")
+
+        if results:
+            return f"'{query}' 검색 결과:\n\n" + "\n\n".join(results[:5])
+
+        # 3차: DuckDuckGo Instant Answer API
+        try:
+            api_url = f"https://api.duckduckgo.com/?q={quote(query)}&format=json&no_html=1&skip_disambig=1"
+            resp = await client.get(api_url)
+            data = resp.json()
+            answer = data.get("Answer", "")
+            abstract = data.get("AbstractText", "")
+            # Related topics도 활용
+            related = data.get("RelatedTopics", [])
+            if answer:
+                return f"'{query}': {answer}"
+            if abstract:
+                return f"'{query}' 관련:\n{abstract}"
+            if related:
+                items = []
+                for r in related[:5]:
+                    if isinstance(r, dict) and "Text" in r:
+                        items.append(f"• {r['Text'][:200]}")
+                if items:
+                    return f"'{query}' 관련 정보:\n\n" + "\n".join(items)
+        except Exception as e:
+            logger.debug(f"DDG API error: {e}")
+
+        return f"'{query}'에 대한 검색 결과를 가져오지 못했습니다. 다른 키워드로 시도해보세요."
 
 
 async def _exchange_rate(from_currency: str, to_currency: str) -> str:

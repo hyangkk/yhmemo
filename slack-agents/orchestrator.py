@@ -45,8 +45,10 @@ from integrations.notion_client import NotionClient
 from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
 from agents.quote_agent import QuoteAgent
+from agents.proactive_agent import ProactiveAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
+from core import agent_tracker
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -126,6 +128,7 @@ async def main():
     }
 
     collector = CollectorAgent(**common_kwargs)
+    proactive = ProactiveAgent(**common_kwargs)
     curator = CuratorAgent(
         notion_db_id=config.get("NOTION_DATABASE_ID", ""),
         **common_kwargs,
@@ -195,10 +198,36 @@ async def main():
         else:
             await _reply(channel, "명언 생성에 실패했어요.", thread_ts)
 
+    # "!로그" → 요청사항 이력 보기
+    async def cmd_log(args: str, user: str, channel: str, thread_ts: str = None):
+        log_file = os.path.join(os.path.dirname(__file__), "data", "request_log.json")
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                logs = json.loads(f.read())
+            if not logs:
+                await _reply(channel, "요청 이력이 없습니다.", thread_ts)
+                return
+            latest = logs[-1]
+            lines = [f"📋 *요청사항 로그* ({latest['date']})\n"]
+            for r in latest.get("requests", []):
+                status = "✅" if r["status"] == "done" else "🔄"
+                lines.append(f"{status} {r['request']}")
+                lines.append(f"   _{r.get('changes', '')[:80]}_")
+            await _reply(channel, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await _reply(channel, f"로그 로드 실패: {e}", thread_ts)
+
+    # "!현황" → 에이전트 가동 현황 보기
+    async def cmd_dashboard(args: str, user: str, channel: str, thread_ts: str = None):
+        report = agent_tracker.get_status_report()
+        await _reply(channel, report, thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
+    slack.on_command("로그", cmd_log)
+    slack.on_command("현황", cmd_dashboard)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -258,23 +287,28 @@ async def main():
 당신이 할 수 있는 업무:
 - collect: 뉴스 기사 수집만 (구글뉴스 RSS). "~에 대한 뉴스 모아줘" 같은 명확한 수집 요청만 해당
 - briefing: 이미 수집된 정보 브리핑/요약
-- status: 시스템 상태 확인
+- dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인. "에이전트 상태", "현황", "뭐 하고 있어?", "잘 돌아가?", "에이전트 몇 개야" 등
 - quote: 명언 보내기. "명언 하나 보내줘", "오늘의 명언", "힘이 되는 말 해줘", "동기부여 좀", "영감 주는 말", "좋은 말 해줘" 등 명언/격언/영감을 요청하는 경우
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
 
 중요: 가격, 날씨, 환율, 분석, 비교, 추이, 의견 요청 등은 모두 chat입니다. collect가 아닙니다.
+중요: 시스템/에이전트 상태, 현황, 가동률 질문은 dashboard입니다.
 
 {("과거 작업 이력:" + chr(10) + exp_summary) if exp_summary else ""}
 {user_context}
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|status|quote|chat|ignore",
+  "intent": "collect|briefing|dashboard|quote|chat|ignore",
   "query": "수집 키워드 (collect일 때만)",
-  "approach": "작업 전략 (collect/briefing/status일 때만)"
+  "approach": "작업 전략 (collect/briefing일 때만)"
 }}""",
             user_prompt=text,
         )
+
+        if not intent_response:
+            logger.warning("[NL] Empty intent response from AI")
+            return
 
         try:
             clean = intent_response.strip()
@@ -298,7 +332,7 @@ async def main():
         ACK_MESSAGES = {
             "collect": "👀 수집 시작합니다! 잠시만요~",
             "briefing": "👀 브리핑 준비 중! 금방 가져올게요~",
-            "status": "👀 상태 확인 중! 잠깐만요~",
+            "dashboard": "👀 현황 확인 중!",
             "quote": "✨ 좋은 말 하나 찾아볼게요~",
         }
         if thread_ts and action in ACK_MESSAGES:
@@ -320,9 +354,9 @@ async def main():
             elif action == "briefing":
                 await cmd_briefing(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "브리핑 완료"
-            elif action == "status":
-                await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
-                result_text = "상태 확인 완료"
+            elif action in ("status", "dashboard"):
+                await cmd_dashboard(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "현황 확인 완료"
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
@@ -436,6 +470,10 @@ async def main():
 
     # ── 모든 비동기 태스크 시작 ─────────────────────────
 
+    # 오케스트레이터 자체를 추적 대상으로 등록
+    agent_tracker.register_agent("orchestrator", "메인 폴링 루프 + 메시지 라우터", 3)
+    agent_tracker.register_agent("message_bus", "에이전트 간 메시지 버스", 0)
+
     logger.info("Starting all agents...")
 
     # Graceful shutdown
@@ -448,13 +486,24 @@ async def main():
         collector.stop()
         curator.stop()
         quote.stop()
+        proactive.stop()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_handler)
 
-    # 시작 (알림 없이 조용히)
-    await slack.start_background()
+    # Socket Mode 먼저 시도 → 실패 시 폴링으로 전환
+    socket_mode = await slack._try_socket_mode()
+
+    if socket_mode:
+        logger.info("✓ Socket Mode 연결 성공! 실시간 이벤트 수신 중 (폴링 불필요)")
+        # Socket Mode에서도 채널 캐시와 기본 설정은 필요
+        await slack.ensure_channels_exist()
+        await slack._init_channel_cache()
+    else:
+        logger.info("Socket Mode 불가 → 폴링 모드로 운영")
+        await slack.start_background()
+
     logger.info("Agents started silently (no startup message to Slack)")
 
     # 에이전트 태스크 실행
@@ -463,25 +512,32 @@ async def main():
         asyncio.create_task(collector.start(), name="collector"),
         asyncio.create_task(curator.start(), name="curator"),
         asyncio.create_task(quote.start(), name="quote"),
+        asyncio.create_task(proactive.start(), name="proactive"),
     ]
 
-    logger.info("All agents running. Starting polling loop...")
-
-    # 메인 루프: 폴링 + shutdown 대기
-    poll_count = 0
-    while not shutdown_event.is_set():
-        poll_count += 1
-        if poll_count % 12 == 1:  # 1분마다 로그
-            logger.info(f"[main] Poll tick #{poll_count} (alive)")
-        try:
-            await slack.poll_once()
-        except Exception as e:
-            logger.error(f"Poll error: {e}")
-        # shutdown 체크와 함께 5초 대기
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            pass  # 30초 지남, 다시 폴링
+    if socket_mode:
+        # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
+        logger.info("All agents running. Socket Mode active (no polling needed)")
+        await shutdown_event.wait()
+    else:
+        # 폴링 모드: 3초마다 메시지 확인 (실시간성 향상)
+        logger.info("All agents running. Starting polling loop (3s interval)...")
+        poll_count = 0
+        while not shutdown_event.is_set():
+            poll_count += 1
+            agent_tracker.heartbeat("orchestrator")
+            if poll_count % 20 == 1:  # 1분마다 로그
+                thread_count = sum(len(v) for v in slack._active_threads.values())
+                logger.info(f"[main] Poll tick #{poll_count} (alive, {thread_count} threads tracked)")
+            try:
+                await slack.poll_once()
+            except Exception as e:
+                logger.error(f"Poll error: {e}")
+            # shutdown 체크와 함께 3초 대기
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
 
     # 태스크 정리
     for task in tasks:
