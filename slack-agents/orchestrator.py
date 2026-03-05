@@ -394,15 +394,15 @@ async def main():
     poll_count = 0
     while not shutdown_event.is_set():
         poll_count += 1
-        logger.info(f"[main] Poll tick #{poll_count}")
+        if poll_count % 12 == 1:  # 1분마다 로그
+            logger.info(f"[main] Poll tick #{poll_count} (alive)")
         try:
             await slack.poll_once()
         except Exception as e:
             logger.error(f"Poll error: {e}")
-        logger.info(f"[main] Poll tick #{poll_count} done, sleeping 30s")
-        # shutdown 체크와 함께 30초 대기
+        # shutdown 체크와 함께 5초 대기
         try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=30)
+            await asyncio.wait_for(shutdown_event.wait(), timeout=5)
         except asyncio.TimeoutError:
             pass  # 30초 지남, 다시 폴링
 
