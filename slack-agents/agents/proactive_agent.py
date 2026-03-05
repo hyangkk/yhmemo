@@ -213,9 +213,9 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "daily_review"
             return context
 
-        # ── 모닝 브리핑 (8-9시) ──
+        # ── 모닝 브리핑 (6시) — 파트너가 6시에 보고 요청 ──
 
-        if 8 <= hour <= 9 and self._state.get("last_morning_briefing") != today:
+        if 6 <= hour <= 7 and self._state.get("last_morning_briefing") != today:
             context["action"] = "morning_briefing"
             return context
 
