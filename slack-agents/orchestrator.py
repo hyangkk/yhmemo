@@ -307,8 +307,10 @@ async def main():
 {thread_context}
 ---
 위 스레드 맥락을 반드시 고려하여 의도를 파악하세요.
-"진행시켜", "해줘", "좋아", "그래" 같은 짧은 답글은 스레드 원문에 대한 동의/실행 요청입니다.
-이런 경우 스레드 맥락에 맞는 intent를 선택하세요 (대부분 chat).
+"진행시켜", "해줘", "좋아", "그래", "다시 해줘", "다시 진행" 같은 짧은 답글은 스레드 원문에 대한 동의/실행 요청입니다.
+이런 경우 스레드 맥락에 맞는 intent를 선택하세요.
+- 스레드에서 개발/코드 작업이 논의되었다면 intent는 dev, dev_task에 원래 요청 내용을 구체적으로 채워주세요.
+- 스레드에서 일반 대화였다면 chat.
 """
 
         intent_response = await curator.ai_think(
@@ -394,7 +396,13 @@ async def main():
                 result_text = "명언 전송 완료"
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
-                dev_task = parsed.get("dev_task", query or text).strip()
+                dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
+                # dev_task가 비어있고 스레드 맥락이 있으면, 원래 요청(첫 유저 메시지)을 사용
+                if not dev_task and thread_context:
+                    for line in thread_context.split("\n"):
+                        if line.startswith("[유저]"):
+                            dev_task = line.replace("[유저]", "").strip()[:500]
+                            break
                 if not dev_task:
                     await _reply(channel, "어떤 걸 만들면 될까요? 좀 더 구체적으로 알려주세요.", thread_ts)
                     result_text = "dev 작업 미지정"
