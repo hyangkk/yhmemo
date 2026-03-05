@@ -45,10 +45,22 @@ class CuratorAgent(BaseAgent):
         self.bus.subscribe("new_articles", self._on_new_articles)
 
     async def _on_new_articles(self, task: TaskMessage):
-        """수집 에이전트에서 새 정보 도착 시"""
+        """수집 에이전트에서 새 정보 도착 시 → 즉시 선별"""
         items = task.payload.get("items", [])
         self._new_articles_buffer.extend(items)
         logger.info(f"[curator] Received {len(items)} new articles from {task.from_agent}")
+
+        # 버퍼에 충분한 기사가 쌓이면 즉시 선별 실행
+        if len(self._new_articles_buffer) >= 5:
+            logger.info(f"[curator] Auto-curating {len(self._new_articles_buffer)} articles")
+            try:
+                context = await self.observe()
+                if context:
+                    decision = await self.think(context)
+                    if decision:
+                        await self.act(decision)
+            except Exception as e:
+                logger.error(f"[curator] Auto-curate error: {e}")
 
     # ── Observe: 환경 감지 ─────────────────────────────
 
