@@ -117,6 +117,7 @@ class SlackClient:
             self._active_threads[channel_id] = {}
         reply_ts = result.get("ts", str(time.time()))
         self._active_threads[channel_id][thread_ts] = reply_ts
+        self._save_active_threads()
 
     # ── 핸들러 등록 ────────────────────────────────────
 
@@ -187,6 +188,7 @@ class SlackClient:
     # ── 폴링 타임스탬프 영속 저장 ──────────────────────
 
     _TS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "poll_last_ts.json")
+    _THREADS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "active_threads.json")
 
     def _load_last_ts(self) -> dict:
         """저장된 채널별 마지막 ts 로드"""
@@ -195,6 +197,25 @@ class SlackClient:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
+
+    def _load_active_threads(self) -> dict:
+        """저장된 활성 스레드 로드"""
+        try:
+            with open(self._THREADS_FILE, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_active_threads(self):
+        """활성 스레드 디스크에 저장"""
+        os.makedirs(os.path.dirname(self._THREADS_FILE), exist_ok=True)
+        # 채널당 최근 20개 스레드만 유지
+        trimmed = {}
+        for ch, threads in self._active_threads.items():
+            sorted_threads = sorted(threads.items(), key=lambda x: x[1], reverse=True)[:20]
+            trimmed[ch] = dict(sorted_threads)
+        with open(self._THREADS_FILE, "w") as f:
+            json.dump(trimmed, f)
 
     def _save_last_ts(self):
         """현재 채널별 마지막 ts 저장"""
@@ -283,7 +304,16 @@ class SlackClient:
                     except Exception as e:
                         logger.error(f"Natural language handler error: {e}")
 
-            # 스레드 답글 폴링: 봇이 답한 활성 스레드의 새 답글 감지
+            # 스레드 자동 발견: reply_count > 0인 메시지의 스레드 등록
+            for msg in messages:
+                if msg.get("reply_count", 0) > 0 and msg.get("ts"):
+                    if channel_id not in self._active_threads:
+                        self._active_threads[channel_id] = {}
+                    if msg["ts"] not in self._active_threads[channel_id]:
+                        self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
+                        logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
+
+            # 스레드 답글 폴링: 활성 스레드의 새 답글 감지
             active = self._active_threads.get(channel_id, {})
             stale_threads = []
             for thread_ts, last_reply_ts in list(active.items()):
@@ -479,8 +509,30 @@ class SlackClient:
                 else:
                     self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
         self._poll_channels = channels
+
+        # 활성 스레드 복원
+        self._active_threads = self._load_active_threads()
+
+        # 주요 채널의 최근 스레드 자동 발견 (시작 시 1회)
+        main_ch_id = self._channel_cache.get(self.CHANNEL_GENERAL)
+        if main_ch_id:
+            try:
+                result = await self.client.conversations_history(channel=main_ch_id, limit=20)
+                for msg in result.get("messages", []):
+                    if msg.get("reply_count", 0) > 0:
+                        if main_ch_id not in self._active_threads:
+                            self._active_threads[main_ch_id] = {}
+                        if msg["ts"] not in self._active_threads[main_ch_id]:
+                            self._active_threads[main_ch_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
+                self._save_active_threads()
+            except Exception as e:
+                logger.debug(f"Thread scan error: {e}")
+
+        thread_count = sum(len(v) for v in self._active_threads.values())
         logger.info(f"Polling mode ready (interval: {self._poll_interval}s)")
         logger.info(f"Polling channels: {channels}")
+        if thread_count:
+            logger.info(f"Tracking {thread_count} active threads for reply detection")
 
     async def poll_once(self):
         """한 번 폴링 (외부에서 주기적으로 호출)"""
