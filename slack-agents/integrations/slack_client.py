@@ -28,6 +28,7 @@ class SlackClient:
     CHANNEL_COLLECTOR = "ai-collector"
     CHANNEL_CURATOR = "ai-curator"
     CHANNEL_LOGS = "ai-agent-logs"
+    CHANNEL_QUOTE = "명언"
 
     def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
@@ -160,7 +161,7 @@ class SlackClient:
     async def ensure_channels_exist(self):
         """필요한 채널들이 있는지 확인하고 없으면 생성, 봇을 join"""
         required = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
-                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS]
+                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS, self.CHANNEL_QUOTE]
         try:
             result = await self.client.conversations_list(types="public_channel")
             existing = {}
