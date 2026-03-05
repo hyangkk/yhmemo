@@ -145,10 +145,10 @@ async def main():
         status_msg += f"- Curator 대기 버퍼: {len(curator._new_articles_buffer)}건\n"
         await _reply(channel, status_msg, thread_ts)
 
-    async def _reply(channel: str, text: str, thread_ts: str = None):
-        """스레드가 있으면 스레드로, 없으면 채널에 직접 전송"""
+    async def _reply(channel: str, text: str, thread_ts: str = None, broadcast: bool = False):
+        """스레드가 있으면 스레드로, 없으면 채널에 직접 전송. broadcast=True면 채널에도 표시"""
         if thread_ts:
-            await slack.send_thread_reply(channel, thread_ts, text)
+            await slack.send_thread_reply(channel, thread_ts, text, also_send_to_channel=broadcast)
         else:
             await slack.send_message(channel, text)
 

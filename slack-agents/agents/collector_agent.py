@@ -168,12 +168,11 @@ class CollectorAgent(BaseAgent):
 
         if saved:
             preview = "\n".join(f"  • {item['title'][:60]}" for item in saved[:3])
-            await self._reply(
-                general,
+            result_msg = (
                 f":white_check_mark: *[collector]* '{query}' 관련 *{len(saved)}건* 수집 완료!\n{preview}"
-                + (f"\n  ... 외 {len(saved)-3}건" if len(saved) > 3 else ""),
-                thread_ts,
+                + (f"\n  ... 외 {len(saved)-3}건" if len(saved) > 3 else "")
             )
+            await self._reply(general, result_msg, thread_ts)
             await self.broadcast_event("new_articles", {
                 "count": len(saved),
                 "query": query,

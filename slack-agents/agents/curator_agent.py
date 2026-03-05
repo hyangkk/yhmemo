@@ -274,7 +274,12 @@ class CuratorAgent(BaseAgent):
                 brief_msg += f"  (<{notion_urls[i]}|상세보기>)"
             brief_msg += "\n"
 
-        await self._reply(general, brief_msg, thread_ts)
+        # 유저 요청이면 요청 내용 요약 + 채널에도 표시
+        if thread_ts and query:
+            brief_msg = f"> *요청: {query}*\n\n" + brief_msg
+            await self._reply(general, brief_msg, thread_ts, broadcast=True)
+        else:
+            await self._reply(general, brief_msg, thread_ts)
         logger.info("[curator] Briefing sent successfully")
 
         # 버퍼 비우기 & 쿼리 초기화
