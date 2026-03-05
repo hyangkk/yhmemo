@@ -8,6 +8,7 @@ Agent Orchestrator - 24/7 에이전트 실행기
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -146,56 +147,136 @@ async def main():
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
 
-    # 자연어 메시지 → LLM 의도 파악 후 명령 실행
+    # ── 경험 저장소 ────────────────────────────────────
+    experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
+    os.makedirs(os.path.dirname(experience_file), exist_ok=True)
+
+    def load_experience() -> list[dict]:
+        """누적된 작업 경험 로드"""
+        try:
+            with open(experience_file, "r", encoding="utf-8") as f:
+                return json.loads(f.read())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def save_experience(entry: dict):
+        """작업 경험 저장"""
+        data = load_experience()
+        data.append(entry)
+        # 최근 100건만 유지
+        data = data[-100:]
+        with open(experience_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+
+    def find_similar_experience(task_type: str, query: str = "") -> list[dict]:
+        """유사한 과거 경험 검색"""
+        data = load_experience()
+        relevant = []
+        for exp in data:
+            if exp.get("task_type") == task_type:
+                relevant.append(exp)
+            elif query and query in exp.get("query", ""):
+                relevant.append(exp)
+        return relevant[-3:]  # 최근 3건
+
+    # ── 자연어 메시지 처리 (대화형 소통) ─────────────
     async def on_natural_language(text: str, user: str, channel: str, thread_ts: str = None):
-        """자연어 메시지를 LLM으로 분석해 적절한 명령 실행"""
-        intent = await curator.ai_think(
-            system_prompt="""당신은 슬랙 메시지의 의도를 파악하는 분류기입니다.
-사용자 메시지를 보고 아래 중 하나로 분류하세요.
+        """자연어 메시지를 분석하고 대화형으로 소통한 뒤 실행"""
+        import json as _json
 
-의도 목록:
-- collect: 정보/뉴스/기사 수집 요청 (예: "봄 페스티벌 행사 찾아줘", "AI 관련 소식 모아줘", "스타트업 뉴스 수집해줘")
-- briefing: 브리핑/요약 요청 (예: "오늘 뉴스 요약해줘", "브리핑 해줘", "모은거 정리해줘")
-- status: 시스템 상태 확인 (예: "지금 어떤 상태야?", "잘 돌아가고 있어?")
-- chat: 일반 대화/질문 (예: "안녕", "뭐 할 수 있어?")
-- ignore: 봇과 관련없는 메시지
+        # 1단계: 과거 경험 로드
+        past_exp = load_experience()
+        exp_summary = ""
+        if past_exp:
+            recent = past_exp[-5:]
+            exp_lines = [f"- {e['task_type']}: \"{e.get('query','')}\" → {e.get('result','')}" for e in recent]
+            exp_summary = "\n".join(exp_lines)
 
-반드시 아래 JSON 형식으로만 응답하세요:
-{"intent": "collect|briefing|status|chat|ignore", "query": "수집 키워드 (collect일 때만)", "reply": "사용자에게 보낼 간단한 답변 (chat일 때만)"}""",
+        # 2단계: LLM으로 의도 파악 + 대화형 응답 생성
+        intent_response = await curator.ai_think(
+            system_prompt=f"""당신은 슬랙에서 사용자를 도와주는 AI 어시스턴트입니다.
+사용자의 메시지를 분석하여 의도를 파악하고, 자연스러운 한국어로 응답하세요.
+
+당신이 할 수 있는 업무:
+- collect: 뉴스/정보 수집 (구글뉴스 RSS 기반)
+- briefing: 수집된 정보 브리핑/요약
+- status: 시스템 상태 확인
+- chat: 일반 대화
+
+{("과거 작업 이력:" + chr(10) + exp_summary + chr(10) + "이 경험을 참고하여 더 나은 방법을 제안하세요.") if exp_summary else "아직 작업 경험이 없습니다. 처음 하는 업무라면 솔직하게 말하세요."}
+
+응답 형식 (반드시 JSON):
+{{
+  "intent": "collect|briefing|status|chat|ignore",
+  "query": "수집 키워드 (collect일 때만)",
+  "ack_message": "사용자에게 먼저 보낼 확인 메시지. 자연스럽고 친근하게. 어떤 업무인지 설명하고 어떻게 진행할지 간단히 안내. 과거에 비슷한 경험이 있으면 언급. 처음이면 '처음 해보는 유형이라 최선을 다해볼게요' 같이.",
+  "approach": "이번 작업에서 사용할 방법/전략 (나중에 경험으로 저장됨)"
+}}""",
             user_prompt=text,
         )
 
         try:
-            import json
-            # JSON 파싱 (마크다운 코드블록 제거)
-            clean = intent.strip()
+            clean = intent_response.strip()
             if clean.startswith("```"):
                 clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
-            parsed = json.loads(clean)
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"[NL] Failed to parse intent: {e}, raw: {intent[:100]}")
+            parsed = _json.loads(clean)
+        except (Exception,) as e:
+            logger.warning(f"[NL] Parse error: {e}, raw: {intent_response[:100]}")
             return
 
         action = parsed.get("intent", "ignore")
-        logger.info(f"[NL] Intent: {action}, query: {parsed.get('query', '')}")
+        ack = parsed.get("ack_message", "")
+        approach = parsed.get("approach", "")
+        query = parsed.get("query", "").strip()
 
-        if action == "collect":
-            query = parsed.get("query", "").strip()
-            if query:
-                await cmd_collect(args=query, user=user, channel=channel)
+        logger.info(f"[NL] Intent: {action}, query: {query}")
+
+        if action == "ignore":
+            return
+
+        # 3단계: 먼저 확인 메시지 전송 (소통!)
+        if ack:
+            if thread_ts:
+                await slack.send_thread_reply(channel, thread_ts, ack)
             else:
-                await slack.send_message(channel, "무엇을 수집할까요? 키워드를 알려주세요.")
-        elif action == "briefing":
-            await cmd_briefing(args="", user=user, channel=channel)
-        elif action == "status":
-            await cmd_status(args="", user=user, channel=channel)
-        elif action == "chat":
-            reply = parsed.get("reply", "")
-            if reply:
-                if thread_ts:
-                    await slack.send_thread_reply(channel, thread_ts, reply)
+                await slack.send_message(channel, ack)
+
+        # 4단계: 실제 업무 실행
+        result_text = ""
+        success = True
+        try:
+            if action == "collect":
+                if query:
+                    await cmd_collect(args=query, user=user, channel=channel)
+                    result_text = f"'{query}' 수집 완료"
                 else:
-                    await slack.send_message(channel, reply)
+                    await slack.send_message(channel, "무엇을 수집할까요? 키워드를 알려주세요.")
+                    result_text = "키워드 미지정"
+                    success = False
+            elif action == "briefing":
+                await cmd_briefing(args="", user=user, channel=channel)
+                result_text = "브리핑 완료"
+            elif action == "status":
+                await cmd_status(args="", user=user, channel=channel)
+                result_text = "상태 확인 완료"
+            elif action == "chat":
+                result_text = "대화 응답"
+        except Exception as e:
+            result_text = f"오류: {str(e)[:100]}"
+            success = False
+            logger.error(f"[NL] Execution error: {e}")
+
+        # 5단계: 경험 저장
+        if action != "chat":
+            save_experience({
+                "task_type": action,
+                "query": query,
+                "user_message": text[:200],
+                "approach": approach,
+                "result": result_text,
+                "success": success,
+                "timestamp": datetime.now(KST).isoformat(),
+            })
 
     slack.on_natural_language(on_natural_language)
 
