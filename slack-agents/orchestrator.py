@@ -23,12 +23,13 @@ PID_FILE = os.path.join(os.path.dirname(__file__), "data", ".orchestrator.pid")
 os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
 
 def _kill_existing():
-    """기존 orchestrator 프로세스 종료"""
+    """기존 orchestrator 프로세스 종료 (자기 자신 제외)"""
     if os.path.exists(PID_FILE):
         try:
             with open(PID_FILE) as f:
                 old_pid = int(f.read().strip())
-            os.kill(old_pid, signal.SIGKILL)
+            if old_pid != os.getpid():
+                os.kill(old_pid, signal.SIGKILL)
         except (ValueError, ProcessLookupError, PermissionError):
             pass
     with open(PID_FILE, "w") as f:
