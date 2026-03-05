@@ -290,7 +290,7 @@ class SlackClient:
                     if handler:
                         logger.info(f"[poll] Executing command: !{cmd}")
                         try:
-                            await handler(args=args, user=user, channel=channel)
+                            await handler(args=args, user=user, channel=channel, thread_ts=msg.get("ts"))
                         except Exception as e:
                             logger.error(f"Command handler error: {e}")
 
