@@ -18,6 +18,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── 단일 인스턴스 보장 (PID 파일) ─────────────────────
+PID_FILE = os.path.join(os.path.dirname(__file__), "data", ".orchestrator.pid")
+os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+
+def _kill_existing():
+    """기존 orchestrator 프로세스 종료"""
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, signal.SIGKILL)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+_kill_existing()
+
 from supabase import create_client
 
 from core.message_bus import MessageBus
@@ -238,11 +256,11 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 리액션으로 접수 표시 (메시지 없이)
-        if thread_ts:
+        # 3단계: 접수 표시
+        if thread_ts and action != "chat":
             await slack.add_reaction(channel, thread_ts, "eyes")
 
-        # 4단계: 실제 업무 실행 (유저 요청이므로 스레드로 답변)
+        # 4단계: 실제 업무 실행
         result_text = ""
         success = True
         try:
@@ -261,6 +279,9 @@ async def main():
                 await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "상태 확인 완료"
             elif action == "chat":
+                # 대화는 ack 메시지가 곧 응답
+                if ack:
+                    await _reply(channel, ack, thread_ts)
                 result_text = "대화 응답"
         except Exception as e:
             result_text = f"오류: {str(e)[:100]}"
