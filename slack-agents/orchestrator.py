@@ -366,4 +366,21 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 자동 재시작 래퍼: 예기치 않은 크래시 시 재기동
+    max_restarts = 5
+    restart_count = 0
+    while restart_count < max_restarts:
+        try:
+            asyncio.run(main())
+            break  # 정상 종료 (shutdown signal)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            restart_count += 1
+            logger.error(f"Orchestrator crashed ({restart_count}/{max_restarts}): {e}")
+            if restart_count < max_restarts:
+                import time
+                logger.info(f"Restarting in 10 seconds...")
+                time.sleep(10)
+            else:
+                logger.critical("Max restarts reached. Exiting.")

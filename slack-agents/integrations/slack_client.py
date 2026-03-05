@@ -192,7 +192,7 @@ class SlackClient:
             if not messages:
                 return
 
-            logger.debug(f"[poll] {channel_name}: {len(messages)} new messages")
+            logger.info(f"[poll] {channel_name}: {len(messages)} new messages")
 
             # 가장 최신 타임스탬프 저장
             newest_ts = messages[0]["ts"]
@@ -204,6 +204,7 @@ class SlackClient:
             for msg in reversed(messages):
                 # 봇 자신의 메시지 무시
                 if msg.get("bot_id") or msg.get("user") == bot_id:
+                    logger.debug(f"[poll] Skipping bot message: '{msg.get('text', '')[:30]}'")
                     continue
 
                 text = msg.get("text", "")
