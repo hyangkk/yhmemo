@@ -38,7 +38,7 @@ class ProactiveAgent(BaseAgent):
             description="24시간 자율 운영하는 CEO 에이전트. "
                         "유저의 파트너로서 영향력과 수익을 창출한다.",
             slack_channel="ai-agents-general",
-            loop_interval=300,  # 5분 간격 - 쉬지 않는다
+            loop_interval=120,  # 2분 간격 - 쉬지 않는다 (액션 1개/사이클)
             **kwargs,
         )
         self._state_file = os.path.join(DATA_DIR, "proactive_state.json")
@@ -166,15 +166,22 @@ class ProactiveAgent(BaseAgent):
         actions = decision.get("actions", [])
         context = decision.get("context", {})
 
-        for action in actions:
-            try:
-                handler = getattr(self, f"_do_{action}", None)
-                if handler:
-                    await handler(context)
-                else:
-                    logger.debug(f"[proactive] Unknown action: {action}")
-            except Exception as e:
-                logger.error(f"[proactive] Action '{action}' failed: {e}")
+        # 한 사이클에 1개 액션만 실행 (API 과부하 방지)
+        if not actions:
+            return
+
+        action = actions[0]
+        try:
+            handler = getattr(self, f"_do_{action}", None)
+            if handler:
+                logger.info(f"[proactive] Executing: {action}")
+                await asyncio.wait_for(handler(context), timeout=120)  # 2분 타임아웃
+            else:
+                logger.debug(f"[proactive] Unknown action: {action}")
+        except asyncio.TimeoutError:
+            logger.warning(f"[proactive] Action '{action}' timed out (120s)")
+        except Exception as e:
+            logger.error(f"[proactive] Action '{action}' failed: {e}")
 
     # ── 모닝 브리핑 ──────────────────────────────────
 

@@ -64,6 +64,22 @@ class SlackClient:
                     blocks=blocks,
                     unfurl_links=False,
                 )
+                # 봇이 보낸 메시지를 자동으로 스레드 추적에 등록
+                # (유저가 답글 달면 감지하기 위해)
+                # 로그 채널은 제외
+                msg_ts = result.get("ts")
+                log_ch = self._channel_cache.get(self.CHANNEL_LOGS)
+                if msg_ts and channel_id and channel_id != log_ch:
+                    if channel_id not in self._active_threads:
+                        self._active_threads[channel_id] = {}
+                    self._active_threads[channel_id][msg_ts] = msg_ts
+                    # 채널당 최근 20개 스레드만 추적
+                    threads = self._active_threads[channel_id]
+                    if len(threads) > 20:
+                        oldest_keys = sorted(threads.keys())[:len(threads) - 20]
+                        for k in oldest_keys:
+                            threads.pop(k, None)
+                    self._save_active_threads()
                 return result
             except Exception as e:
                 if "ratelimited" in str(e) and attempt < 2:
@@ -239,6 +255,7 @@ class SlackClient:
             active = self._active_threads.get(channel_id, {})
             if not active:
                 return
+            logger.info(f"[threads] Polling {len(active)} threads for channel {channel_id}")
             stale_threads = []
             # 최근 활성 스레드 3개만 (가장 최근 답글 기준)
             thread_items = sorted(active.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -302,7 +319,9 @@ class SlackClient:
             if channel_id in self._last_ts:
                 kwargs["oldest"] = self._last_ts[channel_id]
 
-            result = await self.client.conversations_history(**kwargs)
+            result = await asyncio.wait_for(
+                self.client.conversations_history(**kwargs), timeout=10.0
+            )
             messages = result.get("messages", [])
 
             bot_id = await self._get_bot_user_id()
@@ -367,11 +386,8 @@ class SlackClient:
                             self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
                             logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
 
-            # ── 2. 스레드 답글 폴링 (논블로킹 백그라운드 태스크) ──
-            active = self._active_threads.get(channel_id, {})
-            if active:
-                asyncio.create_task(self._poll_threads(channel_id, bot_id))
-
+        except asyncio.TimeoutError:
+            pass  # conversations_history 타임아웃은 다음 사이클에 재시도
         except Exception as e:
             err_str = str(e)
             if "not_in_channel" in err_str:
@@ -384,6 +400,15 @@ class SlackClient:
                 await asyncio.sleep(30)
             else:
                 logger.warning(f"Poll error for {channel_name}: {type(e).__name__}: {e}")
+
+        # ── 2. 스레드 답글 폴링 (항상 실행, 위의 try/except와 무관) ──
+        try:
+            active = self._active_threads.get(channel_id, {})
+            if active:
+                bot_id = await self._get_bot_user_id()
+                asyncio.create_task(self._poll_threads(channel_id, bot_id))
+        except Exception as e:
+            logger.debug(f"Thread poll dispatch error: {e}")
 
     async def _init_channel_cache(self):
         """채널 캐시 초기화 (재시도 포함)"""
