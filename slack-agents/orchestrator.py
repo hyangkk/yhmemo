@@ -170,9 +170,35 @@ async def main():
         else:
             await slack.send_message(channel, text)
 
+    # "!명언" → 명언 에이전트 즉시 실행
+    async def cmd_quote(args: str, user: str, channel: str, thread_ts: str = None):
+        context = {
+            "current_time": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+            "current_hour": datetime.now(KST).hour,
+            "recent_conversations": [],
+            "sent_history": quote._quote_history[-30:],
+        }
+        # 최근 대화 수집
+        try:
+            recent = await quote._fetch_recent_messages()
+            context["recent_conversations"] = recent[:20]
+        except Exception:
+            pass
+        decision = await quote.think(context)
+        if decision:
+            decision["action"] = "send_quote"
+            # 요청한 채널/스레드로 전송
+            msg = quote._format_message(decision)
+            await _reply(channel, msg, thread_ts)
+            quote._quote_history.append(f"{decision['quote_ko']} — {decision['author']}")
+            quote._save_history()
+        else:
+            await _reply(channel, "명언 생성에 실패했어요.", thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
+    slack.on_command("명언", cmd_quote)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -233,6 +259,7 @@ async def main():
 - collect: 뉴스 기사 수집만 (구글뉴스 RSS). "~에 대한 뉴스 모아줘" 같은 명확한 수집 요청만 해당
 - briefing: 이미 수집된 정보 브리핑/요약
 - status: 시스템 상태 확인
+- quote: 명언 보내기. "명언 하나 보내줘", "오늘의 명언", "힘이 되는 말 해줘", "동기부여 좀", "영감 주는 말", "좋은 말 해줘" 등 명언/격언/영감을 요청하는 경우
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
 
 중요: 가격, 날씨, 환율, 분석, 비교, 추이, 의견 요청 등은 모두 chat입니다. collect가 아닙니다.
@@ -242,7 +269,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|status|chat|ignore",
+  "intent": "collect|briefing|status|quote|chat|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing/status일 때만)"
 }}""",
@@ -272,6 +299,7 @@ async def main():
             "collect": "👀 수집 시작합니다! 잠시만요~",
             "briefing": "👀 브리핑 준비 중! 금방 가져올게요~",
             "status": "👀 상태 확인 중! 잠깐만요~",
+            "quote": "✨ 좋은 말 하나 찾아볼게요~",
         }
         if thread_ts and action in ACK_MESSAGES:
             await slack.add_reaction(channel, thread_ts, "eyes")
@@ -295,6 +323,9 @@ async def main():
             elif action == "status":
                 await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "상태 확인 완료"
+            elif action == "quote":
+                await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "명언 전송 완료"
             elif action == "chat":
                 # 대화 이력을 포함한 깊은 대화 (도구 사용 가능)
                 chat_history = build_chat_context(user)

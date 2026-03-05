@@ -171,6 +171,22 @@ class QuoteAgent(BaseAgent):
         emoji = decision.get("emoji", "")
         reason = decision.get("context_reason", "")
 
+        message = self._format_message(decision)
+        await self._reply(self._target_channel, message)
+        logger.info(f"[quote] Sent quote by {author}")
+
+        # 이력 저장
+        self._quote_history.append(f"{quote_ko} — {author}")
+        self._save_history()
+
+    def _format_message(self, decision: dict) -> str:
+        """명언 메시지 포맷"""
+        emoji = decision.get("emoji", "")
+        quote_ko = decision.get("quote_ko", "")
+        quote_original = decision.get("quote_original", "")
+        author = decision.get("author", "")
+        reason = decision.get("context_reason", "")
+
         message = f"{emoji} *오늘의 명언*\n\n"
         message += f"> _{quote_ko}_\n"
         if quote_original:
@@ -178,13 +194,7 @@ class QuoteAgent(BaseAgent):
         message += f"> — *{author}*"
         if reason:
             message += f"\n\n💭 _{reason}_"
-
-        await self._reply(self._target_channel, message)
-        logger.info(f"[quote] Sent quote by {author}")
-
-        # 이력 저장
-        self._quote_history.append(f"{quote_ko} — {author}")
-        self._save_history()
+        return message
 
         # 이번 시각 전송 완료 표시
         self._last_sent_hour = decision["hour"]
