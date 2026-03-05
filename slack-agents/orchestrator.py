@@ -44,6 +44,7 @@ from integrations.slack_client import SlackClient
 from integrations.notion_client import NotionClient
 from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
+from agents.quote_agent import QuoteAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 
@@ -129,6 +130,7 @@ async def main():
         notion_db_id=config.get("NOTION_DATABASE_ID", ""),
         **common_kwargs,
     )
+    quote = QuoteAgent(**common_kwargs)
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -414,6 +416,7 @@ async def main():
         bus.stop()
         collector.stop()
         curator.stop()
+        quote.stop()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -428,6 +431,7 @@ async def main():
         asyncio.create_task(bus.run(), name="message_bus"),
         asyncio.create_task(collector.start(), name="collector"),
         asyncio.create_task(curator.start(), name="curator"),
+        asyncio.create_task(quote.start(), name="quote"),
     ]
 
     logger.info("All agents running. Starting polling loop...")
