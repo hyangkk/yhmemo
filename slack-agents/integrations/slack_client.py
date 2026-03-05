@@ -299,13 +299,13 @@ class SlackClient:
                         await asyncio.sleep(5)
                         break
                     else:
-                        logger.debug(f"Thread poll: {type(e).__name__}: {err[:60]}")
+                        logger.warning(f"Thread poll error: {type(e).__name__}: {err[:120]}")
             for t in stale_threads:
                 active.pop(t, None)
             if stale_threads:
                 self._save_active_threads()
         except Exception as e:
-            logger.debug(f"Thread polling: {e}")
+            logger.warning(f"Thread polling error: {e}")
 
     async def _safe_nl_handler(self, text: str, user: str, channel: str, thread_ts: str = None):
         """NL 핸들러를 안전하게 실행 (에러 로깅)"""
