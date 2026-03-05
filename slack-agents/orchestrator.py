@@ -114,7 +114,9 @@ async def main():
     async def cmd_collect(args: str, user: str, channel: str):
         if args.strip():
             query = args.strip()
-            await slack.send_message(channel, f"'{query}' 수집을 시작합니다...")
+            await slack.send_message(channel, f":satellite: `{query}` 수집을 시작합니다...")
+            # curator에 검색 키워드 컨텍스트 전달
+            curator.set_query_context(query)
             await collector._collect_by_keyword(query, user)
         else:
             await slack.send_message(channel, "사용법: `!수집 키워드`")
