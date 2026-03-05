@@ -318,13 +318,14 @@ async def main():
 당신이 할 수 있는 업무:
 - collect: 뉴스 기사 수집만 (구글뉴스 RSS). "~에 대한 뉴스 모아줘" 같은 명확한 수집 요청만 해당
 - briefing: 이미 수집된 정보 브리핑/요약
-- dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인. "에이전트 상태", "현황", "뭐 하고 있어?", "잘 돌아가?", "에이전트 몇 개야" 등
-- quote: 명언 보내기. "명언 하나 보내줘", "오늘의 명언", "힘이 되는 말 해줘", "동기부여 좀", "영감 주는 말", "좋은 말 해줘" 등 명언/격언/영감을 요청하는 경우
-- chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 진행 요청, 의견 교환 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
+- dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
+- quote: 명언 보내기
+- dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
+- chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
-중요: 가격, 날씨, 환율, 분석, 비교, 추이, 의견 요청 등은 모두 chat입니다. collect가 아닙니다.
-중요: "진행시켜", "해줘", "좋아 해보자", "구축해줘" 같은 프로젝트/작업 관련 지시는 chat입니다. collect가 아닙니다.
-중요: 시스템/에이전트 상태, 현황, 가동률 질문은 dashboard입니다.
+중요: 가격, 날씨, 환율, 분석, 비교 등은 chat. collect가 아닙니다.
+중요: 실제 코드/프로젝트를 만들어달라는 요청은 dev입니다. 단순 논의/질문은 chat.
+중요: 시스템/에이전트 상태 질문은 dashboard.
 
 {thread_hint}
 
@@ -333,9 +334,11 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|chat|ignore",
+  "intent": "collect|briefing|dashboard|quote|chat|dev|ignore",
   "query": "수집 키워드 (collect일 때만)",
-  "approach": "작업 전략 (collect/briefing일 때만)"
+  "approach": "작업 전략 (collect/briefing일 때만)",
+  "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
+  "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
             user_prompt=text,
         )
@@ -362,54 +365,10 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 접수 표시 (눈 리액션 + 매번 다른 자연스러운 착수 멘트)
-        ACK_POOL = {
-            "collect": [
-                "오 바로 찾아볼게요! 🔍",
-                "좋아요, 수집 들어갑니다~",
-                "알겠습니다! 금방 모아올게요 💪",
-                "넵! 지금 바로 뒤져볼게요~",
-                "수집 착수! 잠깐만요 ⚡",
-                "달려봅니다! 🏃",
-                "맡겨주세요, 쓱 가져올게요~",
-                "오케이! 열심히 모아보겠습니다 🫡",
-            ],
-            "briefing": [
-                "브리핑 준비할게요! 잠시만요~",
-                "좋아요, 핵심만 빠르게 정리해드릴게요 📋",
-                "지금 상황 쭉 훑어보고 알려드릴게요!",
-                "넵! 브리핑 들어갑니다 🎯",
-                "알겠습니다, 금방 정리해올게요~",
-                "한번 쫙 정리해보겠습니다! 💨",
-            ],
-            "dashboard": [
-                "현황 확인해볼게요!",
-                "에이전트들 뭐하고 있나 볼게요~ 👀",
-                "시스템 상태 체크 중! 잠깐만요 🔧",
-                "넵, 지금 돌아가는 상황 보여드릴게요~",
-                "현황 파악 들어갑니다!",
-            ],
-            "quote": [
-                "좋은 말 하나 찾아볼게요~ ✨",
-                "오늘에 딱 맞는 한마디 골라볼게요!",
-                "명언 하나 가져올게요 💫",
-                "잠깐만요, 멋진 말 하나 찾는 중~ 📖",
-                "넵! 힘이 되는 한마디 찾아보겠습니다 🌟",
-            ],
-            "chat": [
-                "생각 좀 해볼게요! 🤔",
-                "오 좋은 질문이네요, 잠깐만요~",
-                "넵! 바로 답변 드릴게요 💬",
-                "한번 살펴볼게요~",
-                "알겠습니다! 생각 정리해서 바로 드릴게요 ⚡",
-                "잠시만요, 머리 좀 굴려볼게요 🧠",
-                "오케이! 바로 볼게요~",
-                "흥미롭네요, 한번 파볼게요! 🔥",
-            ],
-        }
-        if thread_ts and action in ACK_POOL:
+        # 3단계: 접수 표시 (눈 리액션 + LLM이 맥락에 맞게 생성한 착수 멘트)
+        ack_msg = parsed.get("ack", "").strip()
+        if thread_ts and action != "ignore" and ack_msg:
             await slack.add_reaction(channel, thread_ts, "eyes")
-            ack_msg = random.choice(ACK_POOL[action])
             await _reply(channel, ack_msg, thread_ts)
 
         # 4단계: 실제 업무 실행
@@ -433,6 +392,57 @@ async def main():
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
+            elif action == "dev":
+                # 실제 개발 실행: Claude Code CLI 호출
+                dev_task = parsed.get("dev_task", query or text).strip()
+                if not dev_task:
+                    await _reply(channel, "어떤 걸 만들면 될까요? 좀 더 구체적으로 알려주세요.", thread_ts)
+                    result_text = "dev 작업 미지정"
+                    success = False
+                else:
+                    # 스레드 맥락이 있으면 프롬프트에 포함
+                    full_prompt = dev_task
+                    if thread_context:
+                        full_prompt = f"[이전 대화 맥락]\n{thread_context}\n\n[요청]\n{dev_task}"
+
+                    await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
+
+                    try:
+                        import subprocess
+                        proc = await asyncio.create_subprocess_exec(
+                            "claude", "-p", full_prompt,
+                            "--output-format", "text",
+                            cwd="/home/user/yhmemo",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, stderr = await asyncio.wait_for(
+                            proc.communicate(), timeout=300  # 5분 타임아웃
+                        )
+                        output = stdout.decode("utf-8", errors="replace").strip()
+                        err_output = stderr.decode("utf-8", errors="replace").strip()
+
+                        if proc.returncode == 0 and output:
+                            # 결과가 길면 요약
+                            if len(output) > 3000:
+                                summary = await curator.ai_think(
+                                    system_prompt="아래 Claude Code 실행 결과를 슬랙 메시지로 요약하세요. 무엇을 만들었는지, 어떤 파일을 생성/수정했는지, 다음 단계는 무엇인지 핵심만. 최대 1500자.",
+                                    user_prompt=output,
+                                )
+                                await _reply(channel, f"✅ 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
+                            else:
+                                await _reply(channel, f"✅ 작업 완료!\n\n{output}", thread_ts)
+                            result_text = f"dev 완료: {dev_task[:50]}"
+                        else:
+                            error_msg = err_output or output or "알 수 없는 오류"
+                            await _reply(channel, f"⚠️ 작업 중 문제가 생겼어요:\n```\n{error_msg[:1000]}\n```\n다시 시도하거나 작업을 수정해서 알려주세요.", thread_ts)
+                            result_text = f"dev 오류: {error_msg[:100]}"
+                            success = False
+                    except asyncio.TimeoutError:
+                        await _reply(channel, "⏱️ 작업이 5분을 초과했어요. 좀 더 작은 단위로 나눠서 요청해주세요.", thread_ts)
+                        result_text = "dev 타임아웃"
+                        success = False
+
             elif action == "chat":
                 # 대화 이력을 포함한 깊은 대화 (도구 사용 가능)
                 chat_history = build_chat_context(user)
