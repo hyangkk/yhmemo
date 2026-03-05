@@ -453,8 +453,18 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_handler)
 
-    # 시작 (알림 없이 조용히)
-    await slack.start_background()
+    # Socket Mode 먼저 시도 → 실패 시 폴링으로 전환
+    socket_mode = await slack._try_socket_mode()
+
+    if socket_mode:
+        logger.info("✓ Socket Mode 연결 성공! 실시간 이벤트 수신 중 (폴링 불필요)")
+        # Socket Mode에서도 채널 캐시와 기본 설정은 필요
+        await slack.ensure_channels_exist()
+        await slack._init_channel_cache()
+    else:
+        logger.info("Socket Mode 불가 → 폴링 모드로 운영")
+        await slack.start_background()
+
     logger.info("Agents started silently (no startup message to Slack)")
 
     # 에이전트 태스크 실행
@@ -465,23 +475,28 @@ async def main():
         asyncio.create_task(quote.start(), name="quote"),
     ]
 
-    logger.info("All agents running. Starting polling loop...")
-
-    # 메인 루프: 폴링 + shutdown 대기
-    poll_count = 0
-    while not shutdown_event.is_set():
-        poll_count += 1
-        if poll_count % 12 == 1:  # 1분마다 로그
-            logger.info(f"[main] Poll tick #{poll_count} (alive)")
-        try:
-            await slack.poll_once()
-        except Exception as e:
-            logger.error(f"Poll error: {e}")
-        # shutdown 체크와 함께 5초 대기
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            pass  # 30초 지남, 다시 폴링
+    if socket_mode:
+        # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
+        logger.info("All agents running. Socket Mode active (no polling needed)")
+        await shutdown_event.wait()
+    else:
+        # 폴링 모드: 3초마다 메시지 확인 (실시간성 향상)
+        logger.info("All agents running. Starting polling loop (3s interval)...")
+        poll_count = 0
+        while not shutdown_event.is_set():
+            poll_count += 1
+            if poll_count % 20 == 1:  # 1분마다 로그
+                thread_count = sum(len(v) for v in slack._active_threads.values())
+                logger.info(f"[main] Poll tick #{poll_count} (alive, {thread_count} threads tracked)")
+            try:
+                await slack.poll_once()
+            except Exception as e:
+                logger.error(f"Poll error: {e}")
+            # shutdown 체크와 함께 3초 대기
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
 
     # 태스크 정리
     for task in tasks:

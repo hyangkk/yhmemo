@@ -247,83 +247,83 @@ class SlackClient:
             result = await self.client.conversations_history(**kwargs)
             messages = result.get("messages", [])
 
-            if not messages:
-                return
-
-            logger.info(f"[poll] {channel_name}: {len(messages)} new messages")
-
-            # 가장 최신 타임스탬프 저장 (디스크에도 영속)
-            newest_ts = messages[0]["ts"]
-            self._last_ts[channel_id] = newest_ts
-            self._save_last_ts()
-
             bot_id = await self._get_bot_user_id()
 
-            # 오래된 것부터 처리 (역순)
-            for msg in reversed(messages):
-                # 봇 자신의 메시지 무시
-                if msg.get("bot_id") or msg.get("user") == bot_id:
-                    logger.debug(f"[poll] Skipping bot message: '{msg.get('text', '')[:30]}'")
-                    continue
+            # ── 1. 새 채널 메시지 처리 ──
+            if messages:
+                logger.info(f"[poll] {channel_name}: {len(messages)} new messages")
 
-                text = msg.get("text", "")
-                user = msg.get("user", "")
-                channel = channel_id
-                logger.info(f"[poll] New message: '{text[:50]}' from {user}")
+                # 가장 최신 타임스탬프 저장 (디스크에도 영속)
+                newest_ts = messages[0]["ts"]
+                self._last_ts[channel_id] = newest_ts
+                self._save_last_ts()
 
-                # 멘션 처리
-                if f"<@{bot_id}>" in text:
-                    for handler in self._mention_handlers:
+                # 오래된 것부터 처리 (역순)
+                for msg in reversed(messages):
+                    # 봇 자신의 메시지 무시
+                    if msg.get("bot_id") or msg.get("user") == bot_id:
+                        continue
+
+                    text = msg.get("text", "")
+                    user = msg.get("user", "")
+                    channel = channel_id
+                    logger.info(f"[poll] New message: '{text[:50]}' from {user}")
+
+                    # 멘션 처리
+                    if f"<@{bot_id}>" in text:
+                        for handler in self._mention_handlers:
+                            try:
+                                async def say(reply_text, ch=channel, ts=msg["ts"]):
+                                    await self.send_thread_reply(ch, ts, reply_text)
+                                await handler(text=text, user=user, channel=channel, say=say)
+                            except Exception as e:
+                                logger.error(f"Mention handler error: {e}")
+
+                    # 명령어 처리
+                    elif text.startswith("!"):
+                        parts = text[1:].split(maxsplit=1)
+                        cmd = parts[0]
+                        args = parts[1] if len(parts) > 1 else ""
+                        handler = self._command_handlers.get(cmd)
+                        if handler:
+                            logger.info(f"[poll] Executing command: !{cmd}")
+                            try:
+                                await handler(args=args, user=user, channel=channel)
+                            except Exception as e:
+                                logger.error(f"Command handler error: {e}")
+
+                    # 자연어 메시지 처리
+                    elif self._natural_language_handler and text.strip():
+                        logger.info(f"[poll] Natural language: '{text[:50]}'")
                         try:
-                            async def say(reply_text, ch=channel, ts=msg["ts"]):
-                                await self.send_thread_reply(ch, ts, reply_text)
-                            await handler(text=text, user=user, channel=channel, say=say)
+                            await self._natural_language_handler(
+                                text=text, user=user, channel=channel,
+                                thread_ts=msg.get("ts"),
+                            )
                         except Exception as e:
-                            logger.error(f"Mention handler error: {e}")
+                            logger.error(f"Natural language handler error: {e}")
 
-                # 명령어 처리
-                elif text.startswith("!"):
-                    parts = text[1:].split(maxsplit=1)
-                    cmd = parts[0]
-                    args = parts[1] if len(parts) > 1 else ""
-                    handler = self._command_handlers.get(cmd)
-                    if handler:
-                        logger.info(f"[poll] Executing command: !{cmd}")
-                        try:
-                            await handler(args=args, user=user, channel=channel)
-                        except Exception as e:
-                            logger.error(f"Command handler error: {e}")
+                # 스레드 자동 발견
+                for msg in messages:
+                    if msg.get("reply_count", 0) > 0 and msg.get("ts"):
+                        if channel_id not in self._active_threads:
+                            self._active_threads[channel_id] = {}
+                        if msg["ts"] not in self._active_threads[channel_id]:
+                            self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
+                            logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
 
-                # 자연어 메시지 처리
-                elif self._natural_language_handler and text.strip():
-                    logger.info(f"[poll] Natural language: '{text[:50]}'")
-                    try:
-                        await self._natural_language_handler(
-                            text=text, user=user, channel=channel,
-                            thread_ts=msg.get("ts"),
-                        )
-                    except Exception as e:
-                        logger.error(f"Natural language handler error: {e}")
-
-            # 스레드 자동 발견 (ai-agents-general만)
-            general_id = self._channel_cache.get(self.CHANNEL_GENERAL)
-            for msg in messages:
-                if msg.get("reply_count", 0) > 0 and msg.get("ts"):
-                    if channel_id not in self._active_threads:
-                        self._active_threads[channel_id] = {}
-                    if msg["ts"] not in self._active_threads[channel_id]:
-                        self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
-                        logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
-
-            # 스레드 답글 폴링: ai-agents-general만 (rate limit 방지)
-            if channel_id != general_id:
-                return
+            # ── 2. 스레드 답글 폴링 (채널 메시지 유무와 관계없이 항상 실행) ──
             try:
                 active = self._active_threads.get(channel_id, {})
+                if not active:
+                    return
                 stale_threads = []
-                # rate limit 방지: 한 번에 최대 3개 스레드만 폴링
-                thread_items = list(active.items())[-3:]
-                for thread_ts, last_reply_ts in thread_items:
+                # 모든 활성 스레드 폴링 (8~10개 수준은 rate limit 안전)
+                thread_items = list(active.items())
+                logger.debug(f"[poll] Checking {len(thread_items)} threads in {channel_name}")
+                for idx, (thread_ts, last_reply_ts) in enumerate(thread_items):
+                    if idx > 0:
+                        await asyncio.sleep(0.5)  # rate limit 방지
                     try:
                         reply_result = await self.client.conversations_replies(
                             channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=5,
@@ -356,7 +356,7 @@ class SlackClient:
                         elif "ratelimited" in err:
                             break  # rate limit이면 나머지 스레드 스킵
                         else:
-                            logger.warning(f"Thread poll error ({thread_ts[:10]}): {err[:80]}")
+                            logger.warning(f"Thread poll error ({thread_ts[:10]}): {type(e).__name__}: {err[:80]}")
                 for t in stale_threads:
                     active.pop(t, None)
             except Exception as e:
@@ -373,7 +373,7 @@ class SlackClient:
             elif "ratelimited" in err_str:
                 await asyncio.sleep(30)
             else:
-                logger.warning(f"Poll error for {channel_name}: {e}")
+                logger.warning(f"Poll error for {channel_name}: {type(e).__name__}: {e}")
 
     async def _init_channel_cache(self):
         """채널 캐시 초기화 (재시도 포함)"""
@@ -473,7 +473,8 @@ class SlackClient:
             text = event.get("text", "")
             user = event.get("user", "")
             channel = event.get("channel", "")
-            thread_ts = event.get("ts")
+            # 스레드 답글이면 thread_ts가 부모 메시지 ts, 아니면 자기 ts
+            thread_ts = event.get("thread_ts") or event.get("ts")
 
             if not text.strip():
                 return
@@ -504,25 +505,27 @@ class SlackClient:
         # 폴링 채널 초기화
         await self._init_channel_cache()
 
-        # 모든 public 채널에 봇 join
-        for ch_name, ch_id in self._channel_cache.items():
-            try:
-                await self.client.conversations_join(channel=ch_id)
-                logger.info(f"Joined channel: {ch_name} ({ch_id})")
-            except Exception:
-                pass  # 이미 참여 중이면 무시
+        # 봇이 참여할 채널 (필수 채널만)
+        for ch_name in [self.CHANNEL_GENERAL, self.CHANNEL_LOGS]:
+            ch_id = self._channel_cache.get(ch_name)
+            if ch_id:
+                try:
+                    await self.client.conversations_join(channel=ch_id)
+                except Exception:
+                    pass
 
-        # 모든 채널 폴링 — 저장된 ts 복원 또는 기동 시점 사용
-        channels = list(self._channel_cache.keys())
+        # 메시지 수신 채널: ai-agents-general만 (rate limit 방지)
+        # 스레드 폴링은 _poll_channel 내에서 활성 스레드가 있는 채널만 체크
+        poll_channels = [self.CHANNEL_GENERAL]
         saved_ts = self._load_last_ts()
-        for ch_name in channels:
+        for ch_name in poll_channels:
             ch_id = self._channel_cache.get(ch_name)
             if ch_id:
                 if ch_id in saved_ts:
                     self._last_ts[ch_id] = saved_ts[ch_id]
                 else:
                     self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
-        self._poll_channels = channels
+        self._poll_channels = poll_channels
 
         # 활성 스레드 복원
         self._active_threads = self._load_active_threads()
@@ -544,7 +547,7 @@ class SlackClient:
 
         thread_count = sum(len(v) for v in self._active_threads.values())
         logger.info(f"Polling mode ready (interval: {self._poll_interval}s)")
-        logger.info(f"Polling channels: {channels}")
+        logger.info(f"Polling channels: {poll_channels}")
         if thread_count:
             logger.info(f"Tracking {thread_count} active threads for reply detection")
 
