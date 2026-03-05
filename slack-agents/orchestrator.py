@@ -45,6 +45,7 @@ from integrations.notion_client import NotionClient
 from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
 from agents.quote_agent import QuoteAgent
+from agents.proactive_agent import ProactiveAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 
@@ -126,6 +127,7 @@ async def main():
     }
 
     collector = CollectorAgent(**common_kwargs)
+    proactive = ProactiveAgent(**common_kwargs)
     curator = CuratorAgent(
         notion_db_id=config.get("NOTION_DATABASE_ID", ""),
         **common_kwargs,
@@ -195,10 +197,30 @@ async def main():
         else:
             await _reply(channel, "명언 생성에 실패했어요.", thread_ts)
 
+    # "!로그" → 요청사항 이력 보기
+    async def cmd_log(args: str, user: str, channel: str, thread_ts: str = None):
+        log_file = os.path.join(os.path.dirname(__file__), "data", "request_log.json")
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                logs = json.loads(f.read())
+            if not logs:
+                await _reply(channel, "요청 이력이 없습니다.", thread_ts)
+                return
+            latest = logs[-1]
+            lines = [f"📋 *요청사항 로그* ({latest['date']})\n"]
+            for r in latest.get("requests", []):
+                status = "✅" if r["status"] == "done" else "🔄"
+                lines.append(f"{status} {r['request']}")
+                lines.append(f"   _{r.get('changes', '')[:80]}_")
+            await _reply(channel, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await _reply(channel, f"로그 로드 실패: {e}", thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
+    slack.on_command("로그", cmd_log)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -275,6 +297,10 @@ async def main():
 }}""",
             user_prompt=text,
         )
+
+        if not intent_response:
+            logger.warning("[NL] Empty intent response from AI")
+            return
 
         try:
             clean = intent_response.strip()
@@ -448,6 +474,7 @@ async def main():
         collector.stop()
         curator.stop()
         quote.stop()
+        proactive.stop()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -473,6 +500,7 @@ async def main():
         asyncio.create_task(collector.start(), name="collector"),
         asyncio.create_task(curator.start(), name="curator"),
         asyncio.create_task(quote.start(), name="quote"),
+        asyncio.create_task(proactive.start(), name="proactive"),
     ]
 
     if socket_mode:

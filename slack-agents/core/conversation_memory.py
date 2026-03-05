@@ -156,3 +156,8 @@ def get_user_summary(user_id: str) -> str:
     # 전체 유저 메시지에서 패턴 추출
     recent = user_messages[-20:]
     return "유저의 최근 대화/관심사:\n" + "\n".join(f"- {m[:150]}" for m in recent)
+
+
+def load_all_turns() -> dict:
+    """전체 유저의 대화 이력 반환 {user_id: [turns]}"""
+    return _load_all()
