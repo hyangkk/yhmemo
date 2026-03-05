@@ -40,14 +40,18 @@ class CuratorAgent(BaseAgent):
         self._notion_db_id = notion_db_id
         self._new_articles_buffer: list[dict] = []
         self._user_preferences: dict = {}
-        self._current_query: str = ""  # 사용자가 요청한 검색 키워드
+        self._current_query: str = ""
+        self._request_thread_ts: str = None
+        self._request_channel: str = None
 
         # 수집 에이전트의 new_articles 이벤트 구독
         self.bus.subscribe("new_articles", self._on_new_articles)
 
-    def set_query_context(self, query: str):
+    def set_query_context(self, query: str, thread_ts: str = None, channel: str = None):
         """사용자 검색 키워드 컨텍스트 설정"""
         self._current_query = query
+        self._request_thread_ts = thread_ts
+        self._request_channel = channel
 
     async def _on_new_articles(self, task: TaskMessage):
         """수집 에이전트에서 새 정보 도착 시 → 즉시 선별"""
@@ -147,7 +151,7 @@ class CuratorAgent(BaseAgent):
             logger.error(f"[curator] Failed to parse AI response: {result_text[:200]}")
             return None
 
-        return {
+        decision = {
             "action": "curate_and_brief",
             "selected": result.get("selected", []),
             "missing_topics": result.get("missing_topics", []),
@@ -156,6 +160,11 @@ class CuratorAgent(BaseAgent):
             "articles": context["new_articles"],
             "query": query,
         }
+        # 유저 요청 컨텍스트가 있으면 전달
+        if query and getattr(self, "_request_thread_ts", None):
+            decision["thread_ts"] = self._request_thread_ts
+            decision["channel"] = self._request_channel or "ai-agents-general"
+        return decision
 
     # ── Act: 실행 ──────────────────────────────────────
 
@@ -183,22 +192,13 @@ class CuratorAgent(BaseAgent):
 
         logger.info(f"[curator] _curate_and_brief: {len(articles)} articles, {len(selected)} selected")
 
-        # ── 1. 선별 과정 소통 ──
-        try:
-            query_label = f" (`{query}`)" if query else ""
-            process_msg = f":mag: *선별 중*{query_label} — {len(articles)}건 분석 완료\n"
-            if selected:
-                process_msg += f":white_check_mark: {len(selected)}건 선별"
-            else:
-                process_msg += ":x: 관련 기사 없음"
-            if rejected_reason:
-                process_msg += f"\n:no_entry_sign: 제외 사유: _{rejected_reason}_"
-            await self._reply(general, process_msg, thread_ts)
-        except Exception as e:
-            logger.error(f"[curator] Failed to send process message: {e}")
-
+        # ── 1. 선별 과정 (스레드에만, 간결하게) ──
         if not selected:
+            if thread_ts:
+                await self._reply(general, f"{len(articles)}건 분석했지만 관련 기사가 없어요.", thread_ts)
             self._current_query = ""
+            self._request_thread_ts = None
+            self._request_channel = None
             processed_count = len(articles)
             self._new_articles_buffer = self._new_articles_buffer[processed_count:]
             return
@@ -254,8 +254,12 @@ class CuratorAgent(BaseAgent):
 
             notion_urls.append(notion_url)
 
-        # ── 3. 슬랙 브리핑 (간결 + 하이퍼링크) ──
-        brief_msg = f":newspaper: *{briefing}*\n\n"
+        # ── 3. 슬랙 브리핑 (깔끔한 포맷) ──
+        lines = []
+        if thread_ts and query:
+            lines.append(f"> {query}\n")
+        lines.append(f"*{briefing}*\n")
+
         for i, sel in enumerate(selected[:3]):
             idx = sel.get("index", 0)
             if idx >= len(articles):
@@ -265,25 +269,26 @@ class CuratorAgent(BaseAgent):
             url = art.get("url", "")
             summary = sel.get("summary", "")
 
-            # Slack mrkdwn 하이퍼링크
-            brief_msg += f"• <{url}|{title}>\n"
-            brief_msg += f"  {summary}"
-
-            # 노션 링크 추가
+            line = f"• <{url}|{title}>"
             if i < len(notion_urls) and notion_urls[i]:
-                brief_msg += f"  (<{notion_urls[i]}|상세보기>)"
-            brief_msg += "\n"
+                line += f"  (<{notion_urls[i]}|노션>)"
+            lines.append(line)
+            if summary:
+                lines.append(f"  _{summary}_")
 
-        # 유저 요청이면 요청 내용 요약 + 채널에도 표시
-        if thread_ts and query:
-            brief_msg = f"> *요청: {query}*\n\n" + brief_msg
+        brief_msg = "\n".join(lines)
+
+        if thread_ts:
+            # 스레드에 달고, 채널에도 표시
             await self._reply(general, brief_msg, thread_ts, broadcast=True)
         else:
-            await self._reply(general, brief_msg, thread_ts)
+            await self._reply(general, brief_msg)
         logger.info("[curator] Briefing sent successfully")
 
-        # 버퍼 비우기 & 쿼리 초기화
+        # 버퍼 비우기 & 컨텍스트 초기화
         self._current_query = ""
+        self._request_thread_ts = None
+        self._request_channel = None
         processed_count = len(articles)
         self._new_articles_buffer = self._new_articles_buffer[processed_count:]
 

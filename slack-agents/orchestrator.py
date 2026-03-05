@@ -115,26 +115,21 @@ async def main():
     async def cmd_collect(args: str, user: str, channel: str, thread_ts: str = None):
         if args.strip():
             query = args.strip()
-            await _reply(channel, f":satellite: `{query}` 수집을 시작합니다...", thread_ts)
-            curator.set_query_context(query)
+            curator.set_query_context(query, thread_ts=thread_ts, channel=channel)
             await collector._collect_by_keyword(query, user, thread_ts=thread_ts)
         else:
             await _reply(channel, "사용법: `!수집 키워드`", thread_ts)
 
     # "!브리핑" → 선별 에이전트에 즉시 브리핑 요청
     async def cmd_briefing(args: str, user: str, channel: str, thread_ts: str = None):
-        await _reply(channel, "브리핑을 준비합니다...", thread_ts)
+        curator.set_query_context("브리핑", thread_ts=thread_ts, channel=channel)
         context = await curator.observe()
         if context:
             decision = await curator.think(context)
             if decision:
-                # 유저 요청 브리핑은 해당 채널+스레드로 전달
-                if thread_ts:
-                    decision["thread_ts"] = thread_ts
-                    decision["channel"] = channel
                 await curator.act(decision)
         else:
-            await _reply(channel, "현재 새로운 정보가 없습니다.", thread_ts)
+            await _reply(channel, "새로운 정보가 없습니다.", thread_ts)
 
     # "!상태" → 전체 시스템 상태 확인
     async def cmd_status(args: str, user: str, channel: str, thread_ts: str = None):
@@ -243,12 +238,9 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 먼저 확인 메시지 전송 (소통!)
+        # 3단계: 먼저 확인 메시지 전송 (스레드로만)
         if ack:
-            if thread_ts:
-                await slack.send_thread_reply(channel, thread_ts, ack)
-            else:
-                await slack.send_message(channel, ack)
+            await _reply(channel, ack, thread_ts)
 
         # 4단계: 실제 업무 실행 (유저 요청이므로 스레드로 답변)
         result_text = ""
