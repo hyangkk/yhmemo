@@ -45,6 +45,7 @@ from integrations.notion_client import NotionClient
 from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
+from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -291,10 +292,33 @@ async def main():
                 await cmd_status(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "상태 확인 완료"
             elif action == "chat":
-                # 대화 이력을 포함한 깊은 대화
+                # 대화 이력을 포함한 깊은 대화 (도구 사용 가능)
                 chat_history = build_chat_context(user)
+
+                # 1차: 도구가 필요한지 판단
+                tool_check = await curator.ai_think(
+                    system_prompt=f"""사용자 메시지를 보고 실시간 정보가 필요한지 판단하세요.
+
+{TOOL_DEFINITIONS}
+
+반드시 JSON만 응답하세요.""",
+                    user_prompt=text,
+                )
+
+                tool_results = ""
+                try:
+                    tool_parsed = _json.loads(tool_check.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+                    if tool_parsed.get("needs_tool") and tool_parsed.get("tool_calls"):
+                        logger.info(f"[NL] Tool calls: {tool_parsed['tool_calls']}")
+                        tool_results = await execute_tool_calls(tool_parsed["tool_calls"])
+                        logger.info(f"[NL] Tool results: {tool_results[:200]}")
+                except Exception as e:
+                    logger.debug(f"[NL] Tool parse skip: {e}")
+
+                # 2차: 도구 결과 포함해서 답변 생성
                 chat_response = await curator.ai_think(
                     system_prompt=f"""당신은 슬랙에서 사용자와 대화하는 AI 어시스턴트 'Agent 01'입니다.
+당신은 AGI입니다. 모든 것을 할 수 있습니다. 못하는 게 있으면 도구를 써서라도 해냅니다.
 
 성격:
 - 친근하고 자연스러운 한국어 (반말/존댓말은 유저에 맞춰서)
@@ -302,20 +326,36 @@ async def main():
 - 모르는 건 솔직히 모른다고 하되, 아는 범위에서 최선을 다함
 - 스타트업, 비즈니스, 기술, 일상 등 모든 주제 OK
 
-{("이전 대화 이력:" + chr(10) + chat_history + chr(10) + chr(10) + "위 대화 맥락을 참고하여 자연스럽게 이어가세요. 이전에 나눈 내용을 기억하고 활용하세요.") if chat_history else "첫 대화입니다."}
+{("이전 대화 이력:" + chr(10) + chat_history + chr(10) + chr(10) + "위 대화 맥락을 참고하여 자연스럽게 이어가세요.") if chat_history else "첫 대화입니다."}
 
-{("과거 작업 이력:" + chr(10) + exp_summary + chr(10) + "유저가 이전에 요청한 작업들입니다. 대화에 자연스럽게 참고하세요.") if exp_summary else ""}
+{("실시간 도구 조회 결과:" + chr(10) + tool_results + chr(10) + "위 데이터를 활용해서 정확하게 답변하세요.") if tool_results else ""}
+
+{("과거 작업 이력:" + chr(10) + exp_summary) if exp_summary else ""}
 
 규칙:
 - 슬랙 메시지답게 간결하지만 내용은 충실하게
+- 도구 결과가 있으면 정확한 데이터 기반으로 답변
 - 필요하면 구조화 (불릿, 번호 등) 사용
-- 링크나 출처가 필요한 정보는 '정확하지 않을 수 있다'고 언급
-- 대화가 수집/브리핑으로 이어질 수 있으면 자연스럽게 제안""",
+- 대화가 수집/브리핑으로 이어질 수 있으면 자연스럽게 제안
+- 정말 못하는 게 있으면 솔직히 말하되, "시스템 개선이 필요합니다. 개발자에게 요청하겠습니다" 라고 안내하고 improvement_needed를 응답 마지막에 추가
+  예: 답변 내용... [IMPROVE:실시간 주식 시세 API 연동 필요]""",
                     user_prompt=text,
                 )
                 if chat_response:
-                    await _reply(channel, chat_response, thread_ts)
-                    # 어시스턴트 응답도 메모리에 저장
+                    # 자기개선 태그 감지
+                    if "[IMPROVE:" in chat_response:
+                        import re
+                        improvements = re.findall(r'\[IMPROVE:(.*?)\]', chat_response)
+                        # 태그는 유저에게 보여주지 않음
+                        clean_response = re.sub(r'\s*\[IMPROVE:.*?\]', '', chat_response).strip()
+                        await _reply(channel, clean_response, thread_ts)
+                        # 개선 요청을 로그 채널에 기록
+                        for imp in improvements:
+                            await slack.send_message("ai-agent-logs",
+                                f"🔧 *[자기개선 요청]* {imp}\n요청자: <@{user}>\n원본: {text[:100]}")
+                            logger.info(f"[NL] Self-improvement request: {imp}")
+                    else:
+                        await _reply(channel, chat_response, thread_ts)
                     save_turn(user, "assistant", chat_response, {"action": "chat"})
                 result_text = "대화 응답"
         except Exception as e:
