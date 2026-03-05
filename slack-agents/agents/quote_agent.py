@@ -33,7 +33,7 @@ QUOTE_HISTORY_FILE = os.path.join(DATA_DIR, "quote_history.json")
 class QuoteAgent(BaseAgent):
     """영감을 주는 명언을 매 시각마다 보내주는 에이전트"""
 
-    def __init__(self, target_channel: str = "명언", **kwargs):
+    def __init__(self, target_channel: str = "ai-quote", **kwargs):
         super().__init__(
             name="quote",
             description="매 시각마다 최근 대화 맥락에 맞는 영감을 주는 명언을 보내주는 에이전트",
