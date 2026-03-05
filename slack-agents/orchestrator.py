@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import signal
 import sys
 from datetime import datetime, timezone, timedelta
@@ -269,6 +270,25 @@ async def main():
         # 0단계: 유저 메시지 메모리에 저장
         save_turn(user, "user", text)
 
+        # 0.5단계: 스레드 답글이면 원문 맥락 가져오기
+        thread_context = ""
+        if thread_ts:
+            try:
+                ch_id = await slack._resolve_channel(channel) if not channel.startswith("C") else channel
+                resp = await slack.client.conversations_replies(
+                    channel=ch_id, ts=thread_ts, limit=10
+                )
+                msgs = resp.get("messages", [])
+                thread_lines = []
+                for m in msgs:
+                    if m.get("ts") == thread_ts or m.get("text") != text:
+                        who = "봇" if m.get("bot_id") else "유저"
+                        thread_lines.append(f"[{who}] {m.get('text', '')[:300]}")
+                if thread_lines:
+                    thread_context = "\n".join(thread_lines[-8:])  # 최근 8개 메시지
+            except Exception as e:
+                logger.debug(f"[NL] Thread context fetch error: {e}")
+
         # 1단계: 과거 경험 + 대화 맥락 로드
         past_exp = load_experience()
         exp_summary = ""
@@ -280,6 +300,17 @@ async def main():
         user_context = get_user_summary(user)
 
         # 2단계: LLM으로 의도 파악
+        thread_hint = ""
+        if thread_context:
+            thread_hint = f"""
+[스레드 맥락] (유저가 이 대화의 스레드에 답글을 달았습니다)
+{thread_context}
+---
+위 스레드 맥락을 반드시 고려하여 의도를 파악하세요.
+"진행시켜", "해줘", "좋아", "그래" 같은 짧은 답글은 스레드 원문에 대한 동의/실행 요청입니다.
+이런 경우 스레드 맥락에 맞는 intent를 선택하세요 (대부분 chat).
+"""
+
         intent_response = await curator.ai_think(
             system_prompt=f"""당신은 슬랙에서 사용자를 도와주는 AI 어시스턴트입니다.
 사용자의 메시지를 분석하여 의도를 파악하세요.
@@ -289,10 +320,13 @@ async def main():
 - briefing: 이미 수집된 정보 브리핑/요약
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인. "에이전트 상태", "현황", "뭐 하고 있어?", "잘 돌아가?", "에이전트 몇 개야" 등
 - quote: 명언 보내기. "명언 하나 보내줘", "오늘의 명언", "힘이 되는 말 해줘", "동기부여 좀", "영감 주는 말", "좋은 말 해줘" 등 명언/격언/영감을 요청하는 경우
-- chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
+- chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 진행 요청, 의견 교환 등 모든 것. 실시간 도구(날씨/검색/가격/환율)를 사용할 수 있음
 
 중요: 가격, 날씨, 환율, 분석, 비교, 추이, 의견 요청 등은 모두 chat입니다. collect가 아닙니다.
+중요: "진행시켜", "해줘", "좋아 해보자", "구축해줘" 같은 프로젝트/작업 관련 지시는 chat입니다. collect가 아닙니다.
 중요: 시스템/에이전트 상태, 현황, 가동률 질문은 dashboard입니다.
+
+{thread_hint}
 
 {("과거 작업 이력:" + chr(10) + exp_summary) if exp_summary else ""}
 {user_context}
@@ -328,16 +362,55 @@ async def main():
         if action == "ignore":
             return
 
-        # 3단계: 접수 표시 (눈 리액션 + 한줄 접수 메시지)
-        ACK_MESSAGES = {
-            "collect": "👀 수집 시작합니다! 잠시만요~",
-            "briefing": "👀 브리핑 준비 중! 금방 가져올게요~",
-            "dashboard": "👀 현황 확인 중!",
-            "quote": "✨ 좋은 말 하나 찾아볼게요~",
+        # 3단계: 접수 표시 (눈 리액션 + 매번 다른 자연스러운 착수 멘트)
+        ACK_POOL = {
+            "collect": [
+                "오 바로 찾아볼게요! 🔍",
+                "좋아요, 수집 들어갑니다~",
+                "알겠습니다! 금방 모아올게요 💪",
+                "넵! 지금 바로 뒤져볼게요~",
+                "수집 착수! 잠깐만요 ⚡",
+                "달려봅니다! 🏃",
+                "맡겨주세요, 쓱 가져올게요~",
+                "오케이! 열심히 모아보겠습니다 🫡",
+            ],
+            "briefing": [
+                "브리핑 준비할게요! 잠시만요~",
+                "좋아요, 핵심만 빠르게 정리해드릴게요 📋",
+                "지금 상황 쭉 훑어보고 알려드릴게요!",
+                "넵! 브리핑 들어갑니다 🎯",
+                "알겠습니다, 금방 정리해올게요~",
+                "한번 쫙 정리해보겠습니다! 💨",
+            ],
+            "dashboard": [
+                "현황 확인해볼게요!",
+                "에이전트들 뭐하고 있나 볼게요~ 👀",
+                "시스템 상태 체크 중! 잠깐만요 🔧",
+                "넵, 지금 돌아가는 상황 보여드릴게요~",
+                "현황 파악 들어갑니다!",
+            ],
+            "quote": [
+                "좋은 말 하나 찾아볼게요~ ✨",
+                "오늘에 딱 맞는 한마디 골라볼게요!",
+                "명언 하나 가져올게요 💫",
+                "잠깐만요, 멋진 말 하나 찾는 중~ 📖",
+                "넵! 힘이 되는 한마디 찾아보겠습니다 🌟",
+            ],
+            "chat": [
+                "생각 좀 해볼게요! 🤔",
+                "오 좋은 질문이네요, 잠깐만요~",
+                "넵! 바로 답변 드릴게요 💬",
+                "한번 살펴볼게요~",
+                "알겠습니다! 생각 정리해서 바로 드릴게요 ⚡",
+                "잠시만요, 머리 좀 굴려볼게요 🧠",
+                "오케이! 바로 볼게요~",
+                "흥미롭네요, 한번 파볼게요! 🔥",
+            ],
         }
-        if thread_ts and action in ACK_MESSAGES:
+        if thread_ts and action in ACK_POOL:
             await slack.add_reaction(channel, thread_ts, "eyes")
-            await _reply(channel, ACK_MESSAGES[action], thread_ts)
+            ack_msg = random.choice(ACK_POOL[action])
+            await _reply(channel, ack_msg, thread_ts)
 
         # 4단계: 실제 업무 실행
         result_text = ""
@@ -394,6 +467,8 @@ async def main():
 - 질문에 깊이 있게 답변 (피상적 답변 금지)
 - 모르는 건 솔직히 모른다고 하되, 아는 범위에서 최선을 다함
 - 스타트업, 비즈니스, 기술, 일상 등 모든 주제 OK
+
+{("[스레드 맥락]" + chr(10) + thread_context + chr(10) + chr(10) + "위는 현재 스레드 대화입니다. 이 맥락에 맞게 답변하세요.") if thread_context else ""}
 
 {("이전 대화 이력:" + chr(10) + chat_history + chr(10) + chr(10) + "위 대화 맥락을 참고하여 자연스럽게 이어가세요.") if chat_history else "첫 대화입니다."}
 
