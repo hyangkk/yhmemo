@@ -233,6 +233,64 @@ class SlackClient:
             self._bot_user_id = result["user_id"]
         return self._bot_user_id
 
+    async def _poll_threads(self, channel_id: str, bot_id: str):
+        """활성 스레드의 답글을 백그라운드에서 폴링 (메인 폴링 루프를 블로킹하지 않음)"""
+        try:
+            active = self._active_threads.get(channel_id, {})
+            if not active:
+                return
+            stale_threads = []
+            # 최근 활성 스레드 3개만 (가장 최근 답글 기준)
+            thread_items = sorted(active.items(), key=lambda x: x[1], reverse=True)[:3]
+            for thread_ts, last_reply_ts in thread_items:
+                try:
+                    reply_result = await asyncio.wait_for(
+                        self.client.conversations_replies(
+                            channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=5,
+                        ),
+                        timeout=5.0,  # 개별 API 콜 5초 타임아웃
+                    )
+                    replies = reply_result.get("messages", [])
+                    for reply in replies:
+                        if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
+                            continue
+                        if reply.get("bot_id") or reply.get("user") == bot_id:
+                            active[thread_ts] = reply["ts"]
+                            continue
+                        reply_text = reply.get("text", "")
+                        reply_user = reply.get("user", "")
+                        if reply_text.strip() and self._natural_language_handler:
+                            logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
+                            asyncio.create_task(self._safe_nl_handler(
+                                text=reply_text, user=reply_user, channel=channel_id,
+                                thread_ts=thread_ts,
+                            ))
+                        active[thread_ts] = reply["ts"]
+                    self._save_active_threads()
+                except asyncio.TimeoutError:
+                    pass  # 타임아웃은 조용히 무시 (다음 사이클에 재시도)
+                except Exception as e:
+                    err = str(e)
+                    if "thread_not_found" in err:
+                        stale_threads.append(thread_ts)
+                    elif "ratelimited" in err:
+                        break
+                    else:
+                        logger.debug(f"Thread poll: {type(e).__name__}: {err[:60]}")
+            for t in stale_threads:
+                active.pop(t, None)
+        except Exception as e:
+            logger.debug(f"Thread polling: {e}")
+
+    async def _safe_nl_handler(self, text: str, user: str, channel: str, thread_ts: str = None):
+        """NL 핸들러를 안전하게 실행 (에러 로깅)"""
+        try:
+            await self._natural_language_handler(
+                text=text, user=user, channel=channel, thread_ts=thread_ts,
+            )
+        except Exception as e:
+            logger.error(f"NL handler error: {e}")
+
     async def _poll_channel(self, channel_name: str):
         """한 채널의 새 메시지를 폴링"""
         channel_id = await self._resolve_channel(channel_name)
@@ -292,16 +350,13 @@ class SlackClient:
                             except Exception as e:
                                 logger.error(f"Command handler error: {e}")
 
-                    # 자연어 메시지 처리
+                    # 자연어 메시지 처리 (논블로킹 - LLM 호출이 폴링을 막지 않도록)
                     elif self._natural_language_handler and text.strip():
                         logger.info(f"[poll] Natural language: '{text[:50]}'")
-                        try:
-                            await self._natural_language_handler(
-                                text=text, user=user, channel=channel,
-                                thread_ts=msg.get("ts"),
-                            )
-                        except Exception as e:
-                            logger.error(f"Natural language handler error: {e}")
+                        asyncio.create_task(self._safe_nl_handler(
+                            text=text, user=user, channel=channel,
+                            thread_ts=msg.get("ts"),
+                        ))
 
                 # 스레드 자동 발견
                 for msg in messages:
@@ -312,55 +367,10 @@ class SlackClient:
                             self._active_threads[channel_id][msg["ts"]] = msg.get("latest_reply", msg["ts"])
                             logger.info(f"[poll] Auto-tracked thread: {msg['ts']} ({msg.get('reply_count')} replies)")
 
-            # ── 2. 스레드 답글 폴링 (채널 메시지 유무와 관계없이 항상 실행) ──
-            try:
-                active = self._active_threads.get(channel_id, {})
-                if not active:
-                    return
-                stale_threads = []
-                # 모든 활성 스레드 폴링 (8~10개 수준은 rate limit 안전)
-                thread_items = list(active.items())
-                logger.debug(f"[poll] Checking {len(thread_items)} threads in {channel_name}")
-                for idx, (thread_ts, last_reply_ts) in enumerate(thread_items):
-                    if idx > 0:
-                        await asyncio.sleep(0.5)  # rate limit 방지
-                    try:
-                        reply_result = await self.client.conversations_replies(
-                            channel=channel_id, ts=thread_ts, oldest=last_reply_ts, limit=5,
-                        )
-                        replies = reply_result.get("messages", [])
-                        for reply in replies:
-                            if reply["ts"] == last_reply_ts or reply["ts"] == thread_ts:
-                                continue
-                            if reply.get("bot_id") or reply.get("user") == bot_id:
-                                # 봇 답글이면 ts만 갱신
-                                active[thread_ts] = reply["ts"]
-                                continue
-                            reply_text = reply.get("text", "")
-                            reply_user = reply.get("user", "")
-                            if reply_text.strip() and self._natural_language_handler:
-                                logger.info(f"[poll] Thread reply: '{reply_text[:50]}' from {reply_user}")
-                                try:
-                                    await self._natural_language_handler(
-                                        text=reply_text, user=reply_user, channel=channel_id,
-                                        thread_ts=thread_ts,
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Thread reply handler error: {e}")
-                            active[thread_ts] = reply["ts"]
-                        self._save_active_threads()
-                    except Exception as e:
-                        err = str(e)
-                        if "thread_not_found" in err:
-                            stale_threads.append(thread_ts)
-                        elif "ratelimited" in err:
-                            break  # rate limit이면 나머지 스레드 스킵
-                        else:
-                            logger.warning(f"Thread poll error ({thread_ts[:10]}): {type(e).__name__}: {err[:80]}")
-                for t in stale_threads:
-                    active.pop(t, None)
-            except Exception as e:
-                logger.warning(f"Thread polling failed: {e}")
+            # ── 2. 스레드 답글 폴링 (논블로킹 백그라운드 태스크) ──
+            active = self._active_threads.get(channel_id, {})
+            if active:
+                asyncio.create_task(self._poll_threads(channel_id, bot_id))
 
         except Exception as e:
             err_str = str(e)
