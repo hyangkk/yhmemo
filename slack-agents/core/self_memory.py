@@ -271,6 +271,12 @@ class SelfMemory:
         hours = plan.get("hours", {})
         return hours.get(str(hour).zfill(2), {})
 
+    def get_hour_plan_by_key(self, slot_key: str) -> dict:
+        """10분 슬롯 키(예: '14:20')로 계획 조회"""
+        plan = self.get_current_plan()
+        hours = plan.get("hours", {})
+        return hours.get(slot_key, {})
+
     def record_hourly_check(self, hour: int, planned: str, actual: str,
                             grade: str, gap_analysis: str):
         """매시간 계획 대비 실적 체크"""

@@ -143,10 +143,33 @@ class ProactiveAgent(BaseAgent):
 
         logger.info("[proactive] Goals seeded: beta launch + impact + revenue")
 
-    # ── Observe: 시간별 계획 기반 자율 운영 ─────────────
+    # ── Observe: 10분 단위 계획 기반 자율 운영 ────────────
+
+    def _current_slot(self, hour: int, minute: int) -> str:
+        """현재 10분 슬롯 키 반환. 예: '14:20' (14시 20분대)"""
+        slot_min = (minute // 10) * 10
+        return f"{str(hour).zfill(2)}:{str(slot_min).zfill(2)}"
+
+    def _get_slot_task(self, hour: int, minute: int) -> dict | None:
+        """현재 10분 슬롯의 계획 반환.
+
+        계획 구조는 두 가지를 지원:
+        1. 10분 슬롯: hours["14:20"] = {...}
+        2. 시간 슬롯 (호환): hours["14"] = {...}  → 해당 시간 전체에 적용
+        """
+        slot_key = self._current_slot(hour, minute)
+        hour_key = str(hour).zfill(2)
+
+        # 10분 슬롯이 있으면 우선
+        task = self.memory.get_hour_plan_by_key(slot_key)
+        if task:
+            return task
+
+        # 없으면 시간 단위 계획 사용 (기존 호환)
+        return self.memory.get_hour_plan(hour)
 
     async def observe(self) -> dict | None:
-        """매시간 계획을 확인하고 실행한다. 계획이 곧 실행이다."""
+        """10분마다 계획을 확인하고 실행한다. 결과물을 만든다."""
         now = self.now_kst()
         hour = now.hour
         minute = now.minute
@@ -161,9 +184,13 @@ class ProactiveAgent(BaseAgent):
             self._state["_today"] = today
             self._state["initiatives_today"] = 0
 
+        slot_key = self._current_slot(hour, minute)
+
         context = {
             "current_time": now.strftime("%Y-%m-%d %H:%M"),
             "hour": hour,
+            "minute": minute,
+            "slot_key": slot_key,
             "weekday": weekday,
             "today": today,
             "cycle": cycle,
@@ -190,28 +217,34 @@ class ProactiveAgent(BaseAgent):
             return context
 
         # ══════════════════════════════════════════════
-        #  핵심: 매시간 계획을 보고 실행한다
+        #  핵심: 10분마다 계획을 보고 실행한다
         # ══════════════════════════════════════════════
 
-        # 1단계: 매시간 정각(0-5분)에 이전 시간 체크 → 평가
-        last_checked_hour = self._state.get("last_hourly_check_hour", -1)
-        if minute <= 5 and hour != last_checked_hour and hour > 0:
-            context["action"] = "hourly_check"
-            context["check_hour"] = hour - 1
-            return context
+        # 1단계: 10분 슬롯 경계(0-2분)에 이전 슬롯 체크 → 평가
+        slot_minute = minute % 10
+        last_checked_slot = self._state.get("last_checked_slot", "")
+        if slot_minute <= 2 and last_checked_slot != slot_key:
+            # 이전 슬롯 평가
+            prev_slot = self._prev_slot(hour, minute)
+            prev_result = self._state.get(f"slot_{prev_slot}_result")
+            if prev_result:
+                context["action"] = "slot_check"
+                context["check_slot"] = prev_slot
+                context["prev_result"] = prev_result
+                return context
 
-        # 2단계: 현재 시간의 계획 항목 실행
-        current_hour_task = self.memory.get_hour_plan(hour)
-        last_executed_hour = self._state.get("last_executed_hour", -1)
+        # 2단계: 현재 슬롯의 계획 항목 실행
+        current_task = self._get_slot_task(hour, minute)
+        last_executed_slot = self._state.get("last_executed_slot", "")
 
-        if current_hour_task and last_executed_hour != hour:
-            # 이 시간의 계획이 있고 아직 실행 안 했으면 → 실행
+        if current_task and last_executed_slot != slot_key:
             context["action"] = "execute_hourly_task"
-            context["hour_task"] = current_hour_task
+            context["hour_task"] = current_task
             context["task_hour"] = hour
+            context["slot_key"] = slot_key
             return context
 
-        # 3단계: 이 시간의 메인 작업 완료 후 → 목표 스텝 실행
+        # 3단계: 슬롯 작업 완료 후 → 목표 스텝 실행
         next_action = self.planner.pick_next_action()
         if next_action:
             goal, step = next_action
@@ -231,7 +264,7 @@ class ProactiveAgent(BaseAgent):
             context["proposal"] = approved[0]
             return context
 
-        # 5단계: 계획에 없는 빈 시간 → 자율 행동
+        # 5단계: 빈 시간 → 자율 행동
         active_goals = self.planner.get_active_goals()
         all_done = all(g.is_done() for g in active_goals) if active_goals else True
 
@@ -251,9 +284,17 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "progress_report"
             return context
 
-        # 항상 뭔가 한다
         context["action"] = "find_work"
         return context
+
+    def _prev_slot(self, hour: int, minute: int) -> str:
+        """이전 10분 슬롯 키"""
+        slot_min = (minute // 10) * 10
+        if slot_min >= 10:
+            return f"{str(hour).zfill(2)}:{str(slot_min - 10).zfill(2)}"
+        elif hour > 0:
+            return f"{str(hour - 1).zfill(2)}:50"
+        return "23:50"
 
     # ── Think: 단순 패스스루 (observe에서 이미 결정) ──
 
