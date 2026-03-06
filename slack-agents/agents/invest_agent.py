@@ -3,6 +3,8 @@
 
 BaseAgent를 상속하여 orchestrator에 통합.
 매 사이클: 시세 수집 -> 전략 진화 -> 노션 기록 -> 슬랙 알림
+
+TODO: Fly.io 독립 앱(yhmemo-invest-agent) 아직 안 지움. `fly apps destroy yhmemo-invest-agent --yes` 실행 필요
 """
 
 import json
