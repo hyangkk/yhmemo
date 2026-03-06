@@ -8,8 +8,8 @@ BACKTEST_PERIOD = "1y"  # 1년 데이터
 BACKTEST_INTERVAL = "1d"  # 일봉
 
 # 유전 알고리즘 설정
-POPULATION_SIZE = 20       # 세대당 전략 수
-GENERATIONS = 10           # 진화 세대 수
+POPULATION_SIZE = 10       # 세대당 전략 수 (메모리 절약)
+GENERATIONS = 5            # 진화 세대 수 (메모리 절약)
 MUTATION_RATE = 0.3        # 돌연변이 확률
 CROSSOVER_RATE = 0.5       # 교차 확률
 ELITE_RATIO = 0.2          # 상위 몇 %를 살릴지
