@@ -13,6 +13,7 @@ LS증권 API 매매 연결 테스트
 """
 
 import asyncio
+import json
 import os
 import sys
 
@@ -79,7 +80,7 @@ async def main():
         try:
             result = await broker.buy("005930", qty=1, order_type="market")
             print(f"    주문번호: {result['order_no']}")
-            print(f"    {result}\n")
+            print(f"    응답 raw: {json.dumps(result['raw'], ensure_ascii=False, indent=2)[:500]}\n")
         except Exception as e:
             print(f"    FAIL - {e}\n")
 

@@ -95,6 +95,7 @@ class LSBroker:
 
         async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             resp = await client.post(url, headers=headers, json=body)
+            logger.debug(f"[ls_broker] {tr_cd} -> {resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
             return resp.json()
 
@@ -167,20 +168,19 @@ class LSBroker:
             }
         }
         data = await self._request("CSPAT00601", "/stock/order", body)
-        out = data.get("CSPAT00601OutBlock2", {})
-        order_no = out.get("OrdNo", "")
-        logger.info(f"[ls_broker] BUY {stock_code} x{qty} @ {price or 'market'} -> order#{order_no}")
+        out = self._parse_order_response(data)
+        logger.info(f"[ls_broker] BUY {stock_code} x{qty} @ {price or 'market'} -> order#{out.get('OrdNo', '')}")
         return {
-            "order_no": order_no,
+            "order_no": out.get("OrdNo", ""),
             "stock_code": stock_code,
             "side": "buy",
             "qty": qty,
             "price": price,
             "order_type": order_type,
-            "raw": out,
+            "raw": data,
         }
 
-    # ── 매도 주문 (CSPAT00701) ────────────────────────
+    # ── 매도 주문 ─────────────────────────────────────
 
     async def sell(
         self,
@@ -218,18 +218,24 @@ class LSBroker:
             }
         }
         data = await self._request("CSPAT00601", "/stock/order", body)
-        out = data.get("CSPAT00601OutBlock2", {})
-        order_no = out.get("OrdNo", "")
-        logger.info(f"[ls_broker] SELL {stock_code} x{qty} @ {price or 'market'} -> order#{order_no}")
+        out = self._parse_order_response(data)
+        logger.info(f"[ls_broker] SELL {stock_code} x{qty} @ {price or 'market'} -> order#{out.get('OrdNo', '')}")
         return {
-            "order_no": order_no,
+            "order_no": out.get("OrdNo", ""),
             "stock_code": stock_code,
             "side": "sell",
             "qty": qty,
             "price": price,
             "order_type": order_type,
-            "raw": out,
+            "raw": data,
         }
+
+    def _parse_order_response(self, data: dict) -> dict:
+        """주문 응답에서 OutBlock을 찾아 반환 (OutBlock1 또는 OutBlock2)"""
+        for key in ["CSPAT00601OutBlock2", "CSPAT00601OutBlock1", "CSPAT00601OutBlock"]:
+            if key in data and data[key]:
+                return data[key]
+        return {}
 
     # ── 잔고 조회 (t0424) ────────────────────────────
 
@@ -275,7 +281,7 @@ class LSBroker:
             "holdings": holdings,
         }
 
-    # ── 주문 체결 내역 조회 (t0425) ──────────────────
+    # ── 주문 체결 내역 조회 (CSPAQ13700) ──────────────
 
     async def get_orders(self) -> list[dict]:
         """
@@ -285,6 +291,42 @@ class LSBroker:
             [{order_no, stock_code, name, side, qty, price, status}, ...]
         """
         body = {
+            "CSPAQ13700InBlock1": {
+                "OrdMktCode": "00",
+                "BnsTpCode": "0",
+                "IsuNo": "",
+                "ExecYn": "0",
+                "OrdDt": "",
+                "SrtOrdNo2": 0,
+                "BkseqTpCode": "0",
+                "OrdPtnCode": "00",
+            }
+        }
+        try:
+            data = await self._request("CSPAQ13700", "/stock/accno", body)
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"[ls_broker] get_orders failed: {e}")
+            # fallback: t0425
+            return await self._get_orders_t0425()
+        items = data.get("CSPAQ13700OutBlock3", [])
+
+        orders = []
+        for item in items:
+            orders.append({
+                "order_no": item.get("OrdNo", ""),
+                "stock_code": item.get("IsuNo", "").lstrip("A"),
+                "name": item.get("IsuNm", ""),
+                "side": "buy" if item.get("BnsTpCode") == "2" else "sell",
+                "qty": int(item.get("OrdQty", 0)),
+                "price": int(item.get("OrdPrc", 0)),
+                "filled_qty": int(item.get("ExecQty", 0)),
+                "status": item.get("ExecTpNm", ""),
+            })
+        return orders
+
+    async def _get_orders_t0425(self) -> list[dict]:
+        """t0425 fallback"""
+        body = {
             "t0425InBlock": {
                 "expcode": "",
                 "chegession": "0",
@@ -292,7 +334,11 @@ class LSBroker:
                 "cts_ordno": "",
             }
         }
-        data = await self._request("t0425", "/stock/accno", body)
+        try:
+            data = await self._request("t0425", "/stock/accno", body)
+        except Exception as e:
+            logger.warning(f"[ls_broker] t0425 also failed: {e}")
+            return []
         items = data.get("t0425OutBlock1", [])
 
         orders = []
