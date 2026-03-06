@@ -1,0 +1,40 @@
+name: AI BI 시장 인텔리전스 에이전트
+
+on:
+  schedule:
+    # 매일 오전 8시 KST (UTC 23:00 전날)
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      user_context:
+        description: "분석 맥락 커스터마이즈 (선택, 예: AI 의료 분야 집중 분석)"
+        required: false
+        default: ""
+
+jobs:
+  run-bi-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 의존성 설치
+        run: pip install anthropic requests
+
+      - name: AI BI 시장 인텔리전스 에이전트 실행
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BI_USER_CONTEXT: ${{ github.event.inputs.user_context }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: python scripts/bi_market_agent.py

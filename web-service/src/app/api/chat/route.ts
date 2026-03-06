@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250514",
       max_tokens: 1000,
       system: `당신은 뉴스 기사에 대해 질문에 답하는 AI 어시스턴트입니다.
 주어진 기사 정보를 바탕으로 사용자의 질문에 친절하고 간결하게 답변하세요.

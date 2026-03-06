@@ -1,0 +1,19 @@
+app = 'yhmbp14'
+primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
+
+[build]
+
+# 봇은 웹서버가 아니므로 HTTP 서비스 비활성화
+# 대신 프로세스로 상시 실행
+[processes]
+  app = "python orchestrator.py"
+
+# 상태 파일(메모리, 스레드 등) 영속 저장용 볼륨
+[mounts]
+  source = "agents_data"
+  destination = "/app/data"
+
+[vm]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
