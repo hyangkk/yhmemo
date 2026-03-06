@@ -409,60 +409,53 @@ class ProactiveAgent(BaseAgent):
             await self._consider_plan_adjustment(task_hour, task_desc, result)
 
     async def _hourly_build(self, task_desc: str, expected: str) -> str:
-        """build 메서드: Claude Code CLI로 실제 코드 작성"""
-        clean_env = {k: v for k, v in os.environ.items()}
-        clean_env["CLAUDECODE"] = ""
-        if "ANTHROPIC_API_KEY" not in clean_env:
-            from dotenv import dotenv_values
-            env_vals = dotenv_values()
-            if "ANTHROPIC_API_KEY" in env_vals:
-                clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
+        """build 메서드: AI 분석 + 실행 계획 + 웹검색으로 실제 작업 수행"""
+        from core.tools import _web_search
 
-        # 메모리 컨텍스트를 프롬프트에 포함
         memory_ctx = self.memory.get_decision_context()
 
-        prompt = f"""{task_desc}
+        # 1단계: 작업에 필요한 리서치
+        search_result = ""
+        try:
+            keywords = await self.ai_think(
+                system_prompt='이 빌드 작업에 필요한 검색 키워드 1개를 생성. JSON: {"query": "검색어"}',
+                user_prompt=f"작업: {task_desc}\n예상 결과: {expected}",
+            )
+            parsed = self._parse_json(keywords)
+            query = parsed.get("query", task_desc[:50])
+            search_result = await _web_search(query)
+        except Exception:
+            pass
 
-예상 결과물: {expected}
+        # 2단계: AI가 작업을 분석하고 구체적 결과물 생성
+        result = await self.ai_think(
+            system_prompt=f"""당신은 자율 운영 에이전트입니다. 주어진 작업을 실제로 수행하고 결과물을 만드세요.
 
 {memory_ctx}
 
-[자율 실행 지침]
-- 모든 권한이 부여됨. 바로 실행.
-- 작업 완료 후 git add, git commit, git push까지 자동.
-- 작업 디렉토리: /home/user/yhmemo
-- 기존 slack-agents/ 코드를 깨뜨리지 마세요.
-- 웹 서비스는 /home/user/yhmemo/web-service/ 에 있습니다.
-- Supabase collected_items, curated_items 테이블에 수집 데이터가 있습니다.
-- 결과를 간결하게 요약하세요."""
+규칙:
+- 리서치 결과와 맥락을 기반으로 실제 결과물(분석, 보고서, 전략, 콘텐츠 등)을 생성
+- 코드 작성이 필요한 작업이면 구체적 구현 계획 + 핵심 코드 스니펫 제공
+- 데이터 분석이면 실제 분석 결과를 제공
+- 콘텐츠 작성이면 실제 콘텐츠를 작성
+- 반드시 구체적이고 실행 가능한 결과물을 만들 것""",
+            user_prompt=f"""작업: {task_desc}
+예상 결과물: {expected}
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "claude", "-p", prompt,
-                "--output-format", "text",
-                "--permission-mode", "acceptEdits",
-                cwd="/home/user/yhmemo",
-                env=clean_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+참고 자료:
+{search_result[:1500] if search_result else '(검색 결과 없음)'}""",
+        )
+
+        if result:
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"✅ *[작업 완료]* {task_desc[:100]}\n```{result[:500]}```",
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-            output = stdout.decode("utf-8", errors="replace").strip()
+            # 인사이트 기록
+            self.memory.record_insight(result[:200], context=task_desc[:50])
+            return result[:800]
 
-            if proc.returncode == 0 and output:
-                await self.slack.send_message(
-                    "ai-agent-logs",
-                    f"✅ *[빌드 완료]* {task_desc[:100]}\n```{output[:400]}```",
-                )
-                return output[:800]
-
-            err = stderr.decode("utf-8", errors="replace").strip()
-            return f"빌드 실패: {err[:300]}"
-
-        except asyncio.TimeoutError:
-            return "빌드 타임아웃 (10분 초과)"
-        except Exception as e:
-            return f"빌드 에러: {str(e)[:200]}"
+        return "작업 결과 생성 실패"
 
     async def _hourly_research(self, task_desc: str) -> str:
         """research 메서드: 웹 검색 + AI 분석"""
@@ -720,65 +713,56 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
         return "제안 생성 실패"
 
     async def _execute_build_step(self, step) -> str:
-        """Claude Code CLI로 코드 작성/빌드 — 최대 10분, 결과 슬랙 보고"""
-        clean_env = {k: v for k, v in os.environ.items()}
-        clean_env["CLAUDECODE"] = ""
-        if "ANTHROPIC_API_KEY" not in clean_env:
-            from dotenv import dotenv_values
-            env_vals = dotenv_values()
-            if "ANTHROPIC_API_KEY" in env_vals:
-                clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
-
-        prompt = f"""{step.description}
-
-[자율 실행 지침]
-- 모든 권한이 부여되었습니다. 바로 실행하세요.
-- 작업 완료 후 git add, git commit, git push까지 자동으로 하세요.
-- 작업 디렉토리: /home/user/yhmemo
-- 기존 slack-agents/ 코드를 깨뜨리지 마세요.
-- 새 서비스는 별도 디렉토리에 만드세요 (예: /home/user/yhmemo/web-service/).
-- 이미 수집된 데이터는 Supabase의 collected_items, curated_items 테이블에 있습니다.
-- 결과를 간결하게 요약하세요."""
+        """AI API로 작업 수행 — 리서치 + 분석 + 결과물 생성"""
+        from core.tools import _web_search
 
         await self.slack.send_message(
             "ai-agent-logs",
-            f"🔨 *[빌드 시작]* {step.description[:150]}",
+            f"🔨 *[작업 시작]* {step.description[:150]}",
         )
 
+        # 리서치
+        search_result = ""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "claude", "-p", prompt,
-                "--output-format", "text",
-                "--permission-mode", "acceptEdits",
-                cwd="/home/user/yhmemo",
-                env=clean_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            keywords = await self.ai_think(
+                system_prompt='검색 키워드 1개 생성. JSON: {"query": "검색어"}',
+                user_prompt=f"작업: {step.description}",
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-            output = stdout.decode("utf-8", errors="replace").strip()
+            parsed = self._parse_json(keywords)
+            search_result = await _web_search(parsed.get("query", step.description[:50]))
+        except Exception:
+            pass
 
-            if proc.returncode == 0 and output:
-                summary = output[:800]
-                await self.slack.send_message(
-                    "ai-agents-general",
-                    f"✅ *빌드 완료*\n{step.description[:100]}\n\n```{summary[:500]}```",
-                )
-                return summary
-            err = stderr.decode("utf-8", errors="replace").strip()
+        memory_ctx = self.memory.get_decision_context()
+
+        result = await self.ai_think(
+            system_prompt=f"""당신은 자율 운영 에이전트입니다. 작업을 실제로 수행하고 구체적 결과물을 만드세요.
+
+{memory_ctx}
+
+규칙:
+- 리서치 결과를 기반으로 실제 결과물(분석, 보고서, 전략, 콘텐츠 등)을 생성
+- 코드가 필요하면 구체적 구현 계획 + 핵심 코드 제공
+- 반드시 구체적이고 실행 가능한 결과물을 만들 것""",
+            user_prompt=f"""작업: {step.description}
+
+참고 자료:
+{search_result[:1500] if search_result else '(없음)'}""",
+        )
+
+        if result:
             await self.slack.send_message(
-                "ai-agent-logs",
-                f"⚠️ *빌드 실패:* {step.description[:80]}\n```{err[:300]}```",
+                "ai-agents-general",
+                f"✅ *작업 완료*\n{step.description[:100]}\n\n```{result[:500]}```",
             )
-            return f"빌드 실패: {err[:300]}"
-        except asyncio.TimeoutError:
-            await self.slack.send_message(
-                "ai-agent-logs",
-                f"⏱️ *빌드 타임아웃 (10분):* {step.description[:100]}",
-            )
-            return "빌드 타임아웃 (10분 초과)"
-        except Exception as e:
-            return f"빌드 에러: {str(e)[:200]}"
+            self.memory.record_insight(result[:200], context=step.description[:50])
+            return result[:800]
+
+        await self.slack.send_message(
+            "ai-agent-logs",
+            f"⚠️ *작업 실패:* {step.description[:80]}",
+        )
+        return "작업 결과 생성 실패"
 
     async def _execute_measure_step(self, goal, step) -> str:
         plan_summary = "\n".join(
