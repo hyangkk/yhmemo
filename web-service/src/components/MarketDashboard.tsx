@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 interface Asset {
   id: string;
@@ -54,17 +54,16 @@ function getFearGreedBg(value: number): string {
   return "bg-emerald-500";
 }
 
+const MARKET_REFRESH = 2 * 60; // seconds
+
 export default function MarketDashboard() {
   const [data, setData] = useState<MarketData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [countdown, setCountdown] = useState(MARKET_REFRESH);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2 * 60 * 1000); // 2분마다
-    return () => clearInterval(interval);
-  }, []);
-
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
+    setRefreshing(true);
     try {
       const res = await fetch("/api/market");
       if (!res.ok) return;
@@ -74,8 +73,24 @@ export default function MarketDashboard() {
       // silent fail
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, MARKET_REFRESH * 1000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  // 카운트다운
+  useEffect(() => {
+    setCountdown(MARKET_REFRESH);
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? MARKET_REFRESH : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data]);
 
   if (loading) {
     return (
@@ -106,9 +121,15 @@ export default function MarketDashboard() {
           </span>
           시장 현황
         </h2>
-        <span className="text-xs text-gray-400">
-          {new Date(updatedAt).toLocaleTimeString("ko-KR")} 기준
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium">
+            <span className={`w-1.5 h-1.5 rounded-full bg-green-500 ${refreshing ? "animate-ping" : "animate-pulse"}`} />
+            {refreshing ? "갱신 중" : "LIVE"}
+          </span>
+          <span className="text-xs text-gray-400">
+            {countdown}초 후 갱신 · {new Date(updatedAt).toLocaleTimeString("ko-KR")} 기준
+          </span>
+        </div>
       </div>
 
       {/* Fear & Greed Index */}
