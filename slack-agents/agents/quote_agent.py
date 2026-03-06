@@ -175,6 +175,9 @@ class QuoteAgent(BaseAgent):
         await self._reply(self._target_channel, message)
         logger.info(f"[quote] Sent quote by {author}")
 
+        # 이번 시각 전송 완료 표시
+        self._last_sent_hour = decision.get("hour")
+
         # 이력 저장
         self._quote_history.append(f"{quote_ko} — {author}")
         self._save_history()
@@ -195,6 +198,3 @@ class QuoteAgent(BaseAgent):
         if reason:
             message += f"\n\n💭 _{reason}_"
         return message
-
-        # 이번 시각 전송 완료 표시
-        self._last_sent_hour = decision["hour"]
