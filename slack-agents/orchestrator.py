@@ -52,6 +52,7 @@ from agents.investment_agent import InvestmentAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
+from core.security import sanitize_dev_prompt, validate_cwd
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -450,6 +451,25 @@ async def main():
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
+                        # Security: sanitize prompt before passing to CLI
+                        full_prompt, sec_warnings = sanitize_dev_prompt(full_prompt)
+                        if not full_prompt:
+                            warn_msg = "보안 검사에서 차단된 패턴이 감지되었습니다: " + "; ".join(sec_warnings)
+                            await _reply(channel, f"⛔ {warn_msg}", thread_ts)
+                            result_text = f"dev 보안 차단: {'; '.join(sec_warnings)}"
+                            success = False
+                            raise ValueError(warn_msg)
+                        if sec_warnings:
+                            logger.warning(f"[dev] Security warnings: {sec_warnings}")
+
+                        # Security: validate working directory
+                        dev_cwd = "/home/user/yhmemo"
+                        if not validate_cwd(dev_cwd):
+                            await _reply(channel, "⛔ 작업 디렉토리가 허용 범위를 벗어났습니다.", thread_ts)
+                            result_text = "dev 보안 차단: invalid cwd"
+                            success = False
+                            raise ValueError(f"Invalid cwd: {dev_cwd}")
+
                         # CLAUDECODE를 빈 문자열로 설정 (중첩 세션 체크 우회)
                         clean_env = {k: v for k, v in os.environ.items()}
                         clean_env["CLAUDECODE"] = ""
@@ -463,7 +483,7 @@ async def main():
                             "claude", "-p", full_prompt,
                             "--output-format", "text",
                             "--permission-mode", "acceptEdits",
-                            cwd="/home/user/yhmemo",
+                            cwd=dev_cwd,
                             env=clean_env,
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
@@ -797,6 +817,27 @@ async def main():
 - 사용자에게 승인을 묻지 마세요. 모든 것이 사전 승인됨.
 - 작업 디렉토리: /home/user/yhmemo
 - 결과를 간결하게 요약하세요."""
+
+                            # Security: sanitize prompt
+                            full_prompt, sec_warnings = sanitize_dev_prompt(full_prompt)
+                            if not full_prompt:
+                                warn_msg = f"보안 차단: {'; '.join(sec_warnings)}"
+                                logger.warning(f"[master] Dev command blocked: {sec_warnings}")
+                                err_msg = f"⛔ *[마스터]* {warn_msg}"
+                                if thread_ts:
+                                    await _reply(channel, err_msg, thread_ts)
+                                else:
+                                    await slack.send_message(channel, err_msg)
+                                continue
+                            if sec_warnings:
+                                logger.warning(f"[master] Dev security warnings: {sec_warnings}")
+
+                            # Security: validate working directory
+                            dev_cwd = "/home/user/yhmemo"
+                            if not validate_cwd(dev_cwd):
+                                logger.error(f"[master] Invalid cwd: {dev_cwd}")
+                                continue
+
                             # 슬랙에 작업 시작 알림
                             start_msg = f"🎯 *[마스터]* dev 작업 지시\n> {task_desc[:200]}"
                             if thread_ts:
@@ -815,7 +856,7 @@ async def main():
                                 "claude", "-p", full_prompt,
                                 "--output-format", "text",
                                 "--permission-mode", "acceptEdits",
-                                cwd="/home/user/yhmemo",
+                                cwd=dev_cwd,
                                 env=clean_env,
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
