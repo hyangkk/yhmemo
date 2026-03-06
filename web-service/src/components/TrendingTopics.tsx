@@ -40,23 +40,44 @@ const heatConfig = {
   },
 };
 
+const TREND_REFRESH = 10 * 60; // seconds
+
 export default function TrendingTopics() {
   const [data, setData] = useState<TrendData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [countdown, setCountdown] = useState(TREND_REFRESH);
+
+  async function fetchTrends() {
+    try {
+      const res = await fetch("/api/trends");
+      if (res.ok) setData(await res.json());
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function fetchTrends() {
-      try {
-        const res = await fetch("/api/trends");
-        if (res.ok) setData(await res.json());
-      } catch {
-        // silent
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchTrends();
+    const interval = setInterval(fetchTrends, TREND_REFRESH * 1000);
+    const onVisible = () => { if (!document.hidden) fetchTrends(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 카운트다운
+  useEffect(() => {
+    setCountdown(TREND_REFRESH);
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? TREND_REFRESH : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data]);
 
   if (loading) {
     return (
@@ -88,9 +109,13 @@ export default function TrendingTopics() {
           </span>
           지금 뜨는 토픽
         </h2>
-        <span className="text-xs text-gray-400">
-          {data.newsCount}개 뉴스 분석
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-400">{data.newsCount}개 뉴스 분석</span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+            {countdown < 60 ? `${countdown}초` : `${Math.floor(countdown / 60)}분`} 후 갱신
+          </span>
+        </div>
       </div>
 
       {/* 떠오르는 이슈 */}

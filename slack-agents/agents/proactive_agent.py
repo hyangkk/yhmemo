@@ -331,37 +331,8 @@ class ProactiveAgent(BaseAgent):
             logger.error(f"[proactive] Action '{action}' failed: {e}", exc_info=True)
             act_result = f"error: {str(e)[:80]}"
 
-        # ── 매 사이클 슬랙 상태 보고 ──
-        await self._report_cycle(cycle, slot_key, action, act_result)
-
-    async def _report_cycle(self, cycle: int, slot_key: str, action: str, result: str):
-        """매 사이클 완료 시 ai-agents-general에 간결 보고"""
-        try:
-            now = self.now_kst()
-            time_str = now.strftime("%H:%M")
-
-            # 활성 목표 요약
-            active_goals = self.planner.get_active_goals()
-            goals_brief = ", ".join(
-                f"{g.title[:20]}({g.progress_pct()}%)" for g in active_goals[:3]
-            ) if active_goals else "없음"
-
-            # 최근 평가 등급
-            recent = self.memory.get_recent_evaluations(3)
-            grades = " ".join(f"[{e['grade']}]" for e in recent) if recent else "-"
-
-            status_emoji = "🟢" if result == "completed" else "🟡" if "timeout" in result else "🔴"
-
-            msg = (
-                f"{status_emoji} *사이클 #{cycle}* ({time_str} KST | {slot_key})\n"
-                f"액션: `{action}` → {result}\n"
-                f"목표: {goals_brief}\n"
-                f"최근 등급: {grades}"
-            )
-
-            await self.slack.send_message("ai-agents-general", msg)
-        except Exception as e:
-            logger.debug(f"[proactive] Cycle report failed: {e}")
+        # ── 사이클 로그만 (슬랙 전송 안 함, 10분 가동 리포트로 대체) ──
+        logger.info(f"[proactive] Cycle #{cycle} ({slot_key}): {action} → {act_result}")
 
     # ══════════════════════════════════════════════════
     #  액션 구현

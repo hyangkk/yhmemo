@@ -21,20 +21,41 @@ interface BriefingData {
   updated_at: string;
 }
 
+const REFRESH_INTERVAL = 5 * 60; // seconds
+
 export default function Dashboard() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
 
   useEffect(() => {
     fetchData();
-    // 5분마다 자동 갱신
-    const interval = setInterval(fetchData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchData, REFRESH_INTERVAL * 1000);
+    const onVisible = () => { if (!document.hidden) fetchData(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
+  // 카운트다운 타이머
+  useEffect(() => {
+    setCountdown(REFRESH_INTERVAL);
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) return REFRESH_INTERVAL;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data]);
+
   async function fetchData() {
+    setRefreshing(true);
     try {
       const res = await fetch("/api/briefings?limit=30");
       if (!res.ok) throw new Error("데이터를 불러올 수 없습니다");
@@ -45,6 +66,7 @@ export default function Dashboard() {
       setError(err instanceof Error ? err.message : "오류 발생");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -110,19 +132,29 @@ export default function Dashboard() {
       {/* 전체 뉴스 */}
       <div>
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
             최신 뉴스
-            <span className="ml-2 text-sm font-normal text-gray-500">
+            <span className="text-sm font-normal text-gray-500">
               {filtered.length}건
+            </span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              LIVE
             </span>
           </h2>
 
-          {data?.updated_at && (
+          <div className="flex items-center gap-3">
             <span className="text-xs text-gray-400">
-              마지막 업데이트:{" "}
-              {new Date(data.updated_at).toLocaleString("ko-KR")}
+              {countdown < 60
+                ? `${countdown}초 후 갱신`
+                : `${Math.floor(countdown / 60)}분 후 갱신`}
             </span>
-          )}
+            {data?.updated_at && (
+              <span className="text-xs text-gray-400">
+                {new Date(data.updated_at).toLocaleTimeString("ko-KR")} 기준
+              </span>
+            )}
+          </div>
         </div>
 
         {/* 소스 필터 */}
@@ -174,10 +206,11 @@ export default function Dashboard() {
       <div className="mt-8 text-center">
         <button
           onClick={fetchData}
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition font-medium"
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition font-medium disabled:opacity-60"
         >
           <svg
-            className="w-4 h-4"
+            className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -189,7 +222,7 @@ export default function Dashboard() {
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
             />
           </svg>
-          새로고침
+          {refreshing ? "갱신 중..." : "새로고침"}
         </button>
       </div>
     </section>

@@ -61,6 +61,7 @@ export default function MorningBriefing() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [bookmarks, setBookmarks] = useState<string[]>([]);
+  const [newBriefingAvailable, setNewBriefingAvailable] = useState(false);
 
   // 북마크 로드
   useEffect(() => {
@@ -85,6 +86,14 @@ export default function MorningBriefing() {
   useEffect(() => {
     fetchBriefing();
   }, [fetchBriefing]);
+
+  // 30분 후 새 브리핑 알림 (읽는 중 방해하지 않음)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setNewBriefingAvailable(true);
+    }, 30 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [data]);
 
   // 키보드 네비게이션
   useEffect(() => {
@@ -347,6 +356,21 @@ export default function MorningBriefing() {
 
   return (
     <section className="max-w-2xl mx-auto px-4 py-8">
+      {/* 새 브리핑 알림 배너 */}
+      {newBriefingAvailable && (
+        <div className="mb-4 flex items-center justify-between px-4 py-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <span className="text-blue-700 dark:text-blue-300 font-medium">새 브리핑이 준비됐어요!</span>
+          </div>
+          <button
+            onClick={() => { setNewBriefingAvailable(false); resetBriefing(); }}
+            className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+          >
+            새로 받기
+          </button>
+        </div>
+      )}
       {/* 프로그레스 바 */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
