@@ -51,7 +51,7 @@ from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
-from core.tools import TOOL_DEFINITIONS, execute_tool_calls
+from core.tools import TOOL_DEFINITIONS, execute_tool_calls, set_ls_client
 from core import agent_tracker
 
 # ── 로깅 설정 ──────────────────────────────────────────
@@ -124,6 +124,7 @@ async def main():
         ls_client = LSSecuritiesClient(paper_trading=paper)
         mode = "모의투자" if paper else "실전투자"
         logger.info(f"LS증권 Open API 연동 활성화 ({mode})")
+        set_ls_client(ls_client)
 
     # ── 메시지 버스 ─────────────────────────────────────
 
@@ -249,6 +250,40 @@ async def main():
         except Exception as e:
             await _reply(channel, f"시세 조회 실패: {e}", thread_ts)
 
+    # ── 투자 명령어 ────────────────────────────────────
+    from core.tools import _stock_price, _stock_buy, _stock_sell, _stock_balance
+
+    async def cmd_stock_price(args: str, user: str, channel: str, thread_ts: str = None):
+        code = args.strip() or "005930"
+        result = await _stock_price(code)
+        await _reply(channel, result, thread_ts)
+
+    async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
+        parts = args.strip().split()
+        if len(parts) < 2:
+            await _reply(channel, "사용법: `!매수 종목코드 수량 [가격]`\n예: `!매수 005930 1` (삼성전자 1주 시장가)", thread_ts)
+            return
+        code, qty = parts[0], int(parts[1])
+        price = int(parts[2]) if len(parts) > 2 else 0
+        limit = price > 0
+        result = await _stock_buy(code, qty, price, limit=limit)
+        await _reply(channel, result, thread_ts)
+
+    async def cmd_sell(args: str, user: str, channel: str, thread_ts: str = None):
+        parts = args.strip().split()
+        if len(parts) < 2:
+            await _reply(channel, "사용법: `!매도 종목코드 수량 [가격]`\n예: `!매도 005930 1` (삼성전자 1주 시장가)", thread_ts)
+            return
+        code, qty = parts[0], int(parts[1])
+        price = int(parts[2]) if len(parts) > 2 else 0
+        limit = price > 0
+        result = await _stock_sell(code, qty, price, limit=limit)
+        await _reply(channel, result, thread_ts)
+
+    async def cmd_balance(args: str, user: str, channel: str, thread_ts: str = None):
+        result = await _stock_balance()
+        await _reply(channel, result, thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
@@ -256,6 +291,10 @@ async def main():
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
+    slack.on_command("주가", cmd_stock_price)
+    slack.on_command("매수", cmd_buy)
+    slack.on_command("매도", cmd_sell)
+    slack.on_command("잔고", cmd_balance)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -349,12 +388,14 @@ async def main():
 - briefing: 이미 수집된 정보 브리핑/요약
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
+- invest: 주식 매매(매수/매도), 주가 조회, 잔고 확인, 투자 전략 실행. "삼성전자 사줘", "005930 1주 매수", "잔고 보여줘", "삼성전자 시세", "포트폴리오 확인" 등
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
 중요: 가격, 날씨, 환율, 분석, 비교 등은 chat. collect가 아닙니다.
 중요: 실제 코드/프로젝트를 만들어달라는 요청은 dev입니다. 단순 논의/질문은 chat.
 중요: 시스템/에이전트 상태 질문은 dashboard.
+중요: 주식 매수/매도/잔고/시세 관련 요청은 invest. "삼성전자 사줘"="매수", "팔아줘"="매도", "잔고"="조회".
 
 {thread_hint}
 
@@ -363,10 +404,14 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|chat|dev|ignore",
+  "intent": "collect|briefing|dashboard|quote|invest|chat|dev|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
+  "invest_action": "buy|sell|price|balance (invest일 때만)",
+  "invest_code": "종목코드 6자리 (invest일 때, 예: 005930)",
+  "invest_qty": "수량 (invest 매수/매도일 때)",
+  "invest_price": "지정가 (0이면 시장가, invest일 때)",
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
             user_prompt=text,
@@ -422,6 +467,32 @@ async def main():
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
+            elif action == "invest":
+                inv_action = parsed.get("invest_action", "")
+                inv_code = parsed.get("invest_code", "")
+                inv_qty = int(parsed.get("invest_qty", 0) or 0)
+                inv_price = int(parsed.get("invest_price", 0) or 0)
+
+                if inv_action == "balance":
+                    result = await _stock_balance()
+                    await _reply(channel, result, thread_ts)
+                    result_text = "잔고 조회 완료"
+                elif inv_action == "price" and inv_code:
+                    result = await _stock_price(inv_code)
+                    await _reply(channel, result, thread_ts)
+                    result_text = f"{inv_code} 시세 조회 완료"
+                elif inv_action == "buy" and inv_code and inv_qty > 0:
+                    result = await _stock_buy(inv_code, inv_qty, inv_price, limit=inv_price > 0)
+                    await _reply(channel, result, thread_ts)
+                    result_text = f"{inv_code} {inv_qty}주 매수"
+                elif inv_action == "sell" and inv_code and inv_qty > 0:
+                    result = await _stock_sell(inv_code, inv_qty, inv_price, limit=inv_price > 0)
+                    await _reply(channel, result, thread_ts)
+                    result_text = f"{inv_code} {inv_qty}주 매도"
+                else:
+                    await _reply(channel, "종목코드와 수량을 알려주세요.\n예: 삼성전자(005930) 1주 매수", thread_ts)
+                    result_text = "invest 파라미터 부족"
+                    success = False
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()

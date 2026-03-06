@@ -51,6 +51,13 @@ CRYPTO_IDS = {
     "에이다": "cardano", "ada": "cardano",
 }
 
+# LS증권 클라이언트 (orchestrator에서 주입)
+_ls_client = None
+
+def set_ls_client(client):
+    global _ls_client
+    _ls_client = client
+
 # 도구 정의 (LLM에게 알려줄 목록)
 TOOL_DEFINITIONS = """사용 가능한 도구:
 1. weather(location) - 실시간 날씨 조회. 예: weather("서울"), weather("부산")
@@ -60,6 +67,12 @@ TOOL_DEFINITIONS = """사용 가능한 도구:
 5. crypto(asset) - 암호화폐/금 현재가 + 24시간 변동. 예: crypto("비트코인"), crypto("금"), crypto("이더리움")
 6. price_chart(asset, days) - 가격 추이 차트 데이터. 예: price_chart("비트코인", 30), price_chart("금", 7)
 7. compare_assets(asset1, asset2, days) - 두 자산 가격 추이 비교. 예: compare_assets("금", "비트코인", 30)
+8. stock_price(code) - 국내 주식 현재가 조회. 예: stock_price("005930") (삼성전자)
+9. stock_buy(code, qty) - 주식 시장가 매수. 예: stock_buy("005930", 1) (삼성전자 1주 매수)
+10. stock_sell(code, qty) - 주식 시장가 매도. 예: stock_sell("005930", 1)
+11. stock_balance() - 주식 잔고/보유종목 조회
+12. stock_buy_limit(code, qty, price) - 주식 지정가 매수. 예: stock_buy_limit("005930", 1, 55000)
+13. stock_sell_limit(code, qty, price) - 주식 지정가 매도. 예: stock_sell_limit("005930", 1, 60000)
 
 도구가 필요하면 반드시 이 형식으로 응답:
 {"needs_tool": true, "tool_calls": [{"tool": "weather", "args": ["서울"]}]}
@@ -95,6 +108,18 @@ async def execute_tool(tool_name: str, args: list) -> str:
             a2 = args[1] if len(args) > 1 else "비트코인"
             days = int(args[2]) if len(args) > 2 else 30
             return await _compare_assets(a1, a2, days)
+        elif tool_name == "stock_price":
+            return await _stock_price(args[0] if args else "005930")
+        elif tool_name == "stock_buy":
+            return await _stock_buy(args[0], int(args[1]) if len(args) > 1 else 1)
+        elif tool_name == "stock_sell":
+            return await _stock_sell(args[0], int(args[1]) if len(args) > 1 else 1)
+        elif tool_name == "stock_balance":
+            return await _stock_balance()
+        elif tool_name == "stock_buy_limit":
+            return await _stock_buy(args[0], int(args[1]), int(args[2]), limit=True)
+        elif tool_name == "stock_sell_limit":
+            return await _stock_sell(args[0], int(args[1]), int(args[2]), limit=True)
         else:
             return f"알 수 없는 도구: {tool_name}"
     except Exception as e:
@@ -463,3 +488,101 @@ async def _compare_assets(asset1: str, asset2: str, days: int = 30) -> str:
   ${base2:,.2f} → ${last2:,.2f} ({sign2}{ret2:.1f}%)
 
 🏆 승자: {winner} ({sign1 if winner == asset1 else sign2}{ret1 if winner == asset1 else ret2:.1f}%)"""
+
+
+# ── 주식 매매 도구 ──────────────────────────────────────
+
+async def _stock_price(code: str) -> str:
+    """국내 주식 현재가 조회"""
+    if not _ls_client:
+        return "LS증권 연동이 설정되지 않았습니다 (LS_APP_KEY 환경변수 필요)"
+    try:
+        data = await _ls_client.get_price(code)
+        name = data.get("종목명", code)
+        price = data.get("현재가", 0)
+        change = data.get("전일대비", 0)
+        rate = data.get("등락률", 0)
+        vol = data.get("거래량", 0)
+        bid = data.get("매수호가1", 0)
+        ask = data.get("매도호가1", 0)
+        arrow = "📈" if change >= 0 else "📉"
+        sign = "+" if change >= 0 else ""
+        return f"""{arrow} {name} ({code})
+💰 현재가: {price:,}원 ({sign}{change:,}원, {sign}{rate:.2f}%)
+📊 거래량: {vol:,}
+🔵 매수호가: {bid:,}원 | 🔴 매도호가: {ask:,}원"""
+    except Exception as e:
+        return f"시세 조회 실패: {e}"
+
+
+async def _stock_buy(code: str, qty: int, price: int = 0, limit: bool = False) -> str:
+    """주식 매수"""
+    if not _ls_client:
+        return "LS증권 연동이 설정되지 않았습니다"
+    try:
+        order_type = "00" if limit else "03"
+        result = await _ls_client.buy(code, qty, price=price, order_type=order_type)
+        status = result.get("결과", "")
+        order_no = result.get("주문번호", "")
+        price_str = f"{price:,}원" if price else "시장가"
+        mode = "지정가" if limit else "시장가"
+        return f"""✅ 매수 주문 ({mode})
+종목: {code} | 수량: {qty}주 | 가격: {price_str}
+결과: {status} | 주문번호: {order_no}"""
+    except Exception as e:
+        return f"매수 주문 실패: {e}"
+
+
+async def _stock_sell(code: str, qty: int, price: int = 0, limit: bool = False) -> str:
+    """주식 매도"""
+    if not _ls_client:
+        return "LS증권 연동이 설정되지 않았습니다"
+    try:
+        order_type = "00" if limit else "03"
+        result = await _ls_client.sell(code, qty, price=price, order_type=order_type)
+        status = result.get("결과", "")
+        order_no = result.get("주문번호", "")
+        price_str = f"{price:,}원" if price else "시장가"
+        mode = "지정가" if limit else "시장가"
+        return f"""✅ 매도 주문 ({mode})
+종목: {code} | 수량: {qty}주 | 가격: {price_str}
+결과: {status} | 주문번호: {order_no}"""
+    except Exception as e:
+        return f"매도 주문 실패: {e}"
+
+
+async def _stock_balance() -> str:
+    """주식 잔고 조회"""
+    if not _ls_client:
+        return "LS증권 연동이 설정되지 않았습니다"
+    try:
+        data = await _ls_client.get_balance()
+        summary = data.get("summary", {})
+        holdings = data.get("holdings", [])
+
+        total = summary.get("추정순자산", 0)
+        profit = summary.get("추정손익", 0)
+        rate = summary.get("수익률", 0)
+        sign = "+" if profit >= 0 else ""
+
+        lines = [f"💼 주식 잔고"]
+        lines.append(f"💰 총 평가: {total:,}원 ({sign}{profit:,}원, {sign}{rate:.2f}%)")
+
+        if holdings:
+            lines.append(f"\n📋 보유종목 ({len(holdings)}개):")
+            for h in holdings:
+                name = h.get("종목명", "")
+                code = h.get("종목코드", "")
+                qty = h.get("잔고수량", 0)
+                avg = h.get("매입단가", 0)
+                cur = h.get("현재가", 0)
+                pl = h.get("평가손익", 0)
+                pl_rate = h.get("수익률", 0)
+                s = "+" if pl >= 0 else ""
+                lines.append(f"  • {name}({code}): {qty}주 | 평균 {avg:,}원 → 현재 {cur:,}원 ({s}{pl:,}원, {s}{pl_rate:.2f}%)")
+        else:
+            lines.append("\n보유종목 없음")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"잔고 조회 실패: {e}"
