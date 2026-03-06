@@ -741,8 +741,14 @@ async def main():
         # 3. 지난 10분 활동 요약 (로그 파싱)
         past_activities = _parse_recent_log_activities(now)
 
-        # 4. 앞으로 10분 예상 작업
+        # 3.5. 이전 계획 이행률 검증
+        fulfillment = _check_plan_fulfillment(past_activities)
+
+        # 4. 앞으로 10분 실제 실행 계획
         next_activities = _get_next_10min_plan(now)
+
+        # 4.5. 계획 저장 (다음 리포트에서 이행 검증용)
+        _save_planned_tasks(now_str, next_activities)
 
         # 5. Slack 가동 리포트 (매 10분마다 항상 전송)
         alive = sum(1 for t in agent_tasks.values() if not t.done())
@@ -755,6 +761,12 @@ async def main():
         if issues:
             for issue in issues:
                 report_lines.append(issue)
+
+        # 이전 계획 이행률 (있으면)
+        if fulfillment:
+            report_lines.append("")
+            for line in fulfillment:
+                report_lines.append(line)
 
         report_lines.append("")
         report_lines.append("*지난 10분:*")
@@ -889,24 +901,161 @@ async def main():
 
         return activities[:8]  # 최대 8줄
 
+    # ── 계획 이행 추적 ────────────────────────────────────
+    PLANNED_TASKS_FILE = os.path.join(os.path.dirname(__file__), "data", "planned_tasks.json")
+
+    def _save_planned_tasks(slot: str, tasks: list[str]):
+        """다음 10분 계획을 파일에 저장 → 다음 리포트에서 이행 여부 검증"""
+        try:
+            data = {"slot": slot, "tasks": tasks, "saved_at": datetime.now(KST).isoformat()}
+            with open(PLANNED_TASKS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _load_planned_tasks() -> dict:
+        """이전 10분에 계획했던 태스크 로드"""
+        try:
+            if os.path.exists(PLANNED_TASKS_FILE):
+                with open(PLANNED_TASKS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _check_plan_fulfillment(past_activities: list[str]) -> list[str]:
+        """이전 계획 vs 실제 활동 비교 → 이행률 표시"""
+        prev = _load_planned_tasks()
+        if not prev or not prev.get("tasks"):
+            return []
+
+        planned = prev["tasks"]
+        slot = prev.get("slot", "?")
+        activity_text = " ".join(past_activities).lower()
+
+        results = []
+        done_count = 0
+        for task in planned:
+            # 키워드 매칭으로 이행 여부 판단
+            keywords = _extract_keywords(task)
+            matched = any(kw in activity_text for kw in keywords)
+            if matched:
+                results.append(f"  ✅ {task}")
+                done_count += 1
+            else:
+                results.append(f"  ❌ {task}")
+
+        total = len(planned)
+        pct = int(done_count / total * 100) if total > 0 else 0
+        header = f"*계획 이행률* ({slot}): {done_count}/{total} ({pct}%)"
+        return [header] + results
+
+    def _extract_keywords(task: str) -> list[str]:
+        """태스크 설명에서 매칭용 키워드 추출"""
+        keywords = []
+        task_lower = task.lower()
+        # 에이전트 이름 매칭
+        agent_keywords = {
+            "투자": ["invest", "투자", "cycle"],
+            "뉴스": ["curator", "뉴스", "news", "received"],
+            "명언": ["quote", "명언"],
+            "폴링": ["poll", "polling"],
+            "slot_check": ["slot_check"],
+            "시간별": ["hourly", "execute_hourly"],
+            "목표": ["goal", "execute_goal"],
+            "제안": ["proposal", "initiative", "propose"],
+            "리서치": ["research", "business_research"],
+            "트렌드": ["trend", "trend_check"],
+            "모니터링": ["measure", "monitor", "성과"],
+            "커뮤니케이트": ["communicate", "외부"],
+            "빌드": ["build", "개발", "구축"],
+        }
+        for key, kws in agent_keywords.items():
+            if key in task_lower or any(k in task_lower for k in kws):
+                keywords.extend(kws)
+        # 태스크 자체 단어도 추가
+        for word in task_lower.split():
+            if len(word) > 2:
+                keywords.append(word)
+        return keywords
+
     def _get_next_10min_plan(now: datetime) -> list[str]:
-        """앞으로 10분간 예상 작업"""
-        plan = ["슬랙 메시지 폴링 (12초 간격)"]
-
-        # proactive 스케줄 기반 예측
+        """앞으로 10분간 실제 실행될 작업 — proactive 24시간 플랜 + 목표 기반"""
+        plan = []
         current_hour = now.hour
-        next_hour = current_hour + 1 if now.minute >= 50 else current_hour
+        next_slot_minute = ((now.minute // 10) + 1) * 10
 
-        # investment 사이클 (600초 간격)
-        plan.append("투자 모니터링 사이클")
+        # 1. proactive agent의 24시간 플랜에서 현재/다음 시간 태스크 읽기
+        try:
+            mem_file = os.path.join(os.path.dirname(__file__), "data", "self_memory.json")
+            with open(mem_file, "r", encoding="utf-8") as f:
+                mem = json.load(f)
+            hourly_plan = mem.get("plans", {}).get("current_plan", {}).get("hours", {})
 
-        # proactive: slot_check + hourly task
-        if now.minute >= 50:
-            plan.append(f"proactive → {next_hour}:00 시간별 태스크 실행 예정")
-        else:
-            plan.append("proactive → slot_check 점검")
+            # proactive state에서 마지막 실행 슬롯 확인
+            state_file = os.path.join(os.path.dirname(__file__), "data", "proactive_state.json")
+            with open(state_file, "r", encoding="utf-8") as f:
+                pstate = json.load(f)
+            last_exec_hour = pstate.get("last_executed_hour", -1)
 
+            # 현재 시간대 태스크
+            hour_key = f"{current_hour:02d}"
+            hour_task = hourly_plan.get(hour_key, {})
+            if hour_task:
+                task_name = hour_task.get("task", "")
+                method = hour_task.get("method", "")
+                expected = hour_task.get("expected", "")
+                if current_hour != last_exec_hour:
+                    plan.append(f"[{method}] {task_name} → {expected}")
+                else:
+                    # 이미 실행됨 — 슬롯 결과 + 다음 시간 예고
+                    slot_key = f"slot_{current_hour:02d}:{(now.minute // 10) * 10:02d}_result"
+                    slot_result = pstate.get(slot_key, {})
+                    if slot_result:
+                        grade = slot_result.get("grade", "?")
+                        result = slot_result.get("result", "")[:50]
+                        plan.append(f"[완료:{grade}] {task_name} — {result}")
+                    # 다음 시간 태스크 예고 (항상 표시)
+                    next_hour_key = f"{(current_hour + 1) % 24:02d}"
+                    next_task = hourly_plan.get(next_hour_key, {})
+                    if next_task:
+                        plan.append(f"[예정] {next_task.get('task','')} [{next_task.get('method','')}]")
+        except Exception:
+            pass
+
+        # 2. 활성 목표의 다음 스텝
+        try:
+            goals_file = os.path.join(os.path.dirname(__file__), "data", "goals.json")
+            with open(goals_file, "r", encoding="utf-8") as f:
+                goals = json.load(f)
+            if isinstance(goals, list):
+                goal_list = goals
+            else:
+                goal_list = goals.get("goals", [])
+            for g in goal_list:
+                if g.get("status") != "active":
+                    continue
+                steps = g.get("steps", [])
+                pending = [s for s in steps if s.get("status") == "pending"]
+                if pending:
+                    plan.append(f"[목표] {g.get('title','')[:30]} → {pending[0].get('description','')[:40]}")
+                    break  # 가장 우선순위 높은 것 하나만
+        except Exception:
+            pass
+
+        # 3. 투자 모니터링 (항상 실행)
+        plan.append("투자 모니터링 사이클 (600초 간격)")
+
+        # 4. 뉴스 큐레이션 (항상 실행)
         plan.append("뉴스 수집 & 큐레이션")
+
+        # 5. slot_check (10분 경계에서)
+        if now.minute % 10 <= 2:
+            plan.append("slot_check → 이전 슬롯 결과 평가")
+
+        # 계획이 비면 기본값
+        if not plan:
+            plan = ["슬랙 메시지 폴링 (12초 간격)", "투자 모니터링 사이클", "뉴스 수집 & 큐레이션"]
 
         return plan
 
