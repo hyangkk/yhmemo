@@ -36,7 +36,7 @@ class InvestAgent(BaseAgent):
         super().__init__(
             name="invest",
             description="유전 알고리즘 기반 투자 전략 자동 진화",
-            loop_interval=int(os.environ.get("INVEST_INTERVAL", 3600)),
+            loop_interval=int(os.environ.get("INVEST_INTERVAL", 1800)),
             slack_channel=self.CHANNEL,
             **kwargs,
         )
