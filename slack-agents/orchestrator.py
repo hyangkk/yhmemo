@@ -117,11 +117,13 @@ async def main():
         notion = NotionClient(api_key=config["NOTION_API_KEY"])
         logger.info("Notion integration enabled")
 
-    # LS증권 (선택적)
+    # LS증권 (선택적, 기본값: 모의투자)
     ls_client = None
     if os.environ.get("LS_APP_KEY"):
-        ls_client = LSSecuritiesClient()
-        logger.info("LS증권 Open API 연동 활성화")
+        paper = os.environ.get("LS_PAPER_TRADING", "true").lower() == "true"
+        ls_client = LSSecuritiesClient(paper_trading=paper)
+        mode = "모의투자" if paper else "실전투자"
+        logger.info(f"LS증권 Open API 연동 활성화 ({mode})")
 
     # ── 메시지 버스 ─────────────────────────────────────
 

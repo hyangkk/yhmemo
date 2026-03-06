@@ -19,7 +19,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
-BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+BASE_URL_LIVE = "https://openapi.ls-sec.co.kr:8080"
+BASE_URL_PAPER = "https://openapi.ls-sec.co.kr:29080"
 
 
 class LSSecuritiesClient:
@@ -30,10 +31,13 @@ class LSSecuritiesClient:
         app_key: str | None = None,
         app_secret: str | None = None,
         account_no: str | None = None,
+        paper_trading: bool = True,
     ):
         self.app_key = app_key or os.environ.get("LS_APP_KEY", "")
         self.app_secret = app_secret or os.environ.get("LS_APP_SECRET", "")
         self.account_no = account_no or os.environ.get("LS_ACCOUNT_NO", "")
+        self.paper_trading = paper_trading
+        self.base_url = BASE_URL_PAPER if paper_trading else BASE_URL_LIVE
         self._access_token = ""
         self._token_expires = datetime.min.replace(tzinfo=KST)
         self._http = httpx.AsyncClient(timeout=15.0, verify=False)
@@ -53,7 +57,7 @@ class LSSecuritiesClient:
 
     async def _issue_token(self):
         """접근토큰 발급 (유효기간: 익일 07시)"""
-        url = f"{BASE_URL}/oauth2/token"
+        url = f"{self.base_url}/oauth2/token"
         resp = await self._http.post(
             url,
             headers={"content-type": "application/x-www-form-urlencoded"},
@@ -72,7 +76,8 @@ class LSSecuritiesClient:
         if tomorrow < datetime.now(KST):
             tomorrow += timedelta(days=1)
         self._token_expires = tomorrow
-        logger.info("[ls] 접근토큰 발급 완료")
+        mode = "모의투자" if self.paper_trading else "실전투자"
+        logger.info(f"[ls] 접근토큰 발급 완료 ({mode})")
 
     def _auth_header(self, tr_cd: str, tr_cont: str = "N") -> dict:
         """API 요청용 공통 헤더"""
@@ -96,7 +101,7 @@ class LSSecuritiesClient:
             dict with price info (hname, price, sign, change, diff, volume, etc.)
         """
         await self._ensure_token()
-        url = f"{BASE_URL}/stock/market-data"
+        url = f"{self.base_url}/stock/market-data"
         resp = await self._http.post(
             url,
             headers=self._auth_header("t1101"),
@@ -120,7 +125,7 @@ class LSSecuritiesClient:
     async def get_stock_info(self, stock_code: str) -> dict:
         """주식 종목 마스터 조회 (t1102)"""
         await self._ensure_token()
-        url = f"{BASE_URL}/stock/market-data"
+        url = f"{self.base_url}/stock/market-data"
         resp = await self._http.post(
             url,
             headers=self._auth_header("t1102"),
@@ -138,7 +143,7 @@ class LSSecuritiesClient:
             dict with account balance info
         """
         await self._ensure_token()
-        url = f"{BASE_URL}/stock/accno"
+        url = f"{self.base_url}/stock/accno"
         resp = await self._http.post(
             url,
             headers=self._auth_header("t0424"),
@@ -241,7 +246,7 @@ class LSSecuritiesClient:
     ) -> dict:
         """주문 공통 처리 (CSPAT00601)"""
         await self._ensure_token()
-        url = f"{BASE_URL}/stock/order"
+        url = f"{self.base_url}/stock/order"
         resp = await self._http.post(
             url,
             headers=self._auth_header("CSPAT00601"),
