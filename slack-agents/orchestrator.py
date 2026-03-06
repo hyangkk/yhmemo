@@ -693,7 +693,7 @@ async def main():
     last_health_check_time = asyncio.get_event_loop().time()
 
     async def master_health_check():
-        """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 보고"""
+        """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
         nonlocal agent_tasks
         now = datetime.now(KST)
         now_str = now.strftime("%H:%M")
@@ -737,22 +737,53 @@ async def main():
                 except (ValueError, TypeError):
                     pass
 
-        # 3. Slack 보고 (이슈/재시작 있거나 매시 정각)
-        is_hourly = now.minute < 10
-        if issues or restarts or is_hourly:
-            report_lines = [f"*🔍 마스터 점검* ({now_str} KST)"]
+        # 3. 지난 10분 활동 요약 (로그 파싱)
+        past_activities = _parse_recent_log_activities(now)
+
+        # 4. 앞으로 10분 예상 작업
+        next_activities = _get_next_10min_plan(now)
+
+        # 5. Slack 가동 리포트 (매 10분마다 항상 전송)
+        alive = sum(1 for t in agent_tasks.values() if not t.done())
+        total = len(agent_tasks)
+
+        report_lines = [f"*📊 가동 리포트* ({now_str} KST) — {alive}/{total} 에이전트"]
+
+        if restarts:
+            report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
+        if issues:
+            for issue in issues:
+                report_lines.append(issue)
+
+        report_lines.append("")
+        report_lines.append("*지난 10분:*")
+        if past_activities:
+            for line in past_activities:
+                report_lines.append(f"• {line}")
+        else:
+            report_lines.append("• (활동 없음)")
+
+        report_lines.append("")
+        report_lines.append("*앞으로 10분:*")
+        for line in next_activities:
+            report_lines.append(f"• {line}")
+
+        try:
+            await slack.send_message("ai-agents-general", "\n".join(report_lines))
+        except Exception as e:
+            logger.error(f"[watchdog] Slack report failed: {e}")
+
+        # ai-agent-logs에도 이슈가 있을 때만 전송
+        if issues or restarts:
+            log_lines = [f"*🔍 마스터 점검* ({now_str} KST)"]
             if restarts:
-                report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
-            if issues:
-                for issue in issues:
-                    report_lines.append(issue)
-            alive = sum(1 for t in agent_tasks.values() if not t.done())
-            total = len(agent_tasks)
-            report_lines.append(f"✅ 가동: {alive}/{total} 에이전트")
+                log_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
+            for issue in issues:
+                log_lines.append(issue)
             try:
-                await slack.send_message("ai-agent-logs", "\n".join(report_lines))
-            except Exception as e:
-                logger.error(f"[watchdog] Slack report failed: {e}")
+                await slack.send_message("ai-agent-logs", "\n".join(log_lines))
+            except Exception:
+                pass
 
         if restarts:
             logger.info(f"[watchdog] Restarted: {restarts}")
@@ -760,6 +791,113 @@ async def main():
             logger.warning(f"[watchdog] Issues: {len(issues)}")
         else:
             logger.info(f"[watchdog] All {len(agent_tasks)} agents OK")
+
+    def _parse_recent_log_activities(now: datetime) -> list[str]:
+        """최근 10분간 로그에서 주요 활동 추출"""
+        activities = []
+        log_file = os.path.join(
+            os.path.dirname(__file__), "data", "logs",
+            f"orchestrator-{now.strftime('%Y%m%d')}.log"
+        )
+        if not os.path.exists(log_file):
+            return activities
+
+        ten_min_ago = now - timedelta(minutes=10)
+        ten_min_str = ten_min_ago.strftime("%H:%M")
+        now_time_str = now.strftime("%H:%M")
+
+        # 주요 이벤트 키워드
+        keywords = {
+            "Executing:": "proactive",
+            "Sent quote": "quote",
+            "Received": "curator",
+            "Cycle": "investment",
+            "Insight": "self_memory",
+            "New message:": "slack",
+            "Poll tick": None,  # 스킵
+            "slot_check": None,  # Executing에서 잡힘
+        }
+        seen = set()
+        slack_msg_count = 0
+        try:
+            with open(log_file, "r") as f:
+                for line in f:
+                    if len(line) < 20:
+                        continue
+                    time_part = line[11:16]  # "HH:MM"
+                    if time_part < ten_min_str or time_part > now_time_str:
+                        continue
+
+                    # 슬랙 메시지 수 카운트
+                    if "New message:" in line:
+                        slack_msg_count += 1
+                        continue
+                    if "Poll tick" in line or "Polling" in line or "HTTP Request" in line:
+                        continue
+
+                    # 주요 이벤트 추출
+                    if "Executing:" in line:
+                        # [proactive] ▶ [17:00] Executing: 성과 모니터링 (method=measure)
+                        idx = line.index("Executing:")
+                        desc = line[idx + 10:].strip()
+                        key = f"proactive: {desc}"
+                        if key not in seen:
+                            seen.add(key)
+                            activities.append(f"proactive → {desc}")
+                    elif "Sent quote" in line:
+                        if "quote" not in seen:
+                            seen.add("quote")
+                            activities.append("명언 전송 완료")
+                    elif "[curator] Received" in line:
+                        # [curator] Received 10 articles
+                        idx = line.index("Received")
+                        desc = line[idx:].strip()
+                        if "curator" not in seen:
+                            seen.add("curator")
+                            activities.append(f"curator → {desc}")
+                    elif "Cycle" in line and "complete" in line and "invest" in line.lower():
+                        if "invest_cycle" not in seen:
+                            seen.add("invest_cycle")
+                            activities.append("투자 분석 사이클 완료")
+                    elif "[self_memory] Insight" in line:
+                        idx = line.index("Insight")
+                        desc = line[idx:].strip()[:60]
+                        activities.append(f"메모리 → {desc}")
+                    elif "error" in line.lower() and "ERROR" in line:
+                        # 에러 요약
+                        short = line.split("ERROR:")[-1].strip()[:60] if "ERROR:" in line else ""
+                        if short and short not in seen:
+                            seen.add(short)
+                            activities.append(f"⚠️ {short}")
+
+            if slack_msg_count > 0:
+                activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
+
+        except Exception as e:
+            logger.debug(f"[report] Log parse error: {e}")
+
+        return activities[:8]  # 최대 8줄
+
+    def _get_next_10min_plan(now: datetime) -> list[str]:
+        """앞으로 10분간 예상 작업"""
+        plan = ["슬랙 메시지 폴링 (12초 간격)"]
+
+        # proactive 스케줄 기반 예측
+        current_hour = now.hour
+        next_hour = current_hour + 1 if now.minute >= 50 else current_hour
+
+        # investment 사이클 (600초 간격)
+        plan.append("투자 모니터링 사이클")
+
+        # proactive: slot_check + hourly task
+        if now.minute >= 50:
+            plan.append(f"proactive → {next_hour}:00 시간별 태스크 실행 예정")
+        else:
+            plan.append("proactive → slot_check 점검")
+
+        plan.append("뉴스 수집 & 큐레이션")
+
+        return plan
 
     # ── 마스터 명령 큐 처리 ───────────────────────────────
     COMMAND_QUEUE_FILE = os.path.join(os.path.dirname(__file__), "data", "command_queue.json")
