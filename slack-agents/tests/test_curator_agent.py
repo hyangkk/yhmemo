@@ -201,8 +201,9 @@ async def test_act_sends_briefing_to_thread(curator, mock_slack, mock_supabase):
     # Should send thread reply
     mock_slack.send_thread_reply.assert_called()
     call_args = mock_slack.send_thread_reply.call_args
-    assert call_args[0][0] == "ai-agents-general"
-    assert call_args[0][2] == "1234567890.123"
+    assert call_args[0][0] == "ai-agents-general"  # channel
+    assert call_args[0][1] == "1234567890.123"  # thread_ts
+    assert isinstance(call_args[0][2], str)  # text (briefing message)
 
 
 # ── handle_reaction_feedback ─────────────────────────────

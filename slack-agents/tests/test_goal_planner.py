@@ -81,6 +81,10 @@ def test_get_active_goals_sorted_by_priority(planner):
 def test_get_active_goals_excludes_completed(planner):
     g1 = planner.add_goal("Active", "desc", priority=1)
     g2 = planner.add_goal("Done", "desc", priority=2)
+    # Ensure distinct IDs (timestamp-based IDs may collide)
+    if g1.id == g2.id:
+        g2.id = g2.id + "_2"
+        planner._save_goals()
     planner.complete_goal(g2.id, "finished")
 
     active = planner.get_active_goals()
