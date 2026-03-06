@@ -689,8 +689,9 @@ async def main():
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
     # ── 마스터 워치독: 10분마다 전체 시스템 점검 ────────────
-    HEALTH_CHECK_INTERVAL = 600  # 10분 (초)
+    HEALTH_CHECK_INTERVAL = 600  # 10분 (초) — fallback
     last_health_check_time = asyncio.get_event_loop().time()
+    last_report_slot = ""  # KST 정각 슬롯 추적 (e.g. "17:20")
 
     async def master_health_check():
         """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
@@ -795,16 +796,18 @@ async def main():
     def _parse_recent_log_activities(now: datetime) -> list[str]:
         """최근 10분간 로그에서 주요 활동 추출"""
         activities = []
+        # 로그 타임스탬프는 UTC
+        now_utc = now.astimezone(timezone.utc)
         log_file = os.path.join(
             os.path.dirname(__file__), "data", "logs",
-            f"orchestrator-{now.strftime('%Y%m%d')}.log"
+            f"orchestrator-{now_utc.strftime('%Y%m%d')}.log"
         )
         if not os.path.exists(log_file):
             return activities
 
-        ten_min_ago = now - timedelta(minutes=10)
+        ten_min_ago = now_utc - timedelta(minutes=10)
         ten_min_str = ten_min_ago.strftime("%H:%M")
-        now_time_str = now.strftime("%H:%M")
+        now_time_str = now_utc.strftime("%H:%M")
 
         # 주요 이벤트 키워드
         keywords = {
@@ -817,6 +820,11 @@ async def main():
             "Poll tick": None,  # 스킵
             "slot_check": None,  # Executing에서 잡힘
         }
+        # 루틴/무시할 액션
+        _SKIP_ACTIONS = {"slot_check", "find_work", "trend_check", "business_research", "progress_report", "execute_hourly_task", "execute_goal_step", "evaluate_goal", "execute_approved", "propose_initiative"}
+        # 재시작 시 1회성 에러 무시 패턴
+        _IGNORE_ERRORS = {"Failed to connect", "Unclosed client session", "Task was destroyed"}
+
         seen = set()
         slack_msg_count = 0
         try:
@@ -837,24 +845,25 @@ async def main():
 
                     # 주요 이벤트 추출
                     if "Executing:" in line:
-                        # [proactive] ▶ [17:00] Executing: 성과 모니터링 (method=measure)
                         idx = line.index("Executing:")
                         desc = line[idx + 10:].strip()
+                        # 루틴 액션은 스킵
+                        if any(skip in desc for skip in _SKIP_ACTIONS):
+                            continue
                         key = f"proactive: {desc}"
                         if key not in seen:
                             seen.add(key)
-                            activities.append(f"proactive → {desc}")
+                            activities.append(desc)
                     elif "Sent quote" in line:
                         if "quote" not in seen:
                             seen.add("quote")
                             activities.append("명언 전송 완료")
                     elif "[curator] Received" in line:
-                        # [curator] Received 10 articles
                         idx = line.index("Received")
                         desc = line[idx:].strip()
                         if "curator" not in seen:
                             seen.add("curator")
-                            activities.append(f"curator → {desc}")
+                            activities.append(f"뉴스 큐레이션 — {desc}")
                     elif "Cycle" in line and "complete" in line and "invest" in line.lower():
                         if "invest_cycle" not in seen:
                             seen.add("invest_cycle")
@@ -862,9 +871,11 @@ async def main():
                     elif "[self_memory] Insight" in line:
                         idx = line.index("Insight")
                         desc = line[idx:].strip()[:60]
-                        activities.append(f"메모리 → {desc}")
+                        activities.append(f"메모리 저장: {desc}")
                     elif "error" in line.lower() and "ERROR" in line:
-                        # 에러 요약
+                        # 재시작 시 1회성 에러는 무시
+                        if any(pat in line for pat in _IGNORE_ERRORS):
+                            continue
                         short = line.split("ERROR:")[-1].strip()[:60] if "ERROR:" in line else ""
                         if short and short not in seen:
                             seen.add(short)
@@ -1025,11 +1036,13 @@ async def main():
     if socket_mode:
         # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
         # 하지만 헬스체크는 여전히 10분마다 실행
-        logger.info("All agents running. Socket Mode active + watchdog enabled (10분 점검)")
+        logger.info("All agents running. Socket Mode active + watchdog enabled (10분 정각 리포트)")
         while not shutdown_event.is_set():
-            loop_time = asyncio.get_event_loop().time()
-            if loop_time - last_health_check_time >= HEALTH_CHECK_INTERVAL:
-                last_health_check_time = loop_time
+            nonlocal last_report_slot
+            now_kst = datetime.now(KST)
+            current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
+            if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
+                last_report_slot = current_slot
                 try:
                     await master_health_check()
                 except Exception as e:
@@ -1054,10 +1067,12 @@ async def main():
             except Exception as e:
                 logger.error(f"Poll error: {e}")
 
-            # 10분마다 마스터 헬스체크
-            loop_time = asyncio.get_event_loop().time()
-            if loop_time - last_health_check_time >= HEALTH_CHECK_INTERVAL:
-                last_health_check_time = loop_time
+            # 10분 정각(KST :00, :10, :20, :30, :40, :50)에 마스터 헬스체크
+            nonlocal last_report_slot
+            now_kst = datetime.now(KST)
+            current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
+            if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
+                last_report_slot = current_slot
                 try:
                     await master_health_check()
                 except Exception as e:
