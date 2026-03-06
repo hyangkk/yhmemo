@@ -1,4 +1,6 @@
+import Link from "next/link";
 import MorningBriefing from "@/components/MorningBriefing";
+import MarketDashboard from "@/components/MarketDashboard";
 import Dashboard from "@/components/Dashboard";
 
 export default function Home() {
@@ -51,7 +53,37 @@ export default function Home() {
       {/* Morning Briefing - 메인 경험 */}
       <MorningBriefing />
 
-      {/* 구분선 */}
+      {/* 구분선 - 시장 현황 */}
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-800" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="px-4 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 text-sm text-gray-400">
+              실시간 시장 현황
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 투자/시장 대시보드 */}
+      <MarketDashboard />
+
+      {/* 마켓 분석 페이지 링크 */}
+      <div className="max-w-5xl mx-auto px-4 mt-4 text-center">
+        <Link
+          href="/market"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white text-sm font-semibold hover:shadow-lg transition-all hover:scale-105"
+        >
+          AI 시장 분석 + 차트 보기
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+      </div>
+
+      {/* 구분선 - 전체 뉴스 */}
       <div className="max-w-5xl mx-auto px-4 py-8">
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
