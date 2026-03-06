@@ -66,7 +66,7 @@ class LSBroker:
             "scope": "oob",
         }
         async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, data=payload)
             resp.raise_for_status()
             data = resp.json()
 
