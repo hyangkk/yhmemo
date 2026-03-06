@@ -48,6 +48,7 @@ from agents.curator_agent import CuratorAgent
 from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
 from agents.invest_agent import InvestAgent
+from agents.investment_agent import InvestmentAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
@@ -137,6 +138,7 @@ async def main():
     )
     quote = QuoteAgent(**common_kwargs)
     invest = InvestAgent(**common_kwargs)
+    investment = InvestmentAgent(**common_kwargs)
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -225,12 +227,26 @@ async def main():
         report = agent_tracker.get_status_report()
         await _reply(channel, report, thread_ts)
 
+    # "!시세" → 투자 에이전트 즉시 브리핑
+    async def cmd_market(args: str, user: str, channel: str, thread_ts: str = None):
+        try:
+            prices = await investment._fetch_all_prices()
+            fg = await investment._fetch_fear_greed()
+            await investment._send_market_briefing({
+                "prices": prices,
+                "fear_greed": fg,
+                "hour": datetime.now(KST).hour,
+            })
+        except Exception as e:
+            await _reply(channel, f"시세 조회 실패: {e}", thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
+    slack.on_command("시세", cmd_market)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -631,6 +647,7 @@ async def main():
         quote.stop()
         proactive.stop()
         invest.stop()
+        investment.stop()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -658,6 +675,7 @@ async def main():
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
+        "investment": lambda: asyncio.create_task(investment.start(), name="investment"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
