@@ -1,4 +1,4 @@
-app = 'yhmemo-agents'
+app = 'yhmbp14'
 primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
 
 [build]
