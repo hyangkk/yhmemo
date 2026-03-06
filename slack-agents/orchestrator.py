@@ -546,11 +546,29 @@ async def main():
                         # 태그는 유저에게 보여주지 않음
                         clean_response = re.sub(r'\s*\[IMPROVE:.*?\]', '', chat_response).strip()
                         await _reply(channel, clean_response, thread_ts)
-                        # 개선 요청을 로그 채널에 기록
+                        # 개선 요청을 실제 Goal로 변환하여 실행
                         for imp in improvements:
-                            await slack.send_message("ai-agent-logs",
+                            await slack.send_message("ai-agents-general",
                                 f"🔧 *[자기개선 요청]* {imp}\n요청자: <@{user}>\n원본: {text[:100]}")
                             logger.info(f"[NL] Self-improvement request: {imp}")
+                            # proactive agent의 goal planner에 목표 추가
+                            try:
+                                goal = proactive.planner.add_goal(
+                                    title=f"자기개선: {imp[:80]}",
+                                    description=f"사용자 요청에서 감지된 자기개선 필요사항.\n\n개선 내용: {imp}\n원본 요청: {text[:200]}",
+                                    priority=2,
+                                    success_criteria=f"'{imp}' 기능이 구현되어 정상 작동",
+                                )
+                                await proactive.planner.generate_plan(goal)
+                                plan_text = "\n".join(
+                                    f"  {i+1}. {s.description} ({s.method})"
+                                    for i, s in enumerate(goal.plan)
+                                )
+                                await slack.send_message("ai-agents-general",
+                                    f"🎯 *자기개선 실행 계획 생성*\n*{imp}*\n\n{plan_text}\n\n_자동으로 실행을 시작합니다._")
+                                logger.info(f"[NL] Self-improvement goal created: {goal.id}")
+                            except Exception as goal_err:
+                                logger.error(f"[NL] Failed to create improvement goal: {goal_err}")
                     else:
                         await _reply(channel, chat_response, thread_ts)
                     save_turn(user, "assistant", chat_response, {"action": "chat"})
