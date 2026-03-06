@@ -19,6 +19,19 @@ jobs:
       - name: Fly.io CLI 설치
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: Fly.io Secrets 설정
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          cd slack-agents
+          echo "Setting LS Securities secrets..."
+          flyctl secrets set \
+            LS_APP_KEY="${{ secrets.LS_APP_KEY }}" \
+            LS_APP_SECRET="${{ secrets.LS_APP_SECRET }}" \
+            LS_ACCOUNT_NO="${{ secrets.LS_ACCOUNT_NO }}" \
+            LS_PAPER_TRADING=true \
+            --app yhmbp14 --stage
+
       - name: 배포
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
