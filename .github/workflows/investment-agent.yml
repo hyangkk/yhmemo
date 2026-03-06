@@ -1,0 +1,45 @@
+name: AI Investment Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      generations:
+        description: '진화 세대 수'
+        required: false
+        default: '10'
+      population:
+        description: '세대당 전략 수'
+        required: false
+        default: '20'
+      tickers:
+        description: '종목 (공백 구분)'
+        required: false
+        default: 'SPY QQQ IWM TLT GLD'
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r investment-agent/requirements.txt
+
+      - name: Run Evolution
+        working-directory: investment-agent
+        run: |
+          python run_evolution.py \
+            -g ${{ github.event.inputs.generations }} \
+            -p ${{ github.event.inputs.population }} \
+            -t ${{ github.event.inputs.tickers }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: evolution-results
+          path: investment-agent/results/
+          retention-days: 30
