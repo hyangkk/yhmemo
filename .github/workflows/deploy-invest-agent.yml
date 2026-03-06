@@ -20,16 +20,6 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-      - name: Set secrets
-        run: |
-          flyctl secrets set -a yhmemo-invest-agent \
-            NOTION_API_KEY="${{ secrets.NOTION_API_KEY }}" \
-            NOTION_INVEST_DB_ID="${{ secrets.NOTION_INVEST_DB_ID }}" \
-            SLACK_BOT_TOKEN="${{ secrets.SLACK_BOT_TOKEN }}" \
-            --stage
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
       - name: Deploy
         run: flyctl deploy -a yhmemo-invest-agent --remote-only
         working-directory: investment-agent
