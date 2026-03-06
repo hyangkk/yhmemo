@@ -11,8 +11,20 @@ interface AssetPrice {
   change24h: number;
 }
 
+// 인메모리 캐시 (10분 TTL)
+let insightCache: { data: unknown; timestamp: number } | null = null;
+const CACHE_TTL = 10 * 60 * 1000; // 10분
+
 export async function GET() {
   try {
+    // 캐시가 유효하면 캐시된 결과 반환
+    if (insightCache && Date.now() - insightCache.timestamp < CACHE_TTL) {
+      return NextResponse.json({
+        ...(insightCache.data as Record<string, unknown>),
+        cached: true,
+      });
+    }
+
     const supabase = getServiceSupabase();
 
     // 1. 시장 데이터 가져오기
@@ -124,12 +136,17 @@ ${newsContext || "(수집된 뉴스 없음)"}
       insight = null;
     }
 
-    return NextResponse.json({
+    const result = {
       insight,
       market: assetPrices,
       newsCount: news?.length || 0,
       generatedAt: new Date().toISOString(),
-    });
+    };
+
+    // 캐시 저장
+    insightCache = { data: result, timestamp: Date.now() };
+
+    return NextResponse.json(result);
   } catch (err) {
     console.error("Market insight error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });

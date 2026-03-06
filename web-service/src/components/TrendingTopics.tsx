@@ -1,0 +1,163 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+interface Topic {
+  name: string;
+  count: number;
+  heat: "hot" | "warm" | "cool";
+  emoji: string;
+  one_liner: string;
+}
+
+interface TrendData {
+  topics: Topic[];
+  keywords: string[];
+  emerging: string;
+  summary: string;
+  newsCount: number;
+  generatedAt: string;
+}
+
+const heatConfig = {
+  hot: {
+    bg: "bg-red-50 dark:bg-red-900/20",
+    border: "border-red-200 dark:border-red-800/50",
+    badge: "bg-red-500 text-white",
+    label: "HOT",
+  },
+  warm: {
+    bg: "bg-amber-50 dark:bg-amber-900/20",
+    border: "border-amber-200 dark:border-amber-800/50",
+    badge: "bg-amber-500 text-white",
+    label: "WARM",
+  },
+  cool: {
+    bg: "bg-gray-50 dark:bg-gray-800/50",
+    border: "border-gray-200 dark:border-gray-800",
+    badge: "bg-gray-400 text-white",
+    label: "",
+  },
+};
+
+export default function TrendingTopics() {
+  const [data, setData] = useState<TrendData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchTrends() {
+      try {
+        const res = await fetch("/api/trends");
+        if (res.ok) setData(await res.json());
+      } catch {
+        // silent
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchTrends();
+  }, []);
+
+  if (loading) {
+    return (
+      <section className="max-w-5xl mx-auto px-4 py-6">
+        <div className="animate-pulse space-y-3">
+          <div className="h-8 w-48 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="h-24 bg-gray-100 dark:bg-gray-800 rounded-xl"
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (!data || !data.topics || data.topics.length === 0) return null;
+
+  return (
+    <section className="max-w-5xl mx-auto px-4 py-6">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+          <span className="w-8 h-8 rounded-lg bg-gradient-to-r from-rose-500 to-pink-600 flex items-center justify-center text-white text-sm">
+            #
+          </span>
+          지금 뜨는 토픽
+        </h2>
+        <span className="text-xs text-gray-400">
+          {data.newsCount}개 뉴스 분석
+        </span>
+      </div>
+
+      {/* 떠오르는 이슈 */}
+      {data.emerging && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/10 dark:to-amber-900/10 border border-yellow-200 dark:border-yellow-800/50">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-yellow-700 dark:text-yellow-400 bg-yellow-200 dark:bg-yellow-800/50 px-2 py-0.5 rounded-full">
+              NEW
+            </span>
+            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+              {data.emerging}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 토픽 카드 */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {data.topics.map((topic, i) => {
+          const cfg = heatConfig[topic.heat] || heatConfig.cool;
+          return (
+            <div
+              key={i}
+              className={`relative rounded-xl border p-4 ${cfg.bg} ${cfg.border} transition-all hover:shadow-md`}
+            >
+              {topic.heat !== "cool" && (
+                <span
+                  className={`absolute top-2 right-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${cfg.badge}`}
+                >
+                  {cfg.label}
+                </span>
+              )}
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xl">{topic.emoji}</span>
+                <span className="font-bold text-gray-900 dark:text-white text-sm">
+                  {topic.name}
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+                {topic.one_liner}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-2">
+                관련 뉴스 {topic.count}건
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 키워드 태그 */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {data.keywords.map((kw, i) => (
+          <span
+            key={i}
+            className="px-3 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700"
+          >
+            #{kw}
+          </span>
+        ))}
+      </div>
+
+      {/* 요약 */}
+      {data.summary && (
+        <p className="mt-4 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+          {data.summary}
+        </p>
+      )}
+    </section>
+  );
+}
