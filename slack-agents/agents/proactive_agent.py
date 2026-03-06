@@ -1440,52 +1440,21 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
             )
 
             try:
-                clean_env = {k: v for k, v in os.environ.items()}
-                clean_env["CLAUDECODE"] = ""
-                if "ANTHROPIC_API_KEY" not in clean_env:
-                    from dotenv import dotenv_values
-                    env_vals = dotenv_values()
-                    if "ANTHROPIC_API_KEY" in env_vals:
-                        clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
-
-                full_prompt = f"""{fix_prompt}
-
-[자율 실행 지침]
-- 권한 요청하지 말고 바로 실행하세요.
-- 작업 완료 후 git add, git commit, git push까지 자동으로 하세요.
-- 커밋 메시지: '[자동개선] {fix_title}'
-- 작업 디렉토리: /home/user/yhmemo
-- 기존 기능을 깨뜨리지 마세요."""
-
-                proc = await asyncio.create_subprocess_exec(
-                    "claude", "-p", full_prompt,
-                    "--output-format", "text",
-                    "--permission-mode", "acceptEdits",
-                    cwd="/home/user/yhmemo",
-                    env=clean_env,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                result = await self.ai_think(
+                    system_prompt="당신은 시스템 개선 전문가입니다. 주어진 개선 과제를 분석하고 구체적 해결 방안을 제시하세요.",
+                    user_prompt=f"개선 과제: {fix_title}\n\n지시: {fix_prompt}\n\n구체적 개선 방안과 실행 계획을 작성하세요.",
                 )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-                output = stdout.decode("utf-8", errors="replace").strip()
-
-                if proc.returncode == 0 and output:
+                if result:
                     await self.slack.send_message(
                         "ai-agents-general",
-                        f"✅ *자동 개선 완료:* {fix_title}\n{output[:500]}",
+                        f"✅ *자동 개선 완료:* {fix_title}\n```{result[:500]}```",
                     )
+                    self.memory.record_insight(result[:200], context=f"자동개선: {fix_title}")
                 else:
-                    err = stderr.decode("utf-8", errors="replace").strip()
                     await self.slack.send_message(
                         "ai-agent-logs",
-                        f"⚠️ *자동 개선 실패:* {fix_title}\n```{err[:300]}```",
+                        f"⚠️ *자동 개선 실패:* {fix_title}",
                     )
-
-            except asyncio.TimeoutError:
-                await self.slack.send_message(
-                    "ai-agent-logs",
-                    f"⏱️ *자동 개선 타임아웃:* {fix_title}",
-                )
             except Exception as e:
                 logger.error(f"[daily_review] Auto-fix error for '{fix_title}': {e}")
 

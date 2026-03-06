@@ -459,35 +459,18 @@ async def main():
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
-                        # CLAUDECODE를 빈 문자열로 설정 (중첩 세션 체크 우회)
-                        clean_env = {k: v for k, v in os.environ.items()}
-                        clean_env["CLAUDECODE"] = ""
-                        # .env의 ANTHROPIC_API_KEY 보장
-                        if "ANTHROPIC_API_KEY" not in clean_env:
-                            from dotenv import dotenv_values
-                            env_vals = dotenv_values()
-                            if "ANTHROPIC_API_KEY" in env_vals:
-                                clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
-                        proc = await asyncio.create_subprocess_exec(
-                            "claude", "-p", full_prompt,
-                            "--output-format", "text",
-                            "--permission-mode", "acceptEdits",
-                            cwd="/home/user/yhmemo",
-                            env=clean_env,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
+                        output = await curator.ai_think(
+                            system_prompt="""당신은 소프트웨어 엔지니어입니다. 요청된 작업을 분석하고 구체적 결과물을 만드세요.
+- 코드가 필요하면 구체적 구현 계획 + 핵심 코드 제공
+- 분석/리서치면 구체적 결과 제공
+- 반드시 실행 가능한 결과물을 만들 것""",
+                            user_prompt=full_prompt,
                         )
-                        stdout, stderr = await asyncio.wait_for(
-                            proc.communicate(), timeout=300  # 5분 타임아웃
-                        )
-                        output = stdout.decode("utf-8", errors="replace").strip()
-                        err_output = stderr.decode("utf-8", errors="replace").strip()
 
-                        if proc.returncode == 0 and output:
-                            # 결과가 길면 요약
+                        if output:
                             if len(output) > 3000:
                                 summary = await curator.ai_think(
-                                    system_prompt="아래 Claude Code 실행 결과를 슬랙 메시지로 요약하세요. 무엇을 만들었는지, 어떤 파일을 생성/수정했는지, 다음 단계는 무엇인지 핵심만. 최대 1500자.",
+                                    system_prompt="아래 결과를 슬랙 메시지로 요약하세요. 핵심만. 최대 1500자.",
                                     user_prompt=output,
                                 )
                                 await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
@@ -495,13 +478,12 @@ async def main():
                                 await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output}", thread_ts)
                             result_text = f"dev 완료: {dev_task[:50]}"
                         else:
-                            error_msg = err_output or output or "알 수 없는 오류"
-                            await _reply(channel, f"⚠️ *[마스터]* 작업 중 문제가 생겼어요:\n```\n{error_msg[:1000]}\n```\n다시 시도하거나 작업을 수정해서 알려주세요.", thread_ts)
-                            result_text = f"dev 오류: {error_msg[:100]}"
+                            await _reply(channel, "⚠️ *[마스터]* 작업 결과를 생성하지 못했어요. 다시 시도해주세요.", thread_ts)
+                            result_text = "dev 오류: 결과 없음"
                             success = False
-                    except asyncio.TimeoutError:
-                        await _reply(channel, "⏱️ 작업이 5분을 초과했어요. 좀 더 작은 단위로 나눠서 요청해주세요.", thread_ts)
-                        result_text = "dev 타임아웃"
+                    except Exception as e:
+                        await _reply(channel, f"⚠️ *[마스터]* 작업 중 오류:\n```{str(e)[:500]}```", thread_ts)
+                        result_text = f"dev 오류: {str(e)[:100]}"
                         success = False
 
             elif action == "chat":
@@ -1094,58 +1076,37 @@ async def main():
                         channel = cmd.get("channel", "ai-agents-general")
                         thread_ts = cmd.get("thread_ts")
                         if task_desc:
-                            full_prompt = task_desc + """
-
-[자율 실행 지침]
-- 권한 요청하지 말고 바로 실행하세요. 모든 파일 쓰기/수정 권한이 있습니다.
-- 작업 완료 후 git add, git commit, git push까지 자동으로 하세요.
-- 커밋 메시지는 한국어로, 변경 내용을 요약하세요.
-- git push는 현재 브랜치로 하세요.
-- 사용자에게 승인을 묻지 마세요. 모든 것이 사전 승인됨.
-- 작업 디렉토리: /home/user/yhmemo
-- 결과를 간결하게 요약하세요."""
-                            # 슬랙에 작업 시작 알림
                             start_msg = f"🎯 *[마스터]* dev 작업 지시\n> {task_desc[:200]}"
                             if thread_ts:
                                 await _reply(channel, start_msg, thread_ts)
                             else:
                                 await slack.send_message(channel, start_msg)
 
-                            clean_env = {k: v for k, v in os.environ.items()}
-                            clean_env["CLAUDECODE"] = ""
-                            if "ANTHROPIC_API_KEY" not in clean_env:
-                                from dotenv import dotenv_values
-                                env_vals = dotenv_values()
-                                if "ANTHROPIC_API_KEY" in env_vals:
-                                    clean_env["ANTHROPIC_API_KEY"] = env_vals["ANTHROPIC_API_KEY"]
-                            proc = await asyncio.create_subprocess_exec(
-                                "claude", "-p", full_prompt,
-                                "--output-format", "text",
-                                "--permission-mode", "acceptEdits",
-                                cwd="/home/user/yhmemo",
-                                env=clean_env,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE,
-                            )
-                            stdout, stderr = await asyncio.wait_for(
-                                proc.communicate(), timeout=300
-                            )
-                            output = stdout.decode("utf-8", errors="replace").strip()
-                            if proc.returncode == 0 and output:
-                                result = output[:3000]
-                                done_msg = f"✅ *[마스터]* 작업 완료!\n\n{result}"
-                                if thread_ts:
-                                    await _reply(channel, done_msg, thread_ts)
+                            try:
+                                output = await curator.ai_think(
+                                    system_prompt="소프트웨어 엔지니어로서 요청된 작업을 분석하고 구체적 결과물을 만드세요.",
+                                    user_prompt=task_desc,
+                                )
+                                if output:
+                                    result = output[:3000]
+                                    done_msg = f"✅ *[마스터]* 작업 완료!\n\n{result}"
+                                    if thread_ts:
+                                        await _reply(channel, done_msg, thread_ts)
+                                    else:
+                                        await slack.send_message(channel, done_msg)
                                 else:
-                                    await slack.send_message(channel, done_msg)
-                            else:
-                                err = stderr.decode("utf-8", errors="replace").strip() or output
-                                err_msg = f"⚠️ *[마스터]* 작업 오류:\n```{err[:500]}```"
+                                    err_msg = "⚠️ *[마스터]* 작업 결과 생성 실패"
+                                    if thread_ts:
+                                        await _reply(channel, err_msg, thread_ts)
+                                    else:
+                                        await slack.send_message(channel, err_msg)
+                            except Exception as e:
+                                err_msg = f"⚠️ *[마스터]* 작업 오류:\n```{str(e)[:500]}```"
                                 if thread_ts:
                                     await _reply(channel, err_msg, thread_ts)
                                 else:
                                     await slack.send_message(channel, err_msg)
-                                logger.error(f"[master] Dev command failed: {err[:200]}")
+                                logger.error(f"[master] Dev command failed: {e}")
 
                     elif cmd_type == "collect":
                         query = cmd.get("query", "")
