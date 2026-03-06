@@ -19,6 +19,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from core.base_agent import BaseAgent
+from core.security import sanitize_dev_prompt, validate_cwd
 from core.goal_planner import GoalPlanner, GoalStatus, PlanStepStatus
 from core.proposal_lifecycle import ProposalLifecycle, ProposalState
 from core.self_memory import SelfMemory
@@ -427,12 +428,24 @@ class ProactiveAgent(BaseAgent):
 - Supabase collected_items, curated_items 테이블에 수집 데이터가 있습니다.
 - 결과를 간결하게 요약하세요."""
 
+        # Security: sanitize prompt before passing to CLI
+        prompt, sec_warnings = sanitize_dev_prompt(prompt)
+        if not prompt:
+            logger.warning(f"[proactive] _hourly_build blocked: {sec_warnings}")
+            return f"보안 차단: {'; '.join(sec_warnings)}"
+        if sec_warnings:
+            logger.warning(f"[proactive] _hourly_build security warnings: {sec_warnings}")
+
+        dev_cwd = "/home/user/yhmemo"
+        if not validate_cwd(dev_cwd):
+            return "보안 차단: invalid cwd"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 "claude", "-p", prompt,
                 "--output-format", "text",
                 "--permission-mode", "acceptEdits",
-                cwd="/home/user/yhmemo",
+                cwd=dev_cwd,
                 env=clean_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -731,6 +744,18 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
 - 이미 수집된 데이터는 Supabase의 collected_items, curated_items 테이블에 있습니다.
 - 결과를 간결하게 요약하세요."""
 
+        # Security: sanitize prompt before passing to CLI
+        prompt, sec_warnings = sanitize_dev_prompt(prompt)
+        if not prompt:
+            logger.warning(f"[proactive] _execute_build_step blocked: {sec_warnings}")
+            return f"보안 차단: {'; '.join(sec_warnings)}"
+        if sec_warnings:
+            logger.warning(f"[proactive] _execute_build_step security warnings: {sec_warnings}")
+
+        dev_cwd = "/home/user/yhmemo"
+        if not validate_cwd(dev_cwd):
+            return "보안 차단: invalid cwd"
+
         await self.slack.send_message(
             "ai-agent-logs",
             f"🔨 *[빌드 시작]* {step.description[:150]}",
@@ -741,7 +766,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
                 "claude", "-p", prompt,
                 "--output-format", "text",
                 "--permission-mode", "acceptEdits",
-                cwd="/home/user/yhmemo",
+                cwd=dev_cwd,
                 env=clean_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -1465,11 +1490,24 @@ fix_prompt는 Claude Code가 실행할 수 있는 구체적 지시.""",
 - 작업 디렉토리: /home/user/yhmemo
 - 기존 기능을 깨뜨리지 마세요."""
 
+                # Security: sanitize prompt before passing to CLI
+                full_prompt, sec_warnings = sanitize_dev_prompt(full_prompt)
+                if not full_prompt:
+                    logger.warning(f"[daily_review] Auto-fix blocked: {sec_warnings}")
+                    continue
+                if sec_warnings:
+                    logger.warning(f"[daily_review] Auto-fix security warnings: {sec_warnings}")
+
+                dev_cwd = "/home/user/yhmemo"
+                if not validate_cwd(dev_cwd):
+                    logger.error("[daily_review] Invalid cwd, skipping auto-fix")
+                    continue
+
                 proc = await asyncio.create_subprocess_exec(
                     "claude", "-p", full_prompt,
                     "--output-format", "text",
                     "--permission-mode", "acceptEdits",
-                    cwd="/home/user/yhmemo",
+                    cwd=dev_cwd,
                     env=clean_env,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
