@@ -80,7 +80,12 @@ export default function MarketDashboard() {
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, MARKET_REFRESH * 1000);
-    return () => clearInterval(interval);
+    const onVisible = () => { if (!document.hidden) fetchData(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchData]);
 
   // 카운트다운

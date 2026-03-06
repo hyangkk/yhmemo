@@ -61,7 +61,12 @@ export default function TrendingTopics() {
   useEffect(() => {
     fetchTrends();
     const interval = setInterval(fetchTrends, TREND_REFRESH * 1000);
-    return () => clearInterval(interval);
+    const onVisible = () => { if (!document.hidden) fetchTrends(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
