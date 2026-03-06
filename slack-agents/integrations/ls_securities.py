@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 BASE_URL_LIVE = "https://openapi.ls-sec.co.kr:8080"
-BASE_URL_PAPER = "https://openapi.ls-sec.co.kr:29080"
+BASE_URL_PAPER = "https://openapi.ls-sec.co.kr:8080"
 
 
 class LSSecuritiesClient:
