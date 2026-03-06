@@ -4,8 +4,20 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const dynamic = "force-dynamic";
 
+// 인메모리 캐시 (15분 TTL)
+let briefingCache: { data: unknown; timestamp: number } | null = null;
+const CACHE_TTL = 15 * 60 * 1000;
+
 export async function GET() {
   try {
+    // 캐시가 유효하면 반환
+    if (briefingCache && Date.now() - briefingCache.timestamp < CACHE_TTL) {
+      return NextResponse.json({
+        ...(briefingCache.data as Record<string, unknown>),
+        cached: true,
+      });
+    }
+
     const supabase = getServiceSupabase();
 
     // 최근 24시간 뉴스 가져오기
@@ -118,11 +130,16 @@ export async function GET() {
       }
     );
 
-    return NextResponse.json({
+    const result = {
       stories,
       total_news_count: allNews.length,
       generated_at: new Date().toISOString(),
-    });
+    };
+
+    // 캐시 저장
+    briefingCache = { data: result, timestamp: Date.now() };
+
+    return NextResponse.json(result);
   } catch (err) {
     console.error("Morning briefing error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });

@@ -236,12 +236,26 @@ async def main():
         report = agent_tracker.get_status_report()
         await _reply(channel, report, thread_ts)
 
+    # "!시세" → 투자 에이전트 즉시 브리핑
+    async def cmd_market(args: str, user: str, channel: str, thread_ts: str = None):
+        try:
+            prices = await investment._fetch_all_prices()
+            fg = await investment._fetch_fear_greed()
+            await investment._send_market_briefing({
+                "prices": prices,
+                "fear_greed": fg,
+                "hour": datetime.now(KST).hour,
+            })
+        except Exception as e:
+            await _reply(channel, f"시세 조회 실패: {e}", thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
+    slack.on_command("시세", cmd_market)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")

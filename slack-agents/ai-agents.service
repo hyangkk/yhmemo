@@ -1,0 +1,43 @@
+# systemd 서비스: AI 에이전트 시스템 (24/7 영구 가동)
+#
+# 설치 방법:
+#   sudo cp ai-agents.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ai-agents    # 부팅 시 자동 시작
+#   sudo systemctl start ai-agents     # 지금 시작
+#
+# 관리:
+#   sudo systemctl status ai-agents    # 상태 확인
+#   sudo journalctl -u ai-agents -f    # 로그 실시간
+#   sudo systemctl restart ai-agents   # 재시작
+
+[Unit]
+Description=AI Agent Orchestrator (24/7 Autonomous)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Group=user
+WorkingDirectory=/home/user/yhmemo/slack-agents
+ExecStart=/home/user/yhmemo/slack-agents/forever.sh
+Restart=always
+RestartSec=10
+
+# 환경
+EnvironmentFile=/home/user/yhmemo/slack-agents/.env
+
+# 프로세스 제한
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+# 로그
+StandardOutput=append:/home/user/yhmemo/slack-agents/data/logs/systemd.log
+StandardError=append:/home/user/yhmemo/slack-agents/data/logs/systemd-error.log
+
+# OOM 킬러에서 보호
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
