@@ -59,6 +59,31 @@ export default function MorningBriefing() {
     fetchBriefing();
   }, [fetchBriefing]);
 
+  // 키보드 네비게이션
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (chatOpen) return; // 채팅 입력 중에는 무시
+      if (e.key === "ArrowRight" || e.key === "j") nextStory();
+      if (e.key === "ArrowLeft" || e.key === "k") prevStory();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  });
+
+  const shareStory = async (story: Story) => {
+    const text = `${story.emoji} ${story.title}\n${story.summary}\n${story.url}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: story.title, text, url: story.url });
+      } catch {
+        // 사용자가 취소함
+      }
+    } else {
+      await navigator.clipboard.writeText(text);
+      alert("클립보드에 복사되었습니다!");
+    }
+  };
+
   const markRead = (index: number) => {
     const newRead = new Set(readStories);
     newRead.add(index);
@@ -357,8 +382,8 @@ export default function MorningBriefing() {
           </p>
         </div>
 
-        {/* 원문 링크 */}
-        <div className="flex items-center gap-3">
+        {/* 원문 링크 + 공유 */}
+        <div className="flex items-center gap-4">
           <a
             href={story.url}
             target="_blank"
@@ -380,6 +405,15 @@ export default function MorningBriefing() {
               />
             </svg>
           </a>
+          <button
+            onClick={() => shareStory(story)}
+            className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+            </svg>
+            공유
+          </button>
         </div>
       </article>
 
@@ -543,6 +577,7 @@ export default function MorningBriefing() {
 
       {/* 키보드 힌트 */}
       <p className="text-center text-xs text-gray-300 dark:text-gray-600 mt-6">
+        <span className="hidden sm:inline">← → 키 또는 J/K 키로 탐색 | </span>
         카드를 넘기며 오늘의 핵심 뉴스를 확인하세요
       </p>
     </section>
