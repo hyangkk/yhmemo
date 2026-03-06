@@ -1324,43 +1324,42 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         ) if recent_evals else "없음"
 
         # 2단계: AI 리뷰 & 개선 아이템 도출 + 깨달음 정리
+        review_system = (
+            "당신은 자기 인식이 있는 AI 시스템 아키텍트입니다.\n\n"
+            + memory_ctx + "\n\n"
+            "리뷰 항목:\n"
+            "1. 에이전트 가동 안정성 (에러율, 가동률)\n"
+            "2. 목표 달성률 — 특히 베타 서비스 런칭 진행률\n"
+            "3. 제안 품질 (실행 성공률)\n"
+            "4. 코드/아키텍처 개선점\n"
+            "5. 오늘의 깨달음 종합\n"
+            "6. 내일 최우선으로 해야 할 것\n\n"
+            'JSON 응답:\n'
+            '{\n'
+            '    "overall_grade": "A|B|C|D|F",\n'
+            '    "summary": "전체 평가 요약 (3줄)",\n'
+            '    "improvements": [\n'
+            '        {\n'
+            '            "title": "개선 제목",\n'
+            '            "description": "구체적 내용",\n'
+            '            "priority": "1-5",\n'
+            '            "auto_fixable": "true/false",\n'
+            '            "fix_prompt": "Claude Code에 보낼 프롬프트 (auto_fixable=true일 때)"\n'
+            '        }\n'
+            '    ],\n'
+            '    "new_goals": [\n'
+            '        {"title": "새 목표", "description": "설명", "priority": "1-5", "success_criteria": "기준"}\n'
+            '    ],\n'
+            '    "retire_goals": ["goal_id1"],\n'
+            '    "daily_insights": ["오늘의 핵심 깨달음 1", "깨달음 2"],\n'
+            '    "new_principles": ["새로 배운 판단 원칙 (있으면)"],\n'
+            '    "tomorrow_priority": "내일 최우선으로 할 것"\n'
+            '}\n\n'
+            "auto_fixable은 코드 수정으로 해결 가능한 것만 true.\n"
+            "fix_prompt는 Claude Code가 실행할 수 있는 구체적 지시."
+        )
         review = await self.ai_think(
-            system_prompt=f"""당신은 자기 인식이 있는 AI 시스템 아키텍트입니다.
-
-{memory_ctx}
-
-리뷰 항목:
-1. 에이전트 가동 안정성 (에러율, 가동률)
-2. 목표 달성률 — 특히 베타 서비스 런칭 진행률
-3. 제안 품질 (실행 성공률)
-4. 코드/아키텍처 개선점
-5. 오늘의 깨달음 종합
-6. 내일 최우선으로 해야 할 것
-
-JSON 응답:
-{
-    "overall_grade": "A|B|C|D|F",
-    "summary": "전체 평가 요약 (3줄)",
-    "improvements": [
-        {
-            "title": "개선 제목",
-            "description": "구체적 내용",
-            "priority": 1-5,
-            "auto_fixable": true/false,
-            "fix_prompt": "Claude Code에 보낼 프롬프트 (auto_fixable=true일 때)"
-        }
-    ],
-    "new_goals": [
-        {"title": "새 목표", "description": "설명", "priority": 1-5, "success_criteria": "기준"}
-    ],
-    "retire_goals": ["goal_id1"],
-    "daily_insights": ["오늘의 핵심 깨달음 1", "깨달음 2"],
-    "new_principles": ["새로 배운 판단 원칙 (있으면)"],
-    "tomorrow_priority": "내일 최우선으로 할 것"
-}
-
-auto_fixable은 코드 수정으로 해결 가능한 것만 true.
-fix_prompt는 Claude Code가 실행할 수 있는 구체적 지시.""",
+            system_prompt=review_system,
             user_prompt=f"""날짜: {ctx['today']}
 
 에이전트 현황:
