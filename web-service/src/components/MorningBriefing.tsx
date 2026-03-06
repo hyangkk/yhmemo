@@ -28,6 +28,27 @@ interface ChatMessage {
   text: string;
 }
 
+function estimateReadTime(text: string): number {
+  // 한국어 평균 읽기 속도: 분당 약 500자
+  return Math.max(1, Math.ceil(text.length / 500));
+}
+
+function getBookmarks(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem("news_bookmarks") || "[]");
+  } catch { return []; }
+}
+
+function toggleBookmark(storyId: string): string[] {
+  const bm = getBookmarks();
+  const idx = bm.indexOf(storyId);
+  if (idx >= 0) bm.splice(idx, 1);
+  else bm.push(storyId);
+  localStorage.setItem("news_bookmarks", JSON.stringify(bm));
+  return [...bm];
+}
+
 export default function MorningBriefing() {
   const [data, setData] = useState<BriefingResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +60,12 @@ export default function MorningBriefing() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
+
+  // 북마크 로드
+  useEffect(() => {
+    setBookmarks(getBookmarks());
+  }, []);
 
   const fetchBriefing = useCallback(async () => {
     setLoading(true);
@@ -249,6 +276,31 @@ export default function MorningBriefing() {
             </button>
           </div>
 
+          {/* 저장한 뉴스 */}
+          {stories.filter(s => bookmarks.includes(s.id)).length > 0 && (
+            <div className="text-left space-y-3 mb-8">
+              <h3 className="text-sm font-semibold text-amber-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+                저장한 뉴스
+              </h3>
+              {stories.filter(s => bookmarks.includes(s.id)).map((story, i) => (
+                <a
+                  key={i}
+                  href={story.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/10 hover:bg-amber-100 dark:hover:bg-amber-900/20 transition border border-amber-200 dark:border-amber-800/30"
+                >
+                  <span className="text-xl">{story.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{story.title}</p>
+                    <p className="text-xs text-gray-400">{story.source}</p>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+
           {/* 읽은 스토리 요약 */}
           <div className="text-left space-y-3">
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
@@ -329,6 +381,9 @@ export default function MorningBriefing() {
           <span className="text-3xl">{story.emoji}</span>
           <span className="px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs font-semibold uppercase tracking-wider">
             {story.category}
+          </span>
+          <span className="text-xs text-gray-400">
+            {estimateReadTime(story.summary)}분 읽기
           </span>
           <span className="ml-auto text-xs text-gray-400">
             {story.source}
@@ -413,6 +468,19 @@ export default function MorningBriefing() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
             </svg>
             공유
+          </button>
+          <button
+            onClick={() => setBookmarks(toggleBookmark(story.id))}
+            className={`inline-flex items-center gap-1.5 text-sm transition font-medium ${
+              bookmarks.includes(story.id)
+                ? "text-amber-500"
+                : "text-gray-500 dark:text-gray-400 hover:text-amber-500"
+            }`}
+          >
+            <svg className="w-4 h-4" fill={bookmarks.includes(story.id) ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+            {bookmarks.includes(story.id) ? "저장됨" : "저장"}
           </button>
         </div>
       </article>
