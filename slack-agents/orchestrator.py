@@ -47,6 +47,7 @@ from agents.collector_agent import CollectorAgent
 from agents.curator_agent import CuratorAgent
 from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
+from agents.invest_agent import InvestAgent
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
@@ -135,6 +136,7 @@ async def main():
         **common_kwargs,
     )
     quote = QuoteAgent(**common_kwargs)
+    invest = InvestAgent(**common_kwargs)
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -628,6 +630,7 @@ async def main():
         curator.stop()
         quote.stop()
         proactive.stop()
+        invest.stop()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -654,6 +657,7 @@ async def main():
         "curator": lambda: asyncio.create_task(curator.start(), name="curator"),
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
+        "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
