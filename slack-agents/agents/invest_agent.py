@@ -3,6 +3,7 @@
 
 BaseAgent를 상속하여 orchestrator에 통합.
 매 사이클: 시세 수집 -> 전략 진화 -> 노션 기록 -> 슬랙 알림
+
 """
 
 import json
@@ -35,7 +36,7 @@ class InvestAgent(BaseAgent):
         super().__init__(
             name="invest",
             description="유전 알고리즘 기반 투자 전략 자동 진화",
-            loop_interval=int(os.environ.get("INVEST_INTERVAL", 3600)),
+            loop_interval=int(os.environ.get("INVEST_INTERVAL", 1800)),
             slack_channel=self.CHANNEL,
             **kwargs,
         )
@@ -103,25 +104,25 @@ class InvestAgent(BaseAgent):
         if self.notion and self.notion_db_id:
             notion_url = await self._write_notion(cycle, results)
 
-        # 4. 슬랙 알림
+        # 4. 슬랙 알림 (한국어)
         score_emoji = "🔥" if results["best_score"] > 0.5 else "📊"
         msg = (
-            f"{score_emoji} *Investment Agent - Cycle {cycle}*\n"
+            f"{score_emoji} *투자 전략 리포트 - {cycle}차 진화*\n"
             f"```\n"
-            f"Strategy: {results['description']}\n"
-            f"Return:   {best['total_return']:+.2%}\n"
-            f"Sharpe:   {best['sharpe']:.2f}\n"
-            f"MDD:      {best['max_drawdown']:.2%}\n"
-            f"Win Rate: {best['win_rate']:.1%}\n"
-            f"Score:    {results['best_score']:.4f}\n"
+            f"전략:     {results['description']}\n"
+            f"수익률:   {best['total_return']:+.2%}  (백테스트 기간 총 수익)\n"
+            f"샤프비:   {best['sharpe']:.2f}  (위험 대비 수익 효율)\n"
+            f"최대낙폭: {best['max_drawdown']:.2%}  (고점 대비 최대 하락)\n"
+            f"승률:     {best['win_rate']:.1%}  (수익 거래 비율)\n"
+            f"점수:     {results['best_score']:.4f}  (종합 적합도)\n"
             f"```"
         )
         if notion_url:
-            msg += f"\n<{notion_url}|📝 Notion 상세 보기>"
+            msg += f"\n<{notion_url}|📝 노션 상세 보기>"
 
         if self.champions:
             all_time = self.champions[0]
-            msg += f"\n\n*All-time best:* {all_time['description']} (cycle {all_time['cycle']}, score {all_time['score']:.4f})"
+            msg += f"\n\n*역대 최고 전략:* {all_time['description']} ({all_time['cycle']}차, 점수 {all_time['score']:.4f})"
 
         await self.say(msg)
         logger.info(f"[invest] Cycle {cycle} complete: score={results['best_score']:.4f}")

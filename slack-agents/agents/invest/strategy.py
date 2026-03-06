@@ -92,10 +92,10 @@ def generate_signal(row: dict, genes: dict, position: int) -> str:
 
 
 def describe_strategy(genes: dict) -> str:
-    """전략을 사람이 읽을 수 있는 문자열로 설명"""
+    """전략을 사람이 읽을 수 있는 한국어 문자열로 설명"""
     return (
-        f"SMA({genes['sma_short']}/{genes['sma_long']}) "
-        f"RSI({genes['rsi_period']}, {genes['rsi_oversold']}-{genes['rsi_overbought']}) "
-        f"SL:{genes['stop_loss']:.1%} TP:{genes['take_profit']:.1%} "
-        f"ATR({genes['atr_period']}, x{genes['atr_multiplier']:.1f})"
+        f"이평선({genes['sma_short']}/{genes['sma_long']}일) "
+        f"RSI({genes['rsi_period']}일, {genes['rsi_oversold']}-{genes['rsi_overbought']}) "
+        f"손절:{genes['stop_loss']:.1%} 익절:{genes['take_profit']:.1%} "
+        f"ATR({genes['atr_period']}일, x{genes['atr_multiplier']:.1f})"
     )
