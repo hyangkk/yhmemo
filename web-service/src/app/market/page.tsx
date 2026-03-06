@@ -531,6 +531,49 @@ export default function MarketPage() {
           ))}
         </div>
 
+        {/* 24시간 변동 비교 */}
+        {assets.length > 0 && (
+          <div className="mt-8 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">24시간 변동률 비교</h3>
+            <div className="space-y-3">
+              {[...assets].sort((a, b) => b.change24h - a.change24h).map((asset) => {
+                const maxAbs = Math.max(...assets.map(a => Math.abs(a.change24h)), 1);
+                const widthPct = Math.abs(asset.change24h) / maxAbs * 50;
+                const isUp = asset.change24h >= 0;
+                return (
+                  <div key={asset.id} className="flex items-center gap-3">
+                    <div className="w-16 flex items-center gap-1.5 flex-shrink-0">
+                      <span className="text-sm">{asset.emoji}</span>
+                      <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{asset.symbol}</span>
+                    </div>
+                    <div className="flex-1 relative h-6">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full h-px bg-gray-200 dark:bg-gray-700" />
+                      </div>
+                      <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gray-300 dark:bg-gray-600" />
+                      <div
+                        className={`absolute top-0.5 h-5 rounded-sm transition-all ${
+                          isUp ? "bg-green-500/80" : "bg-red-500/80"
+                        }`}
+                        style={{
+                          ...(isUp
+                            ? { left: "50%", width: `${widthPct}%` }
+                            : { right: "50%", width: `${widthPct}%` }),
+                        }}
+                      />
+                    </div>
+                    <span className={`w-16 text-right text-xs font-bold flex-shrink-0 ${
+                      isUp ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {isUp ? "+" : ""}{asset.change24h.toFixed(2)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* AI 크로스 분석 인사이트 */}
         <div className="mt-10">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
