@@ -264,6 +264,23 @@ class ProactiveAgent(BaseAgent):
             context["proposal"] = approved[0]
             return context
 
+        # 4.5단계: 미달성 작업 재시도 (retry_queue)
+        retry_queue = self._state.get("retry_queue", [])
+        if retry_queue:
+            retry_task = retry_queue[0]
+            if retry_task.get("retry_count", 0) < 2:  # 최대 2회 재시도
+                context["action"] = "execute_hourly_task"
+                context["hour_task"] = {
+                    "task": f"[재시도] {retry_task['task']}",
+                    "method": retry_task.get("method", "build"),
+                    "expected": retry_task.get("expected", ""),
+                }
+                context["task_hour"] = hour
+                context["slot_key"] = slot_key
+                context["is_retry"] = True
+                context["retry_index"] = 0
+                return context
+
         # 5단계: 빈 시간 → 자율 행동
         active_goals = self.planner.get_active_goals()
         all_done = all(g.is_done() for g in active_goals) if active_goals else True
@@ -404,8 +421,39 @@ class ProactiveAgent(BaseAgent):
         # 노션 업데이트
         await self._update_notion_hourly_status(task_hour, grade)
 
+        # 재시도 작업이면 큐 업데이트
+        if ctx.get("is_retry"):
+            retry_queue = self._state.get("retry_queue", [])
+            retry_idx = ctx.get("retry_index", 0)
+            if retry_idx < len(retry_queue):
+                if grade in ("A", "B", "C"):
+                    # 성공: 큐에서 제거
+                    retry_queue.pop(retry_idx)
+                    self._state["retry_queue"] = retry_queue
+                    await self.slack.send_message(
+                        "ai-agent-logs",
+                        f"✅ *[재시도 성공]* {task_desc[:60]} → {grade}",
+                    )
+                else:
+                    # 여전히 실패: 카운터 증가
+                    retry_queue[retry_idx]["retry_count"] = retry_queue[retry_idx].get("retry_count", 0) + 1
+                    if retry_queue[retry_idx]["retry_count"] >= 2:
+                        # 2회 실패 → 큐에서 제거하고 Goal로 에스컬레이션
+                        failed_task = retry_queue.pop(retry_idx)
+                        self.planner.add_goal(
+                            title=f"미달성 과제: {failed_task['task'][:50]}",
+                            description=f"2회 재시도 실패. 원래 계획: {failed_task['task']}\n예상 결과: {failed_task.get('expected', '')}",
+                            priority=2,
+                            success_criteria=failed_task.get("expected", "작업 완료"),
+                        )
+                        await self.slack.send_message(
+                            "ai-agents-general",
+                            f"🔄 *[재시도 2회 실패 → Goal 에스컬레이션]* {failed_task['task'][:60]}\n_체계적 계획으로 재접근합니다._",
+                        )
+                    self._state["retry_queue"] = retry_queue
+            self._save_state()
         # 결과가 D/F면 계획 수정 검토
-        if grade in ("D", "F"):
+        elif grade in ("D", "F"):
             await self._consider_plan_adjustment(task_hour, task_desc, result)
 
     async def _hourly_build(self, task_desc: str, expected: str) -> str:
@@ -935,12 +983,25 @@ JSON 응답:
             grade = parsed.get("grade", "C")
             if grade in ("D", "F"):
                 await self.slack.send_message(
-                    "ai-agent-logs",
-                    f"⚠️ *[{check_hour}시 체크: {grade}]* "
+                    "ai-agents-general",
+                    f"⚠️ *[{check_hour}시 미달성: {grade}]* "
                     f"계획: {planned_task[:60]}\n"
                     f"실제: {parsed.get('actual', '')[:60]}\n"
-                    f"차이: {parsed.get('gap_analysis', '')[:80]}",
+                    f"차이: {parsed.get('gap_analysis', '')[:80]}\n"
+                    f"_재시도 큐에 추가되었습니다._",
                 )
+                # 미달성 작업을 재시도 큐에 추가
+                retry_queue = self._state.get("retry_queue", [])
+                retry_queue.append({
+                    "task": planned_task,
+                    "method": hour_plan.get("method", "build"),
+                    "expected": expected,
+                    "original_hour": check_hour,
+                    "retry_count": 0,
+                    "grade": grade,
+                })
+                # 최대 5개까지 큐 유지
+                self._state["retry_queue"] = retry_queue[-5:]
 
             # 노션 시간별 상태 업데이트
             await self._update_notion_hourly_status(check_hour, grade)
@@ -1169,7 +1230,7 @@ JSON 응답:
     # ── 진행 보고 ──────────────────────────────────
 
     async def _do_progress_report(self, ctx: dict):
-        """결과물 중심 보고만. 사소한 진행상황은 보고하지 않는다."""
+        """결과물 + 계획 달성률 보고."""
         goals_summary = self.planner.get_status_summary()
 
         # 최근 완료된 제안에서 결과물 추출
@@ -1179,27 +1240,36 @@ JSON 응답:
             for p in recent if p.execution_result or p.measurement_summary
         ]
 
+        # 계획 달성률 추적
+        achievement = self.memory.get_plan_achievement_rate()
+        retry_queue = self._state.get("retry_queue", [])
+        retry_info = f"\n재시도 대기: {len(retry_queue)}건" if retry_queue else ""
+
         report = await self.ai_think(
-            system_prompt="""파트너에게 결과물 중심 보고. 10줄 이내.
+            system_prompt="""파트너에게 결과물 + 계획 달성률 보고. 12줄 이내.
 
 규칙:
-- 사소한 건 빼고 결과물만 보고
-- "뭘 만들었는지" "뭘 달성했는지"만
-- 파트너 액션 필요한 것 (API 키, 가입 등)만 요청
-- 진행 중인 것은 "다음 결과물 예정" 한줄로""",
+- 결과물 중심 + 계획 달성률 포함
+- 미달성 작업이 있으면 명시하고 재시도 계획 언급
+- 파트너 액션 필요한 것 (API 키, 가입 등)만 요청""",
             user_prompt=f"""현재: {ctx['current_time']}
 
 목표 진행:
 {goals_summary}
+
+계획 달성률: {achievement.get('rate', 0):.0f}% ({achievement.get('achieved', 0)}/{achievement.get('total', 0)}){retry_info}
 
 최근 결과물:
 {chr(10).join(deliverables) if deliverables else '아직 결과물 없음 — 작업 중'}""",
         )
 
         if report:
+            rate = achievement.get('rate', 0)
+            rate_emoji = "🟢" if rate >= 70 else "🟡" if rate >= 40 else "🔴"
             await self.slack.send_message(
                 "ai-agents-general",
-                f"📦 *결과물 보고* ({ctx['current_time']})\n\n{report}",
+                f"📦 *결과물 보고* ({ctx['current_time']})\n"
+                f"{rate_emoji} 계획 달성률: {rate:.0f}%\n\n{report}",
             )
 
         self._state["last_report"] = ctx["current_time"]
@@ -1427,36 +1497,52 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if tomorrow:
             self.memory.add_action_item(tomorrow, priority=1)
 
-        # 4단계: 자동 수정 가능한 것들 실행
+        # 4단계: 자동 수정 가능한 것들을 Goal로 변환하여 체계적으로 실행
         auto_fixes = [imp for imp in improvements if imp.get("auto_fixable") and imp.get("fix_prompt")]
         for imp in auto_fixes[:3]:  # 최대 3건만 자동 실행
             fix_title = imp.get("title", "")
             fix_prompt = imp["fix_prompt"]
 
-            logger.info(f"[daily_review] Auto-fixing: {fix_title}")
-            await self.slack.send_message(
-                "ai-agent-logs",
-                f"🔧 *[자동 개선]* {fix_title}\n프롬프트: {fix_prompt[:200]}",
-            )
+            logger.info(f"[daily_review] Auto-fixing via goal: {fix_title}")
 
             try:
-                result = await self.ai_think(
-                    system_prompt="당신은 시스템 개선 전문가입니다. 주어진 개선 과제를 분석하고 구체적 해결 방안을 제시하세요.",
-                    user_prompt=f"개선 과제: {fix_title}\n\n지시: {fix_prompt}\n\n구체적 개선 방안과 실행 계획을 작성하세요.",
+                # Goal로 변환하여 체계적 추적
+                goal = self.planner.add_goal(
+                    title=f"자동개선: {fix_title[:60]}",
+                    description=f"일일 리뷰에서 도출된 자동 개선 과제.\n\n지시: {fix_prompt}",
+                    priority=2,
+                    success_criteria=f"'{fix_title}' 개선이 완료되어 시스템에 반영됨",
                 )
-                if result:
-                    await self.slack.send_message(
-                        "ai-agents-general",
-                        f"✅ *자동 개선 완료:* {fix_title}\n```{result[:500]}```",
-                    )
-                    self.memory.record_insight(result[:200], context=f"자동개선: {fix_title}")
-                else:
-                    await self.slack.send_message(
-                        "ai-agent-logs",
-                        f"⚠️ *자동 개선 실패:* {fix_title}",
-                    )
+                await self.planner.generate_plan(goal)
+
+                plan_text = "\n".join(
+                    f"  {i+1}. {s.description} ({s.method})"
+                    for i, s in enumerate(goal.plan)
+                )
+                await self.slack.send_message(
+                    "ai-agents-general",
+                    f"🔧 *[자동 개선 → Goal 생성]* {fix_title}\n\n{plan_text}\n\n_다음 슬롯에서 자동 실행됩니다._",
+                )
+                self.memory.record_insight(
+                    f"자동개선 Goal 생성: {fix_title}", context=f"일일리뷰 {ctx['today']}"
+                )
+                logger.info(f"[daily_review] Created goal for auto-fix: {goal.id}")
             except Exception as e:
-                logger.error(f"[daily_review] Auto-fix error for '{fix_title}': {e}")
+                logger.error(f"[daily_review] Auto-fix goal creation error for '{fix_title}': {e}")
+                # fallback: 기존 방식으로 AI 분석만 실행
+                try:
+                    result = await self.ai_think(
+                        system_prompt="당신은 시스템 개선 전문가입니다. 주어진 개선 과제를 분석하고 구체적 해결 방안을 제시하세요.",
+                        user_prompt=f"개선 과제: {fix_title}\n\n지시: {fix_prompt}\n\n구체적 개선 방안과 실행 계획을 작성하세요.",
+                    )
+                    if result:
+                        await self.slack.send_message(
+                            "ai-agents-general",
+                            f"✅ *자동 개선 분석 완료:* {fix_title}\n```{result[:500]}```",
+                        )
+                        self.memory.record_insight(result[:200], context=f"자동개선: {fix_title}")
+                except Exception as fallback_err:
+                    logger.error(f"[daily_review] Auto-fix fallback error: {fallback_err}")
 
         # 5단계: 새 목표 추가
         for new_goal in parsed.get("new_goals", []):
