@@ -49,6 +49,7 @@ from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
 from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
+from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
@@ -115,6 +116,12 @@ async def main():
     if config["NOTION_API_KEY"]:
         notion = NotionClient(api_key=config["NOTION_API_KEY"])
         logger.info("Notion integration enabled")
+
+    # LS증권 (선택적)
+    ls_client = None
+    if os.environ.get("LS_APP_KEY"):
+        ls_client = LSSecuritiesClient()
+        logger.info("LS증권 Open API 연동 활성화")
 
     # ── 메시지 버스 ─────────────────────────────────────
 
