@@ -1038,7 +1038,6 @@ async def main():
         # 하지만 헬스체크는 여전히 10분마다 실행
         logger.info("All agents running. Socket Mode active + watchdog enabled (10분 정각 리포트)")
         while not shutdown_event.is_set():
-            nonlocal last_report_slot
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
             if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
@@ -1068,7 +1067,6 @@ async def main():
                 logger.error(f"Poll error: {e}")
 
             # 10분 정각(KST :00, :10, :20, :30, :40, :50)에 마스터 헬스체크
-            nonlocal last_report_slot
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
             if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
