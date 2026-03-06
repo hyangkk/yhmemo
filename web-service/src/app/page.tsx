@@ -1,6 +1,7 @@
 import Link from "next/link";
 import MorningBriefing from "@/components/MorningBriefing";
 import MarketDashboard from "@/components/MarketDashboard";
+import TrendingTopics from "@/components/TrendingTopics";
 import Dashboard from "@/components/Dashboard";
 
 export default function Home() {
@@ -52,6 +53,21 @@ export default function Home() {
 
       {/* Morning Briefing - 메인 경험 */}
       <MorningBriefing />
+
+      {/* 트렌드 토픽 */}
+      <div className="max-w-5xl mx-auto px-4 py-6">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-800" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="px-4 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 text-sm text-gray-400">
+              지금 뜨는 토픽
+            </span>
+          </div>
+        </div>
+      </div>
+      <TrendingTopics />
 
       {/* 구분선 - 시장 현황 */}
       <div className="max-w-5xl mx-auto px-4 py-8">
