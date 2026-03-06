@@ -303,7 +303,7 @@ class ProactiveAgent(BaseAgent):
             return context
         return None
 
-    # ── Act: 액션 디스패치 ────────────────────────────
+    # ── Act: 액션 디스패치 + 매 사이클 슬랙 보고 ────────
 
     async def act(self, decision: dict):
         action = decision.get("action")
@@ -312,6 +312,9 @@ class ProactiveAgent(BaseAgent):
 
         # 시간별 작업은 빌드 시 10분 타임아웃, 나머지 3분
         timeout = 600 if action == "execute_hourly_task" else 180
+        cycle = decision.get("cycle", self._state.get("cycle_count", 0))
+        slot_key = decision.get("slot_key", "")
+        act_result = "completed"
 
         try:
             handler = getattr(self, f"_do_{action}", None)
@@ -320,10 +323,45 @@ class ProactiveAgent(BaseAgent):
                 await asyncio.wait_for(handler(decision), timeout=timeout)
             else:
                 logger.warning(f"[proactive] Unknown action: {action}")
+                act_result = "unknown_action"
         except asyncio.TimeoutError:
             logger.error(f"[proactive] Action '{action}' timed out ({timeout}s)")
+            act_result = f"timeout({timeout}s)"
         except Exception as e:
             logger.error(f"[proactive] Action '{action}' failed: {e}", exc_info=True)
+            act_result = f"error: {str(e)[:80]}"
+
+        # ── 매 사이클 슬랙 상태 보고 ──
+        await self._report_cycle(cycle, slot_key, action, act_result)
+
+    async def _report_cycle(self, cycle: int, slot_key: str, action: str, result: str):
+        """매 사이클 완료 시 ai-agents-general에 간결 보고"""
+        try:
+            now = self.now_kst()
+            time_str = now.strftime("%H:%M")
+
+            # 활성 목표 요약
+            active_goals = self.planner.get_active_goals()
+            goals_brief = ", ".join(
+                f"{g.title[:20]}({g.progress_pct()}%)" for g in active_goals[:3]
+            ) if active_goals else "없음"
+
+            # 최근 평가 등급
+            recent = self.memory.get_recent_evaluations(3)
+            grades = " ".join(f"[{e['grade']}]" for e in recent) if recent else "-"
+
+            status_emoji = "🟢" if result == "completed" else "🟡" if "timeout" in result else "🔴"
+
+            msg = (
+                f"{status_emoji} *사이클 #{cycle}* ({time_str} KST | {slot_key})\n"
+                f"액션: `{action}` → {result}\n"
+                f"목표: {goals_brief}\n"
+                f"최근 등급: {grades}"
+            )
+
+            await self.slack.send_message("ai-agents-general", msg)
+        except Exception as e:
+            logger.debug(f"[proactive] Cycle report failed: {e}")
 
     # ══════════════════════════════════════════════════
     #  액션 구현
