@@ -20,9 +20,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# 실전/모의 base URL
+# REST API는 실전/모의 동일 URL (8080), 29015는 웹소켓 모의 전용
 BASE_URL_REAL = "https://openapi.ls-sec.co.kr:8080"
-BASE_URL_MOCK = "https://openapi.ls-sec.co.kr:29015"
+BASE_URL_MOCK = "https://openapi.ls-sec.co.kr:8080"
 
 
 @dataclass
