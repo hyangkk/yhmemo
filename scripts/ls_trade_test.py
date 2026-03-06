@@ -28,6 +28,9 @@ async def main():
         print("ERROR: LS_APP_KEY, LS_APP_SECRET 환경변수를 설정하세요")
         sys.exit(1)
 
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
     print(f"=== LS증권 API 연결 테스트 (mode: {broker.mode}) ===\n")
 
     # 1. 토큰 발급 테스트
@@ -36,7 +39,10 @@ async def main():
         await broker._ensure_token()
         print(f"    OK - token: {broker._token.access_token[:20]}...\n")
     except Exception as e:
-        print(f"    FAIL - {e}")
+        import traceback
+        print(f"    FAIL - {type(e).__name__}: {e}")
+        traceback.print_exc()
+        print(f"\n    base_url: {broker.base_url}")
         sys.exit(1)
 
     # 2. 현재가 조회 (삼성전자)
