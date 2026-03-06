@@ -1,4 +1,4 @@
-app = "yhmemo-invest"
+app = "yhmemo-invest-agent"
 primary_region = "nrt"
 
 [build]
