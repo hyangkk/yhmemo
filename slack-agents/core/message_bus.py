@@ -69,8 +69,12 @@ class MessageBus:
         return task.id
 
     async def broadcast(self, from_agent: str, event_type: str, data: dict):
-        """모든 구독자에게 이벤트 브로드캐스트"""
+        """모든 구독자에게 이벤트 브로드캐스트 (에러 격리)"""
         listeners = self._event_listeners.get(event_type, [])
+        if not listeners:
+            return
+
+        tasks = []
         for listener in listeners:
             task = TaskMessage(
                 from_agent=from_agent,
@@ -78,14 +82,17 @@ class MessageBus:
                 task_type=event_type,
                 payload=data,
             )
-            try:
-                await listener(task)
-            except Exception as e:
-                logger.error(f"Broadcast listener error for {event_type}: {e}")
+            tasks.append(listener(task))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Broadcast listener {i} error for {event_type}: {result}")
 
     async def run(self):
-        """메시지 처리 루프 시작"""
+        """메시지 처리 루프 시작 (재시도 로직 포함)"""
         self._running = True
+        self._retry_counts: dict[str, int] = {}
         logger.info("Message bus started")
         while self._running:
             try:
@@ -102,11 +109,25 @@ class MessageBus:
             try:
                 task.result = await handler(task)
                 task.status = TaskStatus.COMPLETED
+                self._retry_counts.pop(task.id, None)
                 logger.info(f"Task {task.id} completed")
             except Exception as e:
-                task.status = TaskStatus.FAILED
-                task.result = {"error": str(e)}
-                logger.error(f"Task {task.id} failed: {e}")
+                retries = self._retry_counts.get(task.id, 0)
+                max_retries = 3
+                if retries < max_retries:
+                    self._retry_counts[task.id] = retries + 1
+                    delay = 2 ** retries  # 1s, 2s, 4s
+                    logger.warning(f"Task {task.id} failed (attempt {retries + 1}/{max_retries}), retrying in {delay}s: {e}")
+                    task.status = TaskStatus.PENDING
+                    asyncio.get_event_loop().call_later(
+                        delay, lambda t=task: asyncio.ensure_future(self._queue.put(t))
+                    )
+                    continue
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.result = {"error": str(e), "retries_exhausted": max_retries}
+                    self._retry_counts.pop(task.id, None)
+                    logger.error(f"Task {task.id} failed after {max_retries} retries: {e}")
 
             if self._supabase:
                 await self._update_task(task)
