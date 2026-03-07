@@ -519,9 +519,11 @@ async def main():
 
                         if steps:
                             await _reply(channel, f"🔧 실행 계획 {len(steps)}단계 시작합니다.", thread_ts)
+                            from core.executor import ALLOWED_BASE as _exec_base
                             exec_results = await execute_plan(
                                 steps,
                                 supabase_client=supabase,
+                                cwd=str(_exec_base),
                             )
                             result_text_raw = format_execution_results(exec_results)
                             success_count = sum(1 for r in exec_results if r["ok"])
