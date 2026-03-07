@@ -837,6 +837,21 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
 
     async def _do_evaluate_goal(self, ctx: dict):
         goal = ctx["goal"]
+
+        # 계획이 없는 목표 → 먼저 계획 생성
+        if not goal.plan:
+            logger.info(f"[proactive] Generating plan for goal: {goal.title}")
+            steps = await self.planner.generate_plan(goal)
+            if steps:
+                await self.slack.send_message(
+                    "ai-agent-logs",
+                    f"📋 *[계획 생성]* {goal.title}\n"
+                    + "\n".join(f"  {i+1}. {s.description} ({s.method})" for i, s in enumerate(steps)),
+                )
+            else:
+                logger.warning(f"[proactive] Failed to generate plan for: {goal.title}")
+            return
+
         replanned = await self.planner.evaluate_and_replan(goal)
         if replanned:
             logger.info(f"[proactive] Goal replanned: {goal.title}")

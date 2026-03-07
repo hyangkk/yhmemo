@@ -167,7 +167,7 @@ class GoalPlanner:
                  success_criteria: str = "", deadline: str = "") -> Goal:
         now = datetime.now(KST).isoformat()
         goal = Goal(
-            id=f"goal_{int(datetime.now(KST).timestamp())}",
+            id=f"goal_{int(datetime.now(KST).timestamp() * 1000)}",
             title=title,
             description=description,
             priority=int(priority) if str(priority).isdigit() else 3,
@@ -381,7 +381,13 @@ JSON 응답:
 
     def pick_next_action(self) -> Optional[tuple[Goal, PlanStep]]:
         """우선순위 기반으로 다음 실행할 (goal, step) 반환"""
+        needs_plan = []
         for goal in self.get_active_goals():
+            # 계획이 없는 목표 → 계획 생성 필요 (우선 수집)
+            if not goal.plan:
+                needs_plan.append(goal)
+                continue
+
             step = goal.next_pending_step()
             if step:
                 return goal, step
@@ -389,6 +395,10 @@ JSON 응답:
             # 모든 스텝 완료/실패 → 평가 필요
             if goal.is_done():
                 return goal, None  # None step = 평가 필요
+
+        # 계획 없는 목표가 있으면 첫 번째를 반환 (plan 생성 트리거)
+        if needs_plan:
+            return needs_plan[0], None
 
         return None
 
