@@ -722,7 +722,7 @@ async def main():
                 else:
                     issues.append(f"❌ {name}: 죽음 (재시작 불가)")
 
-        # 2. heartbeat 체크 — 15분 이상 응답 없으면 경고
+        # 2. heartbeat 체크 — loop_interval의 2배 또는 최소 15분 이상 응답 없으면 경고
         tracker_data = agent_tracker._load()
         for name, info in tracker_data.get("agents", {}).items():
             last_hb = info.get("last_heartbeat", "")
@@ -732,7 +732,10 @@ async def main():
                     if hb_time.tzinfo is None:
                         hb_time = hb_time.replace(tzinfo=KST)
                     elapsed = (now - hb_time).total_seconds()
-                    if elapsed > 900:  # 15분 초과
+                    # 에이전트 loop_interval의 2배 + 여유 5분, 최소 900초(15분)
+                    loop_sec = info.get("loop_interval", 0)
+                    threshold = max(900, loop_sec * 2 + 300)
+                    if elapsed > threshold:
                         mins = int(elapsed / 60)
                         issues.append(f"⚠️ {name}: heartbeat {mins}분 전 (무응답)")
                 except (ValueError, TypeError):
@@ -1166,6 +1169,7 @@ async def main():
         # 하지만 헬스체크는 여전히 10분마다 실행
         logger.info("All agents running. Socket Mode active + watchdog enabled (10분 정각 리포트)")
         while not shutdown_event.is_set():
+            agent_tracker.heartbeat("orchestrator")
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
             if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
