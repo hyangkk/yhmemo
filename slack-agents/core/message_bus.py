@@ -13,6 +13,8 @@ from enum import Enum
 from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
+from core import agent_tracker
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,11 +95,17 @@ class MessageBus:
         """메시지 처리 루프 시작 (재시도 로직 포함)"""
         self._running = True
         self._retry_counts: dict[str, int] = {}
+        self._hb_counter = 0
         logger.info("Message bus started")
         while self._running:
             try:
                 task = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
+                # 타임아웃마다 카운터 증가, ~60초(60회)마다 heartbeat 전송
+                self._hb_counter += 1
+                if self._hb_counter >= 60:
+                    agent_tracker.heartbeat("message_bus")
+                    self._hb_counter = 0
                 continue
 
             handler = self._handlers.get(task.to_agent)
