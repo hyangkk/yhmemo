@@ -396,6 +396,10 @@ class ProactiveAgent(BaseAgent):
             else:
                 result = await self._hourly_build(task_desc, expected)
 
+            # 실행 엔진이 실패를 보고한 경우
+            if result and ("실행 실패" in result or "결과 생성 실패" in result or "0/" in result[:30]):
+                success = False
+
         except Exception as e:
             result = f"실행 실패: {str(e)[:200]}"
             success = False
@@ -484,23 +488,22 @@ class ProactiveAgent(BaseAgent):
 
 {EXECUTOR_TOOL_SCHEMA}
 
-중요:
-- 실제로 실행 가능한 도구 호출만 포함할 것
-- "분석해줘" 같은 텍스트 생성이 아닌, 실제 시스템 작업(파일 수정, 명령 실행, DB 조회 등)
-- 작업이 코드/인프라 관련이면 shell, file_read, file_write 적극 활용
-- 정보 수집이면 http_get, supabase_query 활용
-- 실행할 수 없거나 도구가 불필요한 작업이면 빈 steps로 반환하고 대신 "analysis" 키에 분석 결과 작성
-- JSON만 응답할 것""",
+반드시 steps 배열에 실행 가능한 도구 호출을 포함하세요.
+텍스트 분석이나 설명이 아니라 실제 명령 실행입니다.
+JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
             user_prompt=f"""작업: {task_desc}
 예상 결과물: {expected}
 
 참고 자료:
-{search_result[:1500] if search_result else '(검색 결과 없음)'}""",
+{search_result[:1500] if search_result else '(검색 결과 없음)'}
+
+위 작업을 실행하기 위한 JSON 실행 계획:""",
         )
 
         try:
             plan = self._parse_json(plan_response)
         except Exception:
+            logger.warning(f"[proactive] Failed to parse execution plan: {plan_response[:200]}")
             plan = {}
 
         steps = plan.get("steps", [])
@@ -518,7 +521,7 @@ class ProactiveAgent(BaseAgent):
             exec_results = await execute_plan(
                 steps,
                 supabase_client=self.supabase,
-                cwd=str(os.path.join(os.path.dirname(os.path.dirname(__file__)))),
+                cwd="/home/user/yhmemo",
             )
             result_text = format_execution_results(exec_results)
 
@@ -876,7 +879,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             exec_results = await execute_plan(
                 steps_list,
                 supabase_client=self.supabase,
-                cwd=str(os.path.join(os.path.dirname(os.path.dirname(__file__)))),
+                cwd="/home/user/yhmemo",
             )
             result_text = format_execution_results(exec_results)
 
@@ -1843,6 +1846,41 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if not text:
             return {}
         clean = text.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        return json.loads(clean)
+
+        # 1차: ```json ... ``` 블록 추출
+        if "```json" in clean:
+            clean = clean.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+        elif "```" in clean:
+            clean = clean.split("```", 1)[1].rsplit("```", 1)[0].strip()
+
+        # 2차: 직접 파싱 시도
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            pass
+
+        # 3차: 텍스트 안에서 JSON 객체 찾기 ({...} 패턴)
+        import re
+        matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', clean)
+        for m in matches:
+            try:
+                return json.loads(m)
+            except json.JSONDecodeError:
+                continue
+
+        # 4차: 더 깊은 중첩 JSON 찾기
+        brace_start = clean.find('{')
+        if brace_start >= 0:
+            depth = 0
+            for i in range(brace_start, len(clean)):
+                if clean[i] == '{':
+                    depth += 1
+                elif clean[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(clean[brace_start:i+1])
+                        except json.JSONDecodeError:
+                            break
+
+        raise json.JSONDecodeError("No valid JSON found", clean, 0)

@@ -27,32 +27,44 @@ logger = logging.getLogger("executor")
 
 ALLOWED_BASE = Path("/home/user/yhmemo")
 
-# shell에서 허용되는 명령어 (prefix 매칭)
+# shell에서 허용되는 명령어 (첫 번째 토큰 매칭)
 SHELL_ALLOWLIST = [
-    "ls", "cat", "head", "tail", "wc",
-    "grep", "find", "du", "df",
-    "git status", "git log", "git diff", "git branch",
-    "git add", "git commit", "git push", "git pull", "git fetch",
-    "git checkout", "git switch", "git merge",
-    "npm", "npx", "node", "pnpm",
-    "python", "pip",
-    "curl", "wget",
-    "echo", "date", "whoami", "pwd",
-    "mkdir", "cp", "mv", "touch",
-    "docker", "fly",
-    "supabase",
-    "vercel",
+    # 파일 조회
+    "ls", "cat", "head", "tail", "wc", "less", "file", "stat", "tree",
+    "grep", "rg", "find", "du", "df", "sort", "uniq", "tr", "cut", "awk", "sed",
+    "diff", "tee", "xargs",
+    # git
+    "git",
+    # node/js
+    "npm", "npx", "node", "pnpm", "yarn", "bun",
+    # python
+    "python", "python3", "pip", "pip3", "uv", "poetry",
+    # 네트워크
+    "curl", "wget", "ping", "dig", "nslookup",
+    # 시스템 정보
+    "echo", "printf", "date", "whoami", "pwd", "env", "printenv", "uname", "hostname",
+    # 파일 조작
+    "mkdir", "cp", "mv", "touch", "ln", "cd", "test", "basename", "dirname", "realpath",
+    # 빌드/배포
+    "docker", "fly", "supabase", "vercel", "make", "cargo", "go",
+    # 기타
+    "tar", "gzip", "gunzip", "zip", "unzip", "jq", "which", "type", "true", "false",
+    # 제한적 파일 삭제 (rm -rf / 등은 blocklist에서 차단)
+    "rm",
 ]
 
 # 절대 차단
 SHELL_BLOCKLIST = [
-    "rm -rf /", "rm -rf /*",
+    "rm -rf /", "rm -rf /*", "rm -rf .", "rm -rf ..",
+    "rm -r /", "rm -r /*",
     "sudo ", "chmod 777",
     "curl | bash", "wget | sh",
     "> /dev/", "dd if=",
     ":(){ ", "fork bomb",
     "mkfs", "fdisk",
     "passwd", "useradd", "userdel",
+    "git push --force", "git push -f",
+    "git reset --hard",
 ]
 
 SHELL_TIMEOUT = 60  # seconds
@@ -87,18 +99,33 @@ EXECUTOR_TOOL_SCHEMA = """사용 가능한 실행 도구:
 7. supabase_upsert(table, data) — Supabase 테이블에 데이터 삽입/업데이트
    예: {"tool": "supabase_upsert", "args": {"table": "agent_tasks", "data": {"from_agent": "proactive", "task_type": "report"}}}
 
-응답 형식:
+응답 형식 (반드시 이 JSON 형식만 사용):
 {"steps": [
   {"description": "무엇을 하는지 설명", "tool": "도구명", "args": {...}},
   ...
 ]}
 
 규칙:
+- 반드시 steps 배열에 1개 이상의 실행 가능한 도구 호출을 포함할 것
+- "분석", "생각", "검토" 같은 텍스트 작업이 아니라 실제 시스템 명령을 포함
 - 한 번에 최대 10단계까지
 - 각 단계는 이전 단계 결과에 의존 가능 (순차 실행됨)
 - 설명은 한국어로, 왜 이 작업이 필요한지 포함
 - rm, sudo, chmod 777 등 위험한 명령은 차단됨
-- 파일 쓰기는 /home/user/yhmemo 하위만 가능"""
+- 파일 쓰기는 /home/user/yhmemo 하위만 가능
+
+중요: 텍스트만 생성하지 마세요. 최소 1개는 실제 도구를 호출하세요.
+예시 - 작업이 "서버 상태 점검"이면:
+{"steps": [
+  {"description": "서버 프로세스 확인", "tool": "shell", "args": {"command": "docker ps"}},
+  {"description": "디스크 사용량 확인", "tool": "shell", "args": {"command": "df -h"}},
+  {"description": "최근 로그 확인", "tool": "shell", "args": {"command": "tail -20 slack-agents/logs/app.log"}}
+]}
+예시 - 작업이 "뉴스 수집"이면:
+{"steps": [
+  {"description": "RSS 피드 상태 확인", "tool": "supabase_query", "args": {"table": "collected_items", "select": "id,title,created_at", "limit": 5}},
+  {"description": "최신 뉴스 검색", "tool": "http_get", "args": {"url": "https://news.google.com/rss/search?q=AI&hl=ko"}}
+]}"""
 
 
 # ── 도구 실행 함수들 ─────────────────────────────────────
@@ -107,22 +134,39 @@ def _validate_shell_command(command: str) -> tuple[bool, str]:
     """쉘 명령이 안전한지 검증"""
     cmd_lower = command.strip().lower()
 
+    if not cmd_lower:
+        return False, "빈 명령"
+
     # blocklist 체크
     for blocked in SHELL_BLOCKLIST:
         if blocked.lower() in cmd_lower:
             return False, f"차단된 패턴: {blocked}"
 
-    # allowlist 체크 — 첫 번째 토큰이 허용 목록에 있어야 함
-    first_token = cmd_lower.split()[0] if cmd_lower.split() else ""
+    # 위험한 리다이렉션 차단
+    if re.search(r'>\s*/dev/', cmd_lower):
+        return False, "위험한 리다이렉션"
+    if re.search(r'>\s*/etc/', cmd_lower):
+        return False, "시스템 파일 수정 차단"
 
-    # pipe/chain 명령의 경우 각 부분 검증
-    parts = re.split(r'\s*[|;&]\s*', cmd_lower)
+    # pipe/chain/subshell 명령을 분리해서 각각 검증
+    # &&, ||, ;, | 로 분리 (따옴표 안의 것은 무시)
+    parts = re.split(r'\s*(?:&&|\|\|?|;)\s*', cmd_lower)
     for part in parts:
         part = part.strip()
         if not part:
             continue
+
+        # 환경변수 설정 (KEY=val cmd) 건너뛰기
+        while re.match(r'^[a-z_][a-z0-9_]*=\S*\s', part):
+            part = re.sub(r'^[a-z_][a-z0-9_]*=\S*\s+', '', part, count=1)
+
+        # $(...) subshell 내부는 별도 검증하지 않되, 위험 패턴은 위에서 이미 차단
         part_cmd = part.split()[0] if part.split() else ""
-        allowed = any(part_cmd.startswith(a.split()[0]) for a in SHELL_ALLOWLIST)
+
+        # 경로 포함 명령어에서 basename 추출 (e.g., ./node_modules/.bin/next → next)
+        part_cmd = part_cmd.rsplit("/", 1)[-1]
+
+        allowed = part_cmd in SHELL_ALLOWLIST
         if not allowed:
             return False, f"허용되지 않은 명령: {part_cmd}"
 
@@ -308,11 +352,23 @@ async def execute_plan(
     """
     results = []
     max_steps = 10
+    consecutive_failures = 0
 
     for i, step in enumerate(steps[:max_steps]):
         tool = step.get("tool", "")
         args = step.get("args", {})
         desc = step.get("description", f"Step {i+1}")
+
+        # 연속 3회 실패 시 조기 중단
+        if consecutive_failures >= 3:
+            results.append({
+                "step": i + 1,
+                "description": desc,
+                "tool": tool,
+                "result": "[건너뜀] 연속 실패로 중단",
+                "ok": False,
+            })
+            continue
 
         logger.info(f"[executor] Step {i+1}/{len(steps)}: {desc} ({tool})")
 
@@ -348,7 +404,7 @@ async def execute_plan(
             else:
                 result = f"[오류] 알 수 없는 도구: {tool}"
 
-            ok = not result.startswith("[차단]") and not result.startswith("[오류]")
+            ok = not result.startswith("[차단]") and not result.startswith("[오류]") and not result.startswith("[타임아웃]")
             results.append({
                 "step": i + 1,
                 "description": desc,
@@ -357,9 +413,15 @@ async def execute_plan(
                 "ok": ok,
             })
 
+            if ok:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+
             logger.info(f"[executor] Step {i+1} {'✅' if ok else '❌'}: {result[:100]}")
 
         except Exception as e:
+            consecutive_failures += 1
             results.append({
                 "step": i + 1,
                 "description": desc,

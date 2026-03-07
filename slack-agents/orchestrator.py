@@ -475,15 +475,29 @@ async def main():
                             user_prompt=full_prompt,
                         )
 
-                        import json as _json2
+                        import re as _re2
                         try:
-                            plan = _json2.loads(
-                                plan_response.strip()
-                                .removeprefix("```json").removeprefix("```")
-                                .removesuffix("```").strip()
-                            )
-                        except _json2.JSONDecodeError:
+                            clean = plan_response.strip()
+                            if "```json" in clean:
+                                clean = clean.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+                            elif "```" in clean:
+                                clean = clean.split("```", 1)[1].rsplit("```", 1)[0].strip()
+                            plan = json.loads(clean)
+                        except json.JSONDecodeError:
+                            # 텍스트 안에서 JSON 객체 찾기
                             plan = {}
+                            brace_start = plan_response.find('{')
+                            if brace_start >= 0:
+                                depth = 0
+                                for _ci in range(brace_start, len(plan_response)):
+                                    if plan_response[_ci] == '{': depth += 1
+                                    elif plan_response[_ci] == '}': depth -= 1
+                                    if depth == 0:
+                                        try:
+                                            plan = json.loads(plan_response[brace_start:_ci+1])
+                                        except json.JSONDecodeError:
+                                            pass
+                                        break
 
                         steps = plan.get("steps", [])
                         analysis = plan.get("analysis", "")
