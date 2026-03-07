@@ -179,10 +179,19 @@ class ProactiveAgent(BaseAgent):
         self._state["cycle_count"] = self._state.get("cycle_count", 0) + 1
         cycle = self._state["cycle_count"]
 
-        # 날짜 리셋
+        # 날짜 리셋 — 새 날에 실행 상태 초기화
         if self._state.get("_today") != today:
             self._state["_today"] = today
             self._state["initiatives_today"] = 0
+            self._state["last_executed_slot"] = ""
+            self._state["last_executed_hour"] = -1
+            self._state["last_checked_slot"] = ""
+            # 이전 슬롯 결과 클리어
+            stale_keys = [k for k in self._state if k.startswith("slot_") and k.endswith("_result")]
+            for k in stale_keys:
+                del self._state[k]
+            self._save_state()
+            logger.info(f"[proactive] New day {today}: execution state reset")
 
         slot_key = self._current_slot(hour, minute)
 
@@ -200,7 +209,11 @@ class ProactiveAgent(BaseAgent):
         # ── 0순위: 24시간 계획 없으면 생성 ──
 
         current_plan = self.memory.get_current_plan()
+        plan_date = current_plan.get("date", "none") if current_plan else "none"
+        logger.info(f"[proactive] observe: slot={slot_key}, plan_date={plan_date}, today={today}")
+
         if not current_plan or current_plan.get("date") != today:
+            logger.info(f"[proactive] → generate_daily_plan (plan_date={plan_date} != {today})")
             context["action"] = "generate_daily_plan"
             return context
 
@@ -237,6 +250,7 @@ class ProactiveAgent(BaseAgent):
         current_task = self._get_slot_task(hour, minute)
         last_executed_slot = self._state.get("last_executed_slot", "")
 
+        logger.info(f"[proactive] observe: task={'yes' if current_task else 'None'}, last_exec={last_executed_slot}, cur_slot={slot_key}")
         if current_task and last_executed_slot != slot_key:
             context["action"] = "execute_hourly_task"
             context["hour_task"] = current_task
@@ -1018,6 +1032,8 @@ JSON 응답:
 
         try:
             parsed = self._parse_json(response)
+            if not parsed.get("hours"):
+                raise ValueError("No hours in plan")
             self.memory.set_daily_plan(parsed)
 
             # 슬랙에 계획 공유 (로그 채널)
@@ -1036,8 +1052,29 @@ JSON 응답:
             # 노션 타임라인에 시간별 항목 등록
             await self._sync_hourly_plan_to_notion(ctx["today"], hours)
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except Exception as e:
             logger.error(f"[proactive] Daily plan parse error: {e}")
+            logger.error(f"[proactive] Raw response: {response[:300] if response else 'None'}")
+
+            # 실패 시 최소 기본 계획 설정 (무한 실패 루프 방지)
+            now_h = ctx["hour"]
+            fallback_hours = {}
+            for h in range(now_h, 24):
+                hk = str(h).zfill(2)
+                if h == 23:
+                    fallback_hours[hk] = {"task": "일일 리뷰", "method": "measure", "expected": "하루 종합 평가"}
+                elif h % 2 == 0:
+                    fallback_hours[hk] = {"task": "시스템 상태 점검 및 서비스 빌드", "method": "build", "expected": "빌드 상태 확인"}
+                else:
+                    fallback_hours[hk] = {"task": "뉴스 수집 및 트렌드 리서치", "method": "research", "expected": "최신 동향 파악"}
+
+            self.memory.set_daily_plan({"hours": fallback_hours})
+            logger.info(f"[proactive] Fallback plan set: {len(fallback_hours)} hours")
+
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"⚠️ *[계획 생성 실패 → 기본 계획 적용]* {str(e)[:100]}",
+            )
 
     # ── 매시간 계획 대비 실적 체크 ────────────────────
 
