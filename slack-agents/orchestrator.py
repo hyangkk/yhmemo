@@ -915,7 +915,8 @@ async def main():
             f"orchestrator-{now_utc.strftime('%Y%m%d')}.log"
         )
         if not os.path.exists(log_file):
-            return activities
+            logger.warning(f"[report] Log file not found: {log_file}")
+            return ["(로그 파일 없음: " + log_file + ")"]
 
         ten_min_ago = now_utc - timedelta(minutes=10)
         # 자정 경계 처리: 날짜+시간 문자열로 비교
@@ -1013,6 +1014,25 @@ async def main():
 
           if slack_msg_count > 0:
               activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
+
+          # 진단: 활동이 없으면 로그 파일 상태 출력
+          if not activities and not slack_msg_count:
+              try:
+                  file_size = os.path.getsize(log_file)
+                  with open(log_file, "r") as f:
+                      total_lines = sum(1 for _ in f)
+                  # 마지막 3줄 샘플
+                  with open(log_file, "r") as f:
+                      all_lines = f.readlines()
+                      sample = [l.strip()[:80] for l in all_lines[-3:]]
+                  activities.append(
+                      f"(진단) 로그: {file_size}B, {total_lines}줄, "
+                      f"범위: {ten_min_date_str}~{now_date_str}"
+                  )
+                  for s in sample:
+                      activities.append(f"  └ {s}")
+              except Exception:
+                  pass
 
         except Exception as e:
             logger.debug(f"[report] Log parse error: {e}")
