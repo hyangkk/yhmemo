@@ -72,11 +72,31 @@ _file_handler = logging.FileHandler(
     encoding="utf-8",
 )
 _file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter(
+_log_formatter = logging.Formatter(
     "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-))
+)
+_file_handler.setFormatter(_log_formatter)
 logging.getLogger().addHandler(_file_handler)
+
+
+def _rotate_log_file_if_needed():
+    """UTC 날짜가 바뀌면 새 로그 파일로 교체"""
+    global _log_date, _file_handler
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    if today != _log_date:
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(_file_handler)
+        _file_handler.close()
+        _log_date = today
+        _file_handler = logging.FileHandler(
+            os.path.join(_log_dir, f"orchestrator-{today}.log"),
+            encoding="utf-8",
+        )
+        _file_handler.setLevel(logging.INFO)
+        _file_handler.setFormatter(_log_formatter)
+        root_logger.addHandler(_file_handler)
+        logger.info(f"[log] Rotated to new log file: orchestrator-{today}.log")
 
 KST = timezone(timedelta(hours=9))
 
@@ -772,6 +792,7 @@ async def main():
     async def master_health_check():
         """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
         nonlocal agent_tasks
+        _rotate_log_file_if_needed()
         now = datetime.now(KST)
         now_str = now.strftime("%H:%M")
         issues = []
@@ -897,20 +918,20 @@ async def main():
             return activities
 
         ten_min_ago = now_utc - timedelta(minutes=10)
-        ten_min_str = ten_min_ago.strftime("%H:%M")
-        now_time_str = now_utc.strftime("%H:%M")
+        # 자정 경계 처리: 날짜+시간 문자열로 비교
+        ten_min_date_str = ten_min_ago.strftime("%Y-%m-%d %H:%M")
+        now_date_str = now_utc.strftime("%Y-%m-%d %H:%M")
 
-        # 주요 이벤트 키워드
-        keywords = {
-            "Executing:": "proactive",
-            "Sent quote": "quote",
-            "Received": "curator",
-            "Cycle": "investment",
-            "Insight": "self_memory",
-            "New message:": "slack",
-            "Poll tick": None,  # 스킵
-            "slot_check": None,  # Executing에서 잡힘
-        }
+        # 자정 경계 시 이전 날짜 로그도 확인
+        log_files = [log_file]
+        if ten_min_ago.date() != now_utc.date():
+            prev_log = os.path.join(
+                os.path.dirname(__file__), "data", "logs",
+                f"orchestrator-{ten_min_ago.strftime('%Y%m%d')}.log"
+            )
+            if os.path.exists(prev_log):
+                log_files.insert(0, prev_log)
+
         # 루틴/무시할 액션 — 핵심 실행 액션은 스킵하지 않음
         _SKIP_ACTIONS = {"slot_check", "find_work"}
         # 재시작 시 1회성 에러 무시 패턴
@@ -919,12 +940,13 @@ async def main():
         seen = set()
         slack_msg_count = 0
         try:
-            with open(log_file, "r") as f:
+          for lf in log_files:
+            with open(lf, "r") as f:
                 for line in f:
                     if len(line) < 20:
                         continue
-                    time_part = line[11:16]  # "HH:MM"
-                    if time_part < ten_min_str or time_part > now_time_str:
+                    date_time_part = line[:16]  # "YYYY-MM-DD HH:MM"
+                    if date_time_part < ten_min_date_str or date_time_part > now_date_str:
                         continue
 
                     # 슬랙 메시지 수 카운트
@@ -989,8 +1011,8 @@ async def main():
                             seen.add(short)
                             activities.append(f"⚠️ {short}")
 
-            if slack_msg_count > 0:
-                activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
+          if slack_msg_count > 0:
+              activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
 
         except Exception as e:
             logger.debug(f"[report] Log parse error: {e}")
