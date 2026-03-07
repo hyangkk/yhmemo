@@ -894,8 +894,8 @@ async def main():
             "Poll tick": None,  # 스킵
             "slot_check": None,  # Executing에서 잡힘
         }
-        # 루틴/무시할 액션
-        _SKIP_ACTIONS = {"slot_check", "find_work", "trend_check", "business_research", "progress_report", "execute_hourly_task", "execute_goal_step", "evaluate_goal", "execute_approved", "propose_initiative"}
+        # 루틴/무시할 액션 — 핵심 실행 액션은 스킵하지 않음
+        _SKIP_ACTIONS = {"slot_check", "find_work"}
         # 재시작 시 1회성 에러 무시 패턴
         _IGNORE_ERRORS = {"Failed to connect", "Unclosed client session", "Task was destroyed"}
 
@@ -928,6 +928,23 @@ async def main():
                         if key not in seen:
                             seen.add(key)
                             activities.append(desc)
+                    elif "[executor]" in line and ("✅" in line or "❌" in line):
+                        # 실행 엔진 결과
+                        idx = line.index("[executor]")
+                        desc = line[idx + 10:].strip()[:80]
+                        key = f"exec: {desc}"
+                        if key not in seen:
+                            seen.add(key)
+                            activities.append(f"실행: {desc}")
+                    elif "Step completed:" in line or "Step failed:" in line:
+                        idx = line.index("Step")
+                        desc = line[idx:].strip()[:80]
+                        key = f"step: {desc}"
+                        if key not in seen:
+                            seen.add(key)
+                            activities.append(desc)
+                    elif "Daily plan generated:" in line or "Fallback plan set:" in line:
+                        activities.append("일일 계획 생성 완료")
                     elif "Sent quote" in line:
                         if "quote" not in seen:
                             seen.add("quote")
