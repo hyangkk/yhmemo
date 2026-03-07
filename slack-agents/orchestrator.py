@@ -459,28 +459,73 @@ async def main():
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
-                        output = await curator.ai_think(
-                            system_prompt="""당신은 소프트웨어 엔지니어입니다. 요청된 작업을 분석하고 구체적 결과물을 만드세요.
-- 코드가 필요하면 구체적 구현 계획 + 핵심 코드 제공
-- 분석/리서치면 구체적 결과 제공
-- 반드시 실행 가능한 결과물을 만들 것""",
+                        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA
+
+                        # AI가 실행 계획 생성
+                        plan_response = await curator.ai_think(
+                            system_prompt=f"""당신은 소프트웨어 엔지니어입니다. 요청된 작업을 실행하기 위한 계획을 JSON으로 만드세요.
+
+{EXECUTOR_TOOL_SCHEMA}
+
+- 실제 실행 가능한 도구 호출만 포함
+- 코드 작성이면 file_write + shell(git commit/push) 조합
+- 분석이면 file_read, shell, http_get 조합
+- 도구가 불필요하면 "analysis" 키에 분석 결과 작성
+- JSON만 응답""",
                             user_prompt=full_prompt,
                         )
 
-                        if output:
-                            if len(output) > 3000:
-                                summary = await curator.ai_think(
-                                    system_prompt="아래 결과를 슬랙 메시지로 요약하세요. 핵심만. 최대 1500자.",
-                                    user_prompt=output,
-                                )
-                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
-                            else:
-                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output}", thread_ts)
-                            result_text = f"dev 완료: {dev_task[:50]}"
+                        import json as _json2
+                        try:
+                            plan = _json2.loads(
+                                plan_response.strip()
+                                .removeprefix("```json").removeprefix("```")
+                                .removesuffix("```").strip()
+                            )
+                        except _json2.JSONDecodeError:
+                            plan = {}
+
+                        steps = plan.get("steps", [])
+                        analysis = plan.get("analysis", "")
+
+                        if steps:
+                            await _reply(channel, f"🔧 실행 계획 {len(steps)}단계 시작합니다.", thread_ts)
+                            exec_results = await execute_plan(
+                                steps,
+                                supabase_client=supabase,
+                            )
+                            result_text_raw = format_execution_results(exec_results)
+                            success_count = sum(1 for r in exec_results if r["ok"])
+                            total = len(exec_results)
+
+                            # 요약
+                            summary = await curator.ai_think(
+                                system_prompt="실행 결과를 슬랙 메시지로 요약. 핵심만. 최대 1500자.",
+                                user_prompt=f"작업: {dev_task}\n결과:\n{result_text_raw[:2000]}",
+                            )
+                            icon = "✅" if success_count == total else "⚠️"
+                            await _reply(
+                                channel,
+                                f"{icon} *[마스터]* 작업 완료! ({success_count}/{total} 성공)\n\n{summary or result_text_raw[:1500]}",
+                                thread_ts,
+                            )
+                            result_text = f"dev 완료: {dev_task[:50]} ({success_count}/{total})"
+                        elif analysis:
+                            await _reply(channel, f"✅ *[마스터]* 분석 완료!\n\n{analysis[:3000]}", thread_ts)
+                            result_text = f"dev 분석 완료: {dev_task[:50]}"
                         else:
-                            await _reply(channel, "⚠️ *[마스터]* 작업 결과를 생성하지 못했어요. 다시 시도해주세요.", thread_ts)
-                            result_text = "dev 오류: 결과 없음"
-                            success = False
+                            # fallback: AI 직접 응답
+                            output = await curator.ai_think(
+                                system_prompt="요청된 작업을 분석하고 구체적 결과물을 만드세요.",
+                                user_prompt=full_prompt,
+                            )
+                            if output:
+                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output[:3000]}", thread_ts)
+                                result_text = f"dev 완료: {dev_task[:50]}"
+                            else:
+                                await _reply(channel, "⚠️ *[마스터]* 작업 결과를 생성하지 못했어요.", thread_ts)
+                                result_text = "dev 오류: 결과 없음"
+                                success = False
                     except Exception as e:
                         await _reply(channel, f"⚠️ *[마스터]* 작업 중 오류:\n```{str(e)[:500]}```", thread_ts)
                         result_text = f"dev 오류: {str(e)[:100]}"
