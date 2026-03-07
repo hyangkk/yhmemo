@@ -25,7 +25,15 @@ logger = logging.getLogger("executor")
 
 # ── 안전 설정 ────────────────────────────────────────────
 
-ALLOWED_BASE = Path("/home/user/yhmemo")
+# 환경에 따라 base 디렉토리 설정 (Fly.io: /app, 로컬: /home/user/yhmemo)
+ALLOWED_BASE = Path(os.environ.get("EXECUTOR_BASE_DIR", "/home/user/yhmemo"))
+if not ALLOWED_BASE.exists():
+    # Fly.io 환경에서는 /app이 프로젝트 루트
+    _fly_app = Path("/app")
+    if _fly_app.exists():
+        ALLOWED_BASE = _fly_app
+    else:
+        ALLOWED_BASE = Path.cwd()
 
 # shell에서 허용되는 명령어 (첫 번째 토큰 매칭)
 SHELL_ALLOWLIST = [

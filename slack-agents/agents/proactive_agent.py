@@ -477,7 +477,7 @@ class ProactiveAgent(BaseAgent):
     async def _hourly_build(self, task_desc: str, expected: str) -> str:
         """build 메서드: AI가 실행 계획을 세우고, 실행 엔진이 실제로 수행"""
         from core.tools import _web_search
-        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA
+        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA, ALLOWED_BASE
 
         memory_ctx = self.memory.get_decision_context()
 
@@ -535,7 +535,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
             exec_results = await execute_plan(
                 steps,
                 supabase_client=self.supabase,
-                cwd="/home/user/yhmemo",
+                cwd=str(ALLOWED_BASE),
             )
             result_text = format_execution_results(exec_results)
 
@@ -846,7 +846,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
     async def _execute_build_step(self, step) -> str:
         """목표 스텝 빌드: 실행 엔진으로 실제 작업 수행"""
         from core.tools import _web_search
-        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA
+        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA, ALLOWED_BASE
 
         await self.slack.send_message(
             "ai-agent-logs",
@@ -893,7 +893,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             exec_results = await execute_plan(
                 steps_list,
                 supabase_client=self.supabase,
-                cwd="/home/user/yhmemo",
+                cwd=str(ALLOWED_BASE),
             )
             result_text = format_execution_results(exec_results)
 

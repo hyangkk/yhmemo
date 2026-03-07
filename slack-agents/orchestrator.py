@@ -63,6 +63,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("orchestrator")
 
+# 파일 로깅 추가 — 가동 리포트에서 활동 내역 파싱용
+_log_dir = os.path.join(os.path.dirname(__file__), "data", "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+_file_handler = logging.FileHandler(
+    os.path.join(_log_dir, f"orchestrator-{_log_date}.log"),
+    encoding="utf-8",
+)
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
+logging.getLogger().addHandler(_file_handler)
+
 KST = timezone(timedelta(hours=9))
 
 
