@@ -308,7 +308,7 @@ async def main():
             "current_hour": now.hour,
             "date_str": now.strftime("%Y년 %m월 %d일"),
             "weekday": ["월", "화", "수", "목", "금", "토", "일"][now.weekday()],
-            "period": "아침" if now.hour < 14 else "저녁",
+            "period": "아침" if now.hour < 11 else ("점심" if now.hour < 17 else "저녁"),
             "send_key": "manual",
             "recent_fortunes": [h.get("summary", "") for h in fortune._fortune_history[-10:]],
         }

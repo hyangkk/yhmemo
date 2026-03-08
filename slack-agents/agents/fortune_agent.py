@@ -2,7 +2,7 @@
 오늘의 운세 에이전트 (Fortune Agent)
 
 역할:
-- 12시간마다 (오전 8시, 오후 8시 KST) 오늘의 운세를 슬랙에 전송
+- 하루 3번 (오전 8시, 오후 1시, 오후 8시 KST) 오늘의 운세를 슬랙에 전송
 - 띠별/별자리별 운세를 AI로 생성
 - 재미있고 유쾌한 톤으로 하루의 기운을 전달
 
@@ -27,17 +27,17 @@ KST = timezone(timedelta(hours=9))
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 FORTUNE_HISTORY_FILE = os.path.join(DATA_DIR, "fortune_history.json")
 
-# 오전 8시, 오후 8시에 전송
-SEND_HOURS = (8, 20)
+# 오전 8시, 오후 1시, 오후 8시에 전송
+SEND_HOURS = (8, 13, 20)
 
 
 class FortuneAgent(BaseAgent):
-    """12시간마다 오늘의 운세를 보내주는 에이전트"""
+    """하루 3번 오늘의 운세를 보내주는 에이전트"""
 
     def __init__(self, target_channel: str = "ai-agents-general", **kwargs):
         super().__init__(
             name="fortune",
-            description="12시간마다 (오전 8시, 오후 8시) 오늘의 운세를 보내주는 에이전트",
+            description="하루 3번 (오전 8시, 오후 1시, 오후 8시) 오늘의 운세를 보내주는 에이전트",
             slack_channel=target_channel,
             loop_interval=60,  # 1분마다 체크 (정시에만 실행)
             **kwargs,
@@ -83,7 +83,7 @@ class FortuneAgent(BaseAgent):
             "current_hour": current_hour,
             "date_str": now.strftime("%Y년 %m월 %d일"),
             "weekday": ["월", "화", "수", "목", "금", "토", "일"][now.weekday()],
-            "period": "아침" if current_hour == 8 else "저녁",
+            "period": "아침" if current_hour == 8 else ("점심" if current_hour == 13 else "저녁"),
             "send_key": send_key,
             "recent_fortunes": [h.get("summary", "") for h in self._fortune_history[-10:]],
         }
@@ -106,7 +106,7 @@ class FortuneAgent(BaseAgent):
 1. 전체 운세 (모든 사람에게 해당하는 오늘의 기운/메시지)
 2. 12간지 중 3개를 랜덤하게 골라 띠별 한줄 운세 (쥐, 소, 호랑이, 토끼, 용, 뱀, 말, 양, 원숭이, 닭, 개, 돼지)
 3. 오늘의 럭키 아이템, 럭키 컬러, 럭키 넘버 포함
-4. {period} 시간대에 맞는 톤 (아침: 활기차고 희망적, 저녁: 편안하고 성찰적)
+4. {period} 시간대에 맞는 톤 (아침: 활기차고 희망적, 점심: 에너지 충전과 격려, 저녁: 편안하고 성찰적)
 5. 유머와 위트를 섞되 너무 가볍지 않게
 6. 최근 보낸 운세와 내용이 겹치지 않게
 
