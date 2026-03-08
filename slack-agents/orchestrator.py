@@ -177,12 +177,12 @@ async def main():
         "anthropic_api_key": config["ANTHROPIC_API_KEY"],
     }
 
-    collector = CollectorAgent(**common_kwargs)
+    # collector = CollectorAgent(**common_kwargs)    # ai-curator 알림 중지
     proactive = ProactiveAgent(**common_kwargs)
-    curator = CuratorAgent(
-        notion_db_id=config.get("NOTION_DATABASE_ID", ""),
-        **common_kwargs,
-    )
+    # curator = CuratorAgent(                        # ai-curator 알림 중지
+    #     notion_db_id=config.get("NOTION_DATABASE_ID", ""),
+    #     **common_kwargs,
+    # )
     quote = QuoteAgent(**common_kwargs)
     fortune = FortuneAgent(**common_kwargs)
     # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
@@ -825,8 +825,8 @@ async def main():
     # 에이전트 태스크 실행 (재시작 가능하도록 팩토리 패턴)
     agent_starters = {
         "message_bus": lambda: asyncio.create_task(bus.run(), name="message_bus"),
-        "collector": lambda: asyncio.create_task(collector.start(), name="collector"),
-        "curator": lambda: asyncio.create_task(curator.start(), name="curator"),
+        # "collector": lambda: asyncio.create_task(collector.start(), name="collector"),  # ai-curator 알림 중지
+        # "curator": lambda: asyncio.create_task(curator.start(), name="curator"),      # ai-curator 알림 중지
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
         "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
