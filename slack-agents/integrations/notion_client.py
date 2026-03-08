@@ -322,5 +322,36 @@ class NotionClient:
             logger.error(f"Notion create page in workspace failed: {e}")
             return None
 
+    # ── 댓글 (Comments) ────────────────────────────────
+
+    async def get_comments(self, block_id: str, page_size: int = 100) -> list[dict]:
+        """페이지/블록의 댓글 목록 조회"""
+        try:
+            resp = await self._http.get(
+                "/comments",
+                params={"block_id": block_id, "page_size": page_size},
+            )
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception as e:
+            logger.error(f"Notion get comments failed: {e}")
+            return []
+
+    async def create_comment(self, page_id: str, text: str) -> dict | None:
+        """페이지에 댓글 작성 (discussion_id 없이 페이지 레벨 댓글)"""
+        body = {
+            "parent": {"page_id": page_id},
+            "rich_text": [{"text": {"content": text[:2000]}}],
+        }
+        try:
+            resp = await self._http.post("/comments", json=body)
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(f"Notion comment created on page {page_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Notion create comment failed: {e}")
+            return None
+
     async def close(self):
         await self._http.aclose()
