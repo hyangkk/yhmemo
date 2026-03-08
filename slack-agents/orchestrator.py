@@ -192,6 +192,16 @@ async def main():
         **common_kwargs,
     )
 
+    # ── Level 5: 동적 에이전트 시작 ──────────────────────
+    # ProactiveAgent의 agent_factory가 초기화된 후, 기존 동적 에이전트를 로드+시작
+    async def start_dynamic_agents():
+        try:
+            started = await proactive.agent_factory.start_all_active()
+            if started > 0:
+                logger.info(f"[orchestrator] Started {started} dynamic agents")
+        except Exception as e:
+            logger.error(f"[orchestrator] Dynamic agent start failed: {e}")
+
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
     # "!수집 AI뉴스" → 수집 에이전트에 키워드 수집 즉시 실행
@@ -825,6 +835,12 @@ async def main():
         "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
+
+    # Level 5: 동적 에이전트 시작 (proactive 시작 후 약간 대기)
+    async def _delayed_dynamic_start():
+        await asyncio.sleep(10)  # proactive 초기화 대기
+        await start_dynamic_agents()
+    asyncio.create_task(_delayed_dynamic_start(), name="dynamic_agents_init")
 
     # ── 마스터 워치독: 1시간마다 전체 시스템 점검 ────────────
     HEALTH_CHECK_INTERVAL = 3600  # 1시간 (초) — fallback
