@@ -670,17 +670,41 @@ def main():
 
         run_every = settings["board_run_every_hours"]
         if run_every > 1 and not is_manual:
-            current_hour_utc = datetime.now(timezone.utc).hour
-            if current_hour_utc % run_every != 0:
-                print(f"현재 {current_hour_utc}시 (UTC) — {run_every}시간 간격 미해당. 건너뜀.")
-                return
+            # 마지막 보고서 시각 기반으로 실행 여부 판단
+            # (GitHub Actions cron 지연에 강건함)
+            last_reports = _supabase_get(
+                "/rest/v1/board_reports?select=created_at&order=created_at.desc&limit=1"
+            )
+            if last_reports:
+                last_at = datetime.fromisoformat(
+                    last_reports[0]["created_at"].replace("Z", "+00:00")
+                )
+                elapsed_hours = (datetime.now(timezone.utc) - last_at).total_seconds() / 3600
+                # 10분 여유 (cron 실행 간 오차 허용)
+                if elapsed_hours < run_every - (10 / 60):
+                    print(f"마지막 보고서: {elapsed_hours:.1f}시간 전 — {run_every}시간 간격 미도달. 건너뜀.")
+                    return
+                print(f"마지막 보고서: {elapsed_hours:.1f}시간 전 — 실행 조건 충족.")
 
     print(f"[1/4] 최근 {run_every}시간 생각일기 조회 중...")
     pages = fetch_recent_pages(hours=run_every, database_id=diary_db_id)
+    actual_hours = run_every
     print(f"조회된 페이지: {len(pages)}개\n")
 
+    # 최근 N시간 내 항목이 없으면, 24시간까지 범위를 넓혀서 재시도
+    if not pages and not is_command:
+        for fallback_hours in [6, 12, 24]:
+            if fallback_hours <= run_every:
+                continue
+            print(f"  → 범위 확장: 최근 {fallback_hours}시간으로 재조회...")
+            pages = fetch_recent_pages(hours=fallback_hours, database_id=diary_db_id)
+            if pages:
+                actual_hours = fallback_hours
+                print(f"  → {len(pages)}개 발견 (최근 {fallback_hours}시간)\n")
+                break
+
     if not pages:
-        print(f"최근 {run_every}시간 내 새 항목 없음. 발송 생략.")
+        print(f"최근 24시간 내 새 항목 없음. 발송 생략.")
         return
 
     print("[2/4] 내용 수집 중...")
@@ -693,15 +717,15 @@ def main():
 
     print("[4/4] 발송 및 저장 중...")
     reply_to = command_msg_id if is_command else None
-    ok = send_to_telegram(report, members, len(entries), run_every, now, reply_to=reply_to)
+    ok = send_to_telegram(report, members, len(entries), actual_hours, now, reply_to=reply_to)
 
     board_db_id = settings.get("board_notion_db_id", "")
     if board_db_id:
-        save_to_board_notion_db(report, members, len(entries), run_every, now, board_db_id)
+        save_to_board_notion_db(report, members, len(entries), actual_hours, now, board_db_id)
     else:
         print("BOARD_NOTION_DATABASE_ID 미설정 — Notion 저장 생략")
 
-    save_to_supabase(report, len(entries), run_every, now)
+    save_to_supabase(report, len(entries), actual_hours, now)
 
     print("\n[후처리] 이사 personality 업데이트 중...")
     update_member_personalities(members, report)
