@@ -179,10 +179,19 @@ class ProactiveAgent(BaseAgent):
         self._state["cycle_count"] = self._state.get("cycle_count", 0) + 1
         cycle = self._state["cycle_count"]
 
-        # 날짜 리셋
+        # 날짜 리셋 — 새 날에 실행 상태 초기화
         if self._state.get("_today") != today:
             self._state["_today"] = today
             self._state["initiatives_today"] = 0
+            self._state["last_executed_slot"] = ""
+            self._state["last_executed_hour"] = -1
+            self._state["last_checked_slot"] = ""
+            # 이전 슬롯 결과 클리어
+            stale_keys = [k for k in self._state if k.startswith("slot_") and k.endswith("_result")]
+            for k in stale_keys:
+                del self._state[k]
+            self._save_state()
+            logger.info(f"[proactive] New day {today}: execution state reset")
 
         slot_key = self._current_slot(hour, minute)
 
@@ -200,7 +209,11 @@ class ProactiveAgent(BaseAgent):
         # ── 0순위: 24시간 계획 없으면 생성 ──
 
         current_plan = self.memory.get_current_plan()
+        plan_date = current_plan.get("date", "none") if current_plan else "none"
+        logger.info(f"[proactive] observe: slot={slot_key}, plan_date={plan_date}, today={today}")
+
         if not current_plan or current_plan.get("date") != today:
+            logger.info(f"[proactive] → generate_daily_plan (plan_date={plan_date} != {today})")
             context["action"] = "generate_daily_plan"
             return context
 
@@ -237,6 +250,7 @@ class ProactiveAgent(BaseAgent):
         current_task = self._get_slot_task(hour, minute)
         last_executed_slot = self._state.get("last_executed_slot", "")
 
+        logger.info(f"[proactive] observe: task={'yes' if current_task else 'None'}, last_exec={last_executed_slot}, cur_slot={slot_key}")
         if current_task and last_executed_slot != slot_key:
             context["action"] = "execute_hourly_task"
             context["hour_task"] = current_task
@@ -396,6 +410,10 @@ class ProactiveAgent(BaseAgent):
             else:
                 result = await self._hourly_build(task_desc, expected)
 
+            # 실행 엔진이 실패를 보고한 경우
+            if result and ("실행 실패" in result or "결과 생성 실패" in result or "0/" in result[:30]):
+                success = False
+
         except Exception as e:
             result = f"실행 실패: {str(e)[:200]}"
             success = False
@@ -457,12 +475,13 @@ class ProactiveAgent(BaseAgent):
             await self._consider_plan_adjustment(task_hour, task_desc, result)
 
     async def _hourly_build(self, task_desc: str, expected: str) -> str:
-        """build 메서드: AI 분석 + 실행 계획 + 웹검색으로 실제 작업 수행"""
+        """build 메서드: AI가 실행 계획을 세우고, 실행 엔진이 실제로 수행"""
         from core.tools import _web_search
+        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA, ALLOWED_BASE
 
         memory_ctx = self.memory.get_decision_context()
 
-        # 1단계: 작업에 필요한 리서치
+        # 1단계: 현재 상태 파악 (작업에 필요한 정보 수집)
         search_result = ""
         try:
             keywords = await self.ai_think(
@@ -475,23 +494,88 @@ class ProactiveAgent(BaseAgent):
         except Exception:
             pass
 
-        # 2단계: AI가 작업을 분석하고 구체적 결과물 생성
-        result = await self.ai_think(
-            system_prompt=f"""당신은 자율 운영 에이전트입니다. 주어진 작업을 실제로 수행하고 결과물을 만드세요.
+        # 2단계: AI가 실행 계획 생성 (실제 도구 호출 포함)
+        plan_response = await self.ai_think(
+            system_prompt=f"""당신은 자율 운영 에이전트입니다. 작업을 실제로 수행하기 위한 실행 계획을 JSON으로 만드세요.
 
 {memory_ctx}
 
-규칙:
-- 리서치 결과와 맥락을 기반으로 실제 결과물(분석, 보고서, 전략, 콘텐츠 등)을 생성
-- 코드 작성이 필요한 작업이면 구체적 구현 계획 + 핵심 코드 스니펫 제공
-- 데이터 분석이면 실제 분석 결과를 제공
-- 콘텐츠 작성이면 실제 콘텐츠를 작성
-- 반드시 구체적이고 실행 가능한 결과물을 만들 것""",
+{EXECUTOR_TOOL_SCHEMA}
+
+반드시 steps 배열에 실행 가능한 도구 호출을 포함하세요.
+텍스트 분석이나 설명이 아니라 실제 명령 실행입니다.
+JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
             user_prompt=f"""작업: {task_desc}
 예상 결과물: {expected}
 
 참고 자료:
-{search_result[:1500] if search_result else '(검색 결과 없음)'}""",
+{search_result[:1500] if search_result else '(검색 결과 없음)'}
+
+위 작업을 실행하기 위한 JSON 실행 계획:""",
+        )
+
+        try:
+            plan = self._parse_json(plan_response)
+        except Exception:
+            logger.warning(f"[proactive] Failed to parse execution plan: {plan_response[:200]}")
+            plan = {}
+
+        steps = plan.get("steps", [])
+        analysis = plan.get("analysis", "")
+
+        # 3단계: 실행 계획이 있으면 실제로 실행
+        if steps:
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"🔧 *[실행 시작]* {task_desc[:80]}\n"
+                f"📋 계획: {len(steps)}단계\n"
+                + "\n".join(f"  {i+1}. {s.get('description', s.get('tool', '?'))}" for i, s in enumerate(steps[:5])),
+            )
+
+            exec_results = await execute_plan(
+                steps,
+                supabase_client=self.supabase,
+                cwd=str(ALLOWED_BASE),
+            )
+            result_text = format_execution_results(exec_results)
+
+            # 4단계: 실행 결과를 AI가 요약
+            summary = await self.ai_think(
+                system_prompt="실행 결과를 파트너에게 보고할 형태로 3-5줄 요약. 성공/실패 명확히.",
+                user_prompt=f"작업: {task_desc}\n\n실행 결과:\n{result_text[:2000]}",
+            )
+
+            success_count = sum(1 for r in exec_results if r["ok"])
+            total = len(exec_results)
+            report = summary or result_text[:500]
+
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"{'✅' if success_count == total else '⚠️'} *[실행 완료]* {task_desc[:80]} ({success_count}/{total})\n```{report[:500]}```",
+            )
+            self.memory.record_insight(report[:200], context=task_desc[:50])
+            return report[:800]
+
+        # steps가 없으면 기존 방식 (AI 분석만)
+        if analysis:
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"📝 *[분석 완료]* {task_desc[:80]}\n```{analysis[:500]}```",
+            )
+            self.memory.record_insight(analysis[:200], context=task_desc[:50])
+            return analysis[:800]
+
+        # fallback: AI 직접 결과물 생성
+        result = await self.ai_think(
+            system_prompt=f"""당신은 자율 운영 에이전트입니다. 결과물을 직접 생성하세요.
+
+{memory_ctx}
+
+규칙:
+- 구체적이고 실행 가능한 결과물을 만들 것
+- 코드가 필요하면 완성된 코드 제공
+- 분석이면 데이터 기반 분석 결과 제공""",
+            user_prompt=f"작업: {task_desc}\n예상: {expected}\n참고: {search_result[:1000] if search_result else '없음'}",
         )
 
         if result:
@@ -499,7 +583,6 @@ class ProactiveAgent(BaseAgent):
                 "ai-agent-logs",
                 f"✅ *[작업 완료]* {task_desc[:100]}\n```{result[:500]}```",
             )
-            # 인사이트 기록
             self.memory.record_insight(result[:200], context=task_desc[:50])
             return result[:800]
 
@@ -761,8 +844,9 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
         return "제안 생성 실패"
 
     async def _execute_build_step(self, step) -> str:
-        """AI API로 작업 수행 — 리서치 + 분석 + 결과물 생성"""
+        """목표 스텝 빌드: 실행 엔진으로 실제 작업 수행"""
         from core.tools import _web_search
+        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA, ALLOWED_BASE
 
         await self.slack.send_message(
             "ai-agent-logs",
@@ -783,28 +867,60 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
 
         memory_ctx = self.memory.get_decision_context()
 
-        result = await self.ai_think(
-            system_prompt=f"""당신은 자율 운영 에이전트입니다. 작업을 실제로 수행하고 구체적 결과물을 만드세요.
+        # AI가 실행 계획 생성
+        plan_response = await self.ai_think(
+            system_prompt=f"""작업을 실행하기 위한 계획을 JSON으로 만드세요.
 
 {memory_ctx}
 
-규칙:
-- 리서치 결과를 기반으로 실제 결과물(분석, 보고서, 전략, 콘텐츠 등)을 생성
-- 코드가 필요하면 구체적 구현 계획 + 핵심 코드 제공
-- 반드시 구체적이고 실행 가능한 결과물을 만들 것""",
-            user_prompt=f"""작업: {step.description}
+{EXECUTOR_TOOL_SCHEMA}
 
-참고 자료:
-{search_result[:1500] if search_result else '(없음)'}""",
+- 실제 실행 가능한 도구 호출만 포함
+- 도구가 불필요하면 "analysis" 키에 분석 결과 작성
+- JSON만 응답""",
+            user_prompt=f"작업: {step.description}\n참고: {search_result[:1500] if search_result else '(없음)'}",
         )
 
-        if result:
+        try:
+            plan = self._parse_json(plan_response)
+        except Exception:
+            plan = {}
+
+        steps_list = plan.get("steps", [])
+        analysis = plan.get("analysis", "")
+
+        if steps_list:
+            exec_results = await execute_plan(
+                steps_list,
+                supabase_client=self.supabase,
+                cwd=str(ALLOWED_BASE),
+            )
+            result_text = format_execution_results(exec_results)
+
+            summary = await self.ai_think(
+                system_prompt="실행 결과를 3-5줄 요약.",
+                user_prompt=f"작업: {step.description}\n결과:\n{result_text[:2000]}",
+            )
+
+            success_count = sum(1 for r in exec_results if r["ok"])
+            total = len(exec_results)
+            report = summary or result_text[:500]
+
             await self.slack.send_message(
                 "ai-agents-general",
-                f"✅ *작업 완료*\n{step.description[:100]}\n\n```{result[:500]}```",
+                f"{'✅' if success_count == total else '⚠️'} *작업 완료* ({success_count}/{total})\n"
+                f"{step.description[:100]}\n```{report[:500]}```",
             )
-            self.memory.record_insight(result[:200], context=step.description[:50])
-            return result[:800]
+            self.memory.record_insight(report[:200], context=step.description[:50])
+            return report[:800]
+
+        if analysis:
+            await self.slack.send_message(
+                "ai-agents-general",
+                f"📝 *분석 완료*\n{step.description[:100]}\n```{analysis[:500]}```",
+            )
+            self.memory.record_insight(analysis[:200], context=step.description[:50])
+            return analysis[:800]
 
         await self.slack.send_message(
             "ai-agent-logs",
@@ -916,6 +1032,8 @@ JSON 응답:
 
         try:
             parsed = self._parse_json(response)
+            if not parsed.get("hours"):
+                raise ValueError("No hours in plan")
             self.memory.set_daily_plan(parsed)
 
             # 슬랙에 계획 공유 (로그 채널)
@@ -934,8 +1052,29 @@ JSON 응답:
             # 노션 타임라인에 시간별 항목 등록
             await self._sync_hourly_plan_to_notion(ctx["today"], hours)
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except Exception as e:
             logger.error(f"[proactive] Daily plan parse error: {e}")
+            logger.error(f"[proactive] Raw response: {response[:300] if response else 'None'}")
+
+            # 실패 시 최소 기본 계획 설정 (무한 실패 루프 방지)
+            now_h = ctx["hour"]
+            fallback_hours = {}
+            for h in range(now_h, 24):
+                hk = str(h).zfill(2)
+                if h == 23:
+                    fallback_hours[hk] = {"task": "일일 리뷰", "method": "measure", "expected": "하루 종합 평가"}
+                elif h % 2 == 0:
+                    fallback_hours[hk] = {"task": "시스템 상태 점검 및 서비스 빌드", "method": "build", "expected": "빌드 상태 확인"}
+                else:
+                    fallback_hours[hk] = {"task": "뉴스 수집 및 트렌드 리서치", "method": "research", "expected": "최신 동향 파악"}
+
+            self.memory.set_daily_plan({"hours": fallback_hours})
+            logger.info(f"[proactive] Fallback plan set: {len(fallback_hours)} hours")
+
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"⚠️ *[계획 생성 실패 → 기본 계획 적용]* {str(e)[:100]}",
+            )
 
     # ── 매시간 계획 대비 실적 체크 ────────────────────
 
@@ -1744,6 +1883,41 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if not text:
             return {}
         clean = text.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        return json.loads(clean)
+
+        # 1차: ```json ... ``` 블록 추출
+        if "```json" in clean:
+            clean = clean.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+        elif "```" in clean:
+            clean = clean.split("```", 1)[1].rsplit("```", 1)[0].strip()
+
+        # 2차: 직접 파싱 시도
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            pass
+
+        # 3차: 텍스트 안에서 JSON 객체 찾기 ({...} 패턴)
+        import re
+        matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', clean)
+        for m in matches:
+            try:
+                return json.loads(m)
+            except json.JSONDecodeError:
+                continue
+
+        # 4차: 더 깊은 중첩 JSON 찾기
+        brace_start = clean.find('{')
+        if brace_start >= 0:
+            depth = 0
+            for i in range(brace_start, len(clean)):
+                if clean[i] == '{':
+                    depth += 1
+                elif clean[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(clean[brace_start:i+1])
+                        except json.JSONDecodeError:
+                            break
+
+        raise json.JSONDecodeError("No valid JSON found", clean, 0)

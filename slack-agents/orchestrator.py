@@ -49,6 +49,7 @@ from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
 from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
+from agents.task_board_agent import TaskBoardAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -62,6 +63,41 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("orchestrator")
+
+# 파일 로깅 추가 — 가동 리포트에서 활동 내역 파싱용
+_log_dir = os.path.join(os.path.dirname(__file__), "data", "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+_file_handler = logging.FileHandler(
+    os.path.join(_log_dir, f"orchestrator-{_log_date}.log"),
+    encoding="utf-8",
+)
+_file_handler.setLevel(logging.INFO)
+_log_formatter = logging.Formatter(
+    "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+_file_handler.setFormatter(_log_formatter)
+logging.getLogger().addHandler(_file_handler)
+
+
+def _rotate_log_file_if_needed():
+    """UTC 날짜가 바뀌면 새 로그 파일로 교체"""
+    global _log_date, _file_handler
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    if today != _log_date:
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(_file_handler)
+        _file_handler.close()
+        _log_date = today
+        _file_handler = logging.FileHandler(
+            os.path.join(_log_dir, f"orchestrator-{today}.log"),
+            encoding="utf-8",
+        )
+        _file_handler.setLevel(logging.INFO)
+        _file_handler.setFormatter(_log_formatter)
+        root_logger.addHandler(_file_handler)
+        logger.info(f"[log] Rotated to new log file: orchestrator-{today}.log")
 
 KST = timezone(timedelta(hours=9))
 
@@ -91,6 +127,7 @@ def load_config() -> dict:
     # 선택적 설정
     config["NOTION_API_KEY"] = os.environ.get("NOTION_API_KEY", "")
     config["NOTION_DATABASE_ID"] = os.environ.get("NOTION_DATABASE_ID", "")
+    config["NOTION_TASK_BOARD_DB_ID"] = os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
 
     return config
 
@@ -148,6 +185,10 @@ async def main():
     quote = QuoteAgent(**common_kwargs)
     invest = InvestAgent(**common_kwargs)
     invest_report = InvestReportAgent(**common_kwargs)
+    task_board = TaskBoardAgent(
+        task_board_db_id=config.get("NOTION_TASK_BOARD_DB_ID", ""),
+        **common_kwargs,
+    )
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -459,28 +500,89 @@ async def main():
                     await _reply(channel, "🔨 코드 작업 시작합니다. 진행 상황을 알려드릴게요.", thread_ts)
 
                     try:
-                        output = await curator.ai_think(
-                            system_prompt="""당신은 소프트웨어 엔지니어입니다. 요청된 작업을 분석하고 구체적 결과물을 만드세요.
-- 코드가 필요하면 구체적 구현 계획 + 핵심 코드 제공
-- 분석/리서치면 구체적 결과 제공
-- 반드시 실행 가능한 결과물을 만들 것""",
+                        from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA
+
+                        # AI가 실행 계획 생성
+                        plan_response = await curator.ai_think(
+                            system_prompt=f"""당신은 소프트웨어 엔지니어입니다. 요청된 작업을 실행하기 위한 계획을 JSON으로 만드세요.
+
+{EXECUTOR_TOOL_SCHEMA}
+
+- 실제 실행 가능한 도구 호출만 포함
+- 코드 작성이면 file_write + shell(git commit/push) 조합
+- 분석이면 file_read, shell, http_get 조합
+- 도구가 불필요하면 "analysis" 키에 분석 결과 작성
+- JSON만 응답""",
                             user_prompt=full_prompt,
                         )
 
-                        if output:
-                            if len(output) > 3000:
-                                summary = await curator.ai_think(
-                                    system_prompt="아래 결과를 슬랙 메시지로 요약하세요. 핵심만. 최대 1500자.",
-                                    user_prompt=output,
-                                )
-                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{summary or output[:1500]}", thread_ts)
-                            else:
-                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output}", thread_ts)
-                            result_text = f"dev 완료: {dev_task[:50]}"
+                        import re as _re2
+                        try:
+                            clean = plan_response.strip()
+                            if "```json" in clean:
+                                clean = clean.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+                            elif "```" in clean:
+                                clean = clean.split("```", 1)[1].rsplit("```", 1)[0].strip()
+                            plan = json.loads(clean)
+                        except json.JSONDecodeError:
+                            # 텍스트 안에서 JSON 객체 찾기
+                            plan = {}
+                            brace_start = plan_response.find('{')
+                            if brace_start >= 0:
+                                depth = 0
+                                for _ci in range(brace_start, len(plan_response)):
+                                    if plan_response[_ci] == '{': depth += 1
+                                    elif plan_response[_ci] == '}': depth -= 1
+                                    if depth == 0:
+                                        try:
+                                            plan = json.loads(plan_response[brace_start:_ci+1])
+                                        except json.JSONDecodeError:
+                                            pass
+                                        break
+
+                        steps = plan.get("steps", [])
+                        analysis = plan.get("analysis", "")
+
+                        if steps:
+                            await _reply(channel, f"🔧 실행 계획 {len(steps)}단계 시작합니다.", thread_ts)
+                            from core.executor import ALLOWED_BASE as _exec_base
+                            exec_results = await execute_plan(
+                                steps,
+                                supabase_client=supabase,
+                                cwd=str(_exec_base),
+                            )
+                            result_text_raw = format_execution_results(exec_results)
+                            success_count = sum(1 for r in exec_results if r["ok"])
+                            total = len(exec_results)
+
+                            # 요약
+                            summary = await curator.ai_think(
+                                system_prompt="실행 결과를 슬랙 메시지로 요약. 핵심만. 최대 1500자.",
+                                user_prompt=f"작업: {dev_task}\n결과:\n{result_text_raw[:2000]}",
+                            )
+                            icon = "✅" if success_count == total else "⚠️"
+                            await _reply(
+                                channel,
+                                f"{icon} *[마스터]* 작업 완료! ({success_count}/{total} 성공)\n\n{summary or result_text_raw[:1500]}",
+                                thread_ts,
+                            )
+                            result_text = f"dev 완료: {dev_task[:50]} ({success_count}/{total})"
+                        elif analysis:
+                            await _reply(channel, f"✅ *[마스터]* 분석 완료!\n\n{analysis[:3000]}", thread_ts)
+                            result_text = f"dev 분석 완료: {dev_task[:50]}"
                         else:
-                            await _reply(channel, "⚠️ *[마스터]* 작업 결과를 생성하지 못했어요. 다시 시도해주세요.", thread_ts)
-                            result_text = "dev 오류: 결과 없음"
-                            success = False
+                            # fallback: AI 직접 응답
+                            output = await curator.ai_think(
+                                system_prompt="요청된 작업을 분석하고 구체적 결과물을 만드세요.",
+                                user_prompt=full_prompt,
+                            )
+                            if output:
+                                await _reply(channel, f"✅ *[마스터]* 작업 완료!\n\n{output[:3000]}", thread_ts)
+                                result_text = f"dev 완료: {dev_task[:50]}"
+                            else:
+                                await _reply(channel, "⚠️ *[마스터]* 작업 결과를 생성하지 못했어요.", thread_ts)
+                                result_text = "dev 오류: 결과 없음"
+                                success = False
                     except Exception as e:
                         await _reply(channel, f"⚠️ *[마스터]* 작업 중 오류:\n```{str(e)[:500]}```", thread_ts)
                         result_text = f"dev 오류: {str(e)[:100]}"
@@ -685,6 +787,7 @@ async def main():
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
         "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),
+        "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
@@ -696,6 +799,7 @@ async def main():
     async def master_health_check():
         """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
         nonlocal agent_tasks
+        _rotate_log_file_if_needed()
         now = datetime.now(KST)
         now_str = now.strftime("%H:%M")
         issues = []
@@ -821,34 +925,35 @@ async def main():
             return activities
 
         ten_min_ago = now_utc - timedelta(minutes=10)
-        ten_min_str = ten_min_ago.strftime("%H:%M")
-        now_time_str = now_utc.strftime("%H:%M")
+        # 자정 경계 처리: 날짜+시간 문자열로 비교
+        ten_min_date_str = ten_min_ago.strftime("%Y-%m-%d %H:%M")
+        now_date_str = now_utc.strftime("%Y-%m-%d %H:%M")
 
-        # 주요 이벤트 키워드
-        keywords = {
-            "Executing:": "proactive",
-            "Sent quote": "quote",
-            "Received": "curator",
-            "Cycle": "investment",
-            "Insight": "self_memory",
-            "New message:": "slack",
-            "Poll tick": None,  # 스킵
-            "slot_check": None,  # Executing에서 잡힘
-        }
-        # 루틴/무시할 액션
-        _SKIP_ACTIONS = {"slot_check", "find_work", "trend_check", "business_research", "progress_report", "execute_hourly_task", "execute_goal_step", "evaluate_goal", "execute_approved", "propose_initiative"}
+        # 자정 경계 시 이전 날짜 로그도 확인
+        log_files = [log_file]
+        if ten_min_ago.date() != now_utc.date():
+            prev_log = os.path.join(
+                os.path.dirname(__file__), "data", "logs",
+                f"orchestrator-{ten_min_ago.strftime('%Y%m%d')}.log"
+            )
+            if os.path.exists(prev_log):
+                log_files.insert(0, prev_log)
+
+        # 루틴/무시할 액션 — 핵심 실행 액션은 스킵하지 않음
+        _SKIP_ACTIONS = {"slot_check", "find_work"}
         # 재시작 시 1회성 에러 무시 패턴
         _IGNORE_ERRORS = {"Failed to connect", "Unclosed client session", "Task was destroyed"}
 
         seen = set()
         slack_msg_count = 0
         try:
-            with open(log_file, "r") as f:
+          for lf in log_files:
+            with open(lf, "r") as f:
                 for line in f:
                     if len(line) < 20:
                         continue
-                    time_part = line[11:16]  # "HH:MM"
-                    if time_part < ten_min_str or time_part > now_time_str:
+                    date_time_part = line[:16]  # "YYYY-MM-DD HH:MM"
+                    if date_time_part < ten_min_date_str or date_time_part > now_date_str:
                         continue
 
                     # 슬랙 메시지 수 카운트
@@ -869,6 +974,23 @@ async def main():
                         if key not in seen:
                             seen.add(key)
                             activities.append(desc)
+                    elif "[executor]" in line and ("✅" in line or "❌" in line):
+                        # 실행 엔진 결과
+                        idx = line.index("[executor]")
+                        desc = line[idx + 10:].strip()[:80]
+                        key = f"exec: {desc}"
+                        if key not in seen:
+                            seen.add(key)
+                            activities.append(f"실행: {desc}")
+                    elif "Step completed:" in line or "Step failed:" in line:
+                        idx = line.index("Step")
+                        desc = line[idx:].strip()[:80]
+                        key = f"step: {desc}"
+                        if key not in seen:
+                            seen.add(key)
+                            activities.append(desc)
+                    elif "Daily plan generated:" in line or "Fallback plan set:" in line:
+                        activities.append("일일 계획 생성 완료")
                     elif "Sent quote" in line:
                         if "quote" not in seen:
                             seen.add("quote")
@@ -896,8 +1018,8 @@ async def main():
                             seen.add(short)
                             activities.append(f"⚠️ {short}")
 
-            if slack_msg_count > 0:
-                activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
+          if slack_msg_count > 0:
+              activities.append(f"슬랙 메시지 {slack_msg_count}건 수신/처리")
 
         except Exception as e:
             logger.debug(f"[report] Log parse error: {e}")
