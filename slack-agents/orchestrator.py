@@ -65,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("orchestrator")
 
-# 파일 로깅 추가 — 가동 리포트에서 활동 내역 파싱용
+# 파일 로깅 추가 — 오케스트레이션 가동 리포트에서 활동 내역 파싱용
 _log_dir = os.path.join(os.path.dirname(__file__), "data", "logs")
 os.makedirs(_log_dir, exist_ok=True)
 _log_date = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -848,7 +848,7 @@ async def main():
     last_report_slot = ""  # KST 정각 슬롯 추적 (e.g. "17:00")
 
     async def master_health_check():
-        """1시간마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
+        """1시간마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 오케스트레이션 가동 리포트"""
         nonlocal agent_tasks
         _rotate_log_file_if_needed()
         now = datetime.now(KST)
@@ -908,11 +908,11 @@ async def main():
         # 4.5. 계획 저장 (다음 리포트에서 이행 검증용)
         _save_planned_tasks(now_str, next_activities)
 
-        # 5. Slack 가동 리포트 (매 1시간마다 항상 전송)
+        # 5. Slack 오케스트레이션 가동 리포트 (매 1시간마다 항상 전송)
         alive = sum(1 for t in agent_tasks.values() if not t.done())
         total = len(agent_tasks)
 
-        report_lines = [f"*📊 가동 리포트* ({now_str} KST) — {alive}/{total} 에이전트"]
+        report_lines = [f"*📊 오케스트레이션 가동 리포트* ({now_str} KST) — {alive}/{total} 에이전트"]
 
         if restarts:
             report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
