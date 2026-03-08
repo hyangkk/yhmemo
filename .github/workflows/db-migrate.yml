@@ -93,6 +93,22 @@ jobs:
           ALTER TABLE board_members ADD COLUMN IF NOT EXISTS meta_memory TEXT NOT NULL DEFAULT '';
           ALTER TABLE board_members ADD COLUMN IF NOT EXISTS user_directives TEXT NOT NULL DEFAULT '';
           ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS board_chat_active_at TIMESTAMPTZ;
+          CREATE TABLE IF NOT EXISTS secrets_vault (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '',
+            description TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          ALTER TABLE secrets_vault ENABLE ROW LEVEL SECURITY;
+          INSERT INTO secrets_vault (key, description) VALUES
+            ('GH_TOKEN', 'GitHub Personal Access Token'),
+            ('NOTION_API_KEY', 'Notion Integration API Key'),
+            ('ANTHROPIC_API_KEY', 'Anthropic API Key'),
+            ('SLACK_BOT_TOKEN', 'Slack Bot Token'),
+            ('SLACK_APP_TOKEN', 'Slack App Token'),
+            ('FLY_API_TOKEN', 'Fly.io Deploy Token')
+          ON CONFLICT (key) DO NOTHING;
           EOSQL
           SQL=$(cat /tmp/migrate.sql)
           PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
