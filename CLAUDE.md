@@ -19,27 +19,34 @@
 - Owner: hyangkk
 - Repo: yhmemo
 
-## 배포 가이드
+## 머지 & 배포 가이드
 
-### 토큰 로드 (세션 시작 시 자동, 수동 필요 시)
+### 1. 토큰 로드 (필수 - 모든 GitHub API 작업 전)
+`source`로 환경변수가 안 잡힐 수 있으므로, **curl로 직접 조회하는 방식 권장**:
 ```bash
+# 방법 1: 개별 토큰 직접 조회 (가장 확실)
+GH_TOKEN=$(curl -s \
+  -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVudXZiZHFqZ2l5cHhmdmxwbHBkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTQ2NTkwNSwiZXhwIjoyMDg3MDQxOTA1fQ.amwgVUkulTwSjaMUIGOCtpR6Jk9kN0937xrt9EFhYBs" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVudXZiZHFqZ2l5cHhmdmxwbHBkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTQ2NTkwNSwiZXhwIjoyMDg3MDQxOTA1fQ.amwgVUkulTwSjaMUIGOCtpR6Jk9kN0937xrt9EFhYBs" \
+  "https://unuvbdqjgiypxfvlplpd.supabase.co/rest/v1/secrets_vault?select=value&key=eq.GH_TOKEN" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['value'])")
+
+# 방법 2: 스크립트 (SessionStart Hook에서 자동 실행됨)
 source /home/user/yhmemo/scripts/fetch-secrets.sh
+# ⚠️ 서브쉘에서 export가 안 될 수 있음 → 방법 1 사용
 ```
-- Supabase `secrets_vault`에서 `GH_TOKEN`, `ANTHROPIC_API_KEY` 등 자동 로드
-- SUPABASE_URL/KEY 기본값이 스크립트에 내장되어 있어 별도 설정 불필요
 
-### PR 생성 (gh CLI 안 될 때 curl 사용)
+### 2. PR 생성
 ```bash
-source scripts/fetch-secrets.sh
 curl -s -X POST https://api.github.com/repos/hyangkk/yhmemo/pulls \
   -H "Authorization: token $GH_TOKEN" \
   -H "Accept: application/vnd.github+json" \
-  -d '{"title":"...", "head":"브랜치명", "base":"main", "body":"..."}'
+  -d '{"title":"제목", "head":"브랜치명", "base":"main", "body":"내용"}'
 ```
-- 로컬 git remote가 프록시(`127.0.0.1:28810`)라서 `gh` CLI가 GitHub 호스트 인식 불가 → curl 직접 사용
-- main 브랜치 직접 push 불가 (branch protection) → 반드시 PR 통해 머지
+- `gh` CLI는 로컬 git remote가 프록시(`127.0.0.1`)라 GitHub 호스트 인식 불가 → **curl 사용**
+- main에 직접 push 불가 (branch protection) → **반드시 PR → 머지**
 
-### PR 머지 (curl)
+### 3. PR 머지
 ```bash
 curl -s -X PUT https://api.github.com/repos/hyangkk/yhmemo/pulls/{PR번호}/merge \
   -H "Authorization: token $GH_TOKEN" \
@@ -47,26 +54,38 @@ curl -s -X PUT https://api.github.com/repos/hyangkk/yhmemo/pulls/{PR번호}/merg
   -d '{"merge_method":"squash"}'
 ```
 
-### 서비스별 자동 배포 (main 머지 시 GitHub Actions 자동 실행)
+### 4. 자동 배포 (main 머지 시 GitHub Actions 자동 실행)
 
 | 서비스 | 워크플로우 | 배포 대상 | 트리거 조건 |
 |--------|-----------|----------|------------|
-| **slack-agents** | `.github/workflows/deploy-slack-agents.yml` | Fly.io (`yhmbp14`, 도쿄 nrt) | `slack-agents/**` 변경 시 |
-| **web-service** | `.github/workflows/deploy-web-service.yml` | Vercel | `web-service/**` 변경 시 |
-| **webhook** | `.github/workflows/deploy-webhook.yml` | - | 관련 파일 변경 시 |
+| **slack-agents** | `deploy-slack-agents.yml` | Fly.io (`yhmbp14`, 도쿄 nrt) | `slack-agents/**` 변경 |
+| **web-service** | `deploy-web-service.yml` | Vercel | `web-service/**` 변경 |
+| **webhook** | `deploy-webhook.yml` | - | 관련 파일 변경 |
 
-### 수동 배포 (필요 시)
+머지 후 배포 상태 확인:
 ```bash
-# Fly.io (slack-agents)
-source scripts/fetch-secrets.sh
-cd slack-agents && flyctl deploy  # FLY_API_TOKEN 필요
+curl -s "https://api.github.com/repos/hyangkk/yhmemo/actions/runs?per_page=3" \
+  -H "Authorization: token $GH_TOKEN" | python3 -c "
+import json,sys
+for r in json.load(sys.stdin)['workflow_runs'][:3]:
+    print(f\"{r['name']}: {r['status']} ({r['conclusion'] or 'running'})\")"
+```
 
-# flyctl 미설치 시
-curl -L https://fly.io/install.sh | sh
-export PATH="/root/.fly/bin:$PATH"
+### 5. 수동 배포 (필요 시)
+```bash
+# flyctl 설치
+curl -L https://fly.io/install.sh | sh && export PATH="/root/.fly/bin:$PATH"
+
+# Fly.io 배포 (FLY_API_TOKEN 필요 - secrets_vault에서 로드)
+cd slack-agents && FLY_API_TOKEN="$FLY_API_TOKEN" flyctl deploy
+```
+
+### 요약 플로우
+```
+코드 변경 → git push (feature branch) → curl로 PR 생성 → curl로 PR 머지 → GitHub Actions 자동 배포
 ```
 
 ### 주의사항
-- `GH_TOKEN`이 만료되면 Supabase Dashboard → `secrets_vault` 테이블에서 갱신
-- main에 직접 push 불가 → PR 생성 후 머지만 가능
-- 머지하면 해당 경로 변경에 따라 자동 배포 워크플로우 실행됨
+- 토큰 갱신: Supabase Dashboard → `secrets_vault` 테이블에서 직접 편집
+- `source fetch-secrets.sh`가 안 되면 curl로 직접 토큰 조회 (방법 1)
+- main 직접 push 불가 → 항상 PR 통해 머지
