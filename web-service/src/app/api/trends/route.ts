@@ -56,7 +56,7 @@ export async function GET() {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
       system: `당신은 뉴스 트렌드 분석가입니다. 최근 48시간 뉴스 제목들을 분석하여 핵심 트렌드를 추출합니다.
 

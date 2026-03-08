@@ -44,8 +44,8 @@ export async function GET() {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
-      max_tokens: 2000,
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
       system: `당신은 섹터 분석 전문가입니다.
 뉴스를 섹터/테마별로 분류하고, 각 섹터의 모멘텀과 투자 시사점을 분석합니다.
 

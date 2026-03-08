@@ -17,6 +17,7 @@ import anthropic
 
 from core.message_bus import MessageBus, TaskMessage
 from core import agent_tracker
+from core.cost_tracker import get_tracker as get_cost_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,13 @@ class BaseAgent(ABC):
 
     # ── AI 판단 (Claude) ────────────────────────────────
 
-    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-sonnet-4-20250514") -> str:
-        """Claude AI에게 판단 요청"""
+    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-haiku-4-5-20251001") -> str:
+        """Claude AI에게 판단 요청 (비용 추적 + 예산 제한 포함)"""
+        tracker = get_cost_tracker()
+        if not tracker.can_call():
+            msg = f"일일 AI 예산 소진 (${tracker.get_today_stats()['budget_usd']}). 내일까지 AI 호출 중단."
+            logger.warning(f"[{self.name}] {msg}")
+            raise RuntimeError(msg)
         try:
             response = await self.ai.messages.create(
                 model=model,
@@ -140,7 +146,16 @@ class BaseAgent(ABC):
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
+            # 토큰 사용량 추적
+            if hasattr(response, "usage"):
+                tracker.record_usage(
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    caller=self.name,
+                )
             return response.content[0].text
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"[{self.name}] AI think error: {e}")
             raise

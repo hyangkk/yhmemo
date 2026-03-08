@@ -47,7 +47,7 @@ class MessageBus:
     def __init__(self, supabase_client=None):
         self._handlers: dict[str, TaskHandler] = {}  # agent_name → handler
         self._event_listeners: dict[str, list[TaskHandler]] = {}  # event_type → handlers
-        self._queue: asyncio.Queue[TaskMessage] = asyncio.Queue()
+        self._queue: asyncio.Queue[TaskMessage] = asyncio.Queue(maxsize=100)
         self._supabase = supabase_client
         self._running = False
 
@@ -64,6 +64,12 @@ class MessageBus:
 
     async def send_task(self, task: TaskMessage) -> str:
         """특정 에이전트에게 작업 전송"""
+        if self._queue.full():
+            logger.warning(f"Message bus queue full (100), dropping oldest. Task {task.id}")
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
         await self._queue.put(task)
         if self._supabase:
             await self._persist_task(task)
@@ -115,7 +121,7 @@ class MessageBus:
 
             task.status = TaskStatus.IN_PROGRESS
             try:
-                task.result = await handler(task)
+                task.result = await asyncio.wait_for(handler(task), timeout=30.0)
                 task.status = TaskStatus.COMPLETED
                 self._retry_counts.pop(task.id, None)
                 logger.info(f"Task {task.id} completed")

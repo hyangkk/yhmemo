@@ -65,8 +65,8 @@ export async function GET() {
     });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
-      max_tokens: 2000,
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
       system: `당신은 뉴스 큐레이터이자 클릭베이트 탐지기입니다. 사용자에게 오늘 반드시 알아야 할 딱 5개의 뉴스만 골라주되, 각 원본 헤드라인의 낚시성(클릭베이트) 수준도 평가합니다.
 
 선별 기준:
