@@ -339,7 +339,7 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "business_research"
             return context
 
-        # ── 리딩룸 진행 보고 (30분마다) ──
+        # ── Leading Room 진행 보고 (30분마다) ──
         if self._hours_since(self._state.get("last_reading_room_report", "")) >= 0.5:
             context["action"] = "reading_room_report"
             return context
@@ -421,7 +421,7 @@ class ProactiveAgent(BaseAgent):
             logger.error(f"[proactive] Action '{action}' failed: {e}", exc_info=True)
             act_result = f"error: {str(e)[:80]}"
 
-        # ── 사이클 로그만 (슬랙 전송 안 함, 1시간 가동 리포트로 대체) ──
+        # ── 사이클 로그만 (슬랙 전송 안 함, 1시간 오케스트레이션 가동 리포트로 대체) ──
         logger.info(f"[proactive] Cycle #{cycle} ({slot_key}): {action} → {act_result}")
 
     # ══════════════════════════════════════════════════
@@ -1443,7 +1443,7 @@ JSON 응답:
     # ── 진행 보고 ──────────────────────────────────
 
     async def _do_reading_room_report(self, ctx: dict):
-        """30분마다 AI 리딩룸 관련 개선 진행 상황 간단 보고."""
+        """30분마다 AI Leading Room 관련 개선 진행 상황 간단 보고."""
         goals_summary = self.planner.get_status_summary()
         achievement = self.memory.get_plan_achievement_rate()
 
@@ -1460,7 +1460,7 @@ JSON 응답:
         ) if recent_insights else "(아직 없음)"
 
         report = await self.ai_think(
-            system_prompt="""AI 리딩룸(실시간 투자 시그널 플랫폼) 개선 진행 보고를 작성하라.
+            system_prompt="""AI Leading Room(실시간 투자 시그널 플랫폼) 개선 진행 보고를 작성하라.
 5줄 이내로 짧고 핵심만.
 
 포함할 내용:
@@ -1485,7 +1485,7 @@ JSON 응답:
         if report:
             await self.slack.send_message(
                 "ai-agents-general",
-                f"📡 *리딩룸 진행* ({ctx['current_time']})\n{report}",
+                f"📡 *Leading Room 진행* ({ctx['current_time']})\n{report}",
             )
 
         self._state["last_reading_room_report"] = ctx["current_time"]
