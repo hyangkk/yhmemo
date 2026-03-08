@@ -1,5 +1,5 @@
 """
-프로액티브 에이전트 (자율운영 에이전트)
+프로액티브 에이전트 (자율운영 에이전트) — Level 5
 
 목표 기반 자율 루프:
   목표 → 계획 → 실행 → 피드백 → 재계획
@@ -7,8 +7,14 @@
 제안 라이프사이클:
   제안 → 승인 → 실행 → 측정 → 피드백
 
+Level 4 자기수정:
+  실패 패턴 감지 → 코드 분석 → 수정 → 테스트 → 커밋 → 롤백
+
+Level 5 멀티에이전트:
+  에이전트 동적 생성 → 작업 위임 → 성과 평가 → 해고/재생성 → 조직 최적화
+
 매일 밤 11시 자동 리뷰:
-  전체 시스템 리뷰 → 개선 아이템 도출 → 자동 실행
+  전체 시스템 리뷰 → 에이전트 평가 → 개선 아이템 도출 → 자동 실행
 """
 
 import asyncio
@@ -22,6 +28,10 @@ from core.base_agent import BaseAgent
 from core.goal_planner import GoalPlanner, GoalStatus, PlanStepStatus
 from core.proposal_lifecycle import ProposalLifecycle, ProposalState
 from core.self_memory import SelfMemory
+from core.self_improver import SelfImprover
+from core.agent_factory import AgentFactory
+from core.task_delegation import TaskDelegation
+from core.agent_evaluator import AgentEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +67,28 @@ class ProactiveAgent(BaseAgent):
 
         # 자기 인식 메모리 — 깨달음, 판단 원칙, 실패 교훈 기록
         self.memory = SelfMemory()
+
+        # ── Level 4: 자기수정 엔진 ──
+        self.improver = SelfImprover(ai_think_fn=self.ai_think)
+
+        # ── Level 5: 멀티에이전트 시스템 ──
+        common_kwargs = {k: v for k, v in kwargs.items()
+                         if k in ("message_bus", "slack_client", "notion_client",
+                                  "supabase_client", "anthropic_api_key")}
+        self.agent_factory = AgentFactory(
+            ai_think_fn=self.ai_think,
+            common_kwargs=common_kwargs,
+        )
+        self.delegation = TaskDelegation(
+            message_bus=kwargs.get("message_bus"),
+            ai_think_fn=self.ai_think,
+            agent_factory=self.agent_factory,
+        )
+        self.evaluator = AgentEvaluator(
+            agent_factory=self.agent_factory,
+            task_delegation=self.delegation,
+            ai_think_fn=self.ai_think,
+        )
 
         # 초기 목표가 없으면 기본 목표 설정
         if not self.planner.get_active_goals():
@@ -314,6 +346,32 @@ class ProactiveAgent(BaseAgent):
         if self._hours_since(self._state.get("last_report", "")) >= 6:
             context["action"] = "progress_report"
             return context
+
+        # ── Level 4: 자기수정 (6시간마다, 실패 패턴 있을 때만) ──
+        if self._hours_since(self._state.get("last_self_improve", "")) >= 6:
+            failure_pattern = self.improver.detect_failure_pattern(self.memory)
+            if failure_pattern and self.improver.can_improve_today():
+                context["action"] = "self_improve"
+                context["failure_pattern"] = failure_pattern
+                return context
+
+        # ── Level 5: 에이전트 평가 (12시간마다) ──
+        if self._hours_since(self._state.get("last_agent_eval", "")) >= 12:
+            context["action"] = "evaluate_agents"
+            return context
+
+        # ── Level 5: 위임 타임아웃 체크 (30분마다) ──
+        if self._hours_since(self._state.get("last_delegation_check", "")) >= 0.5:
+            if self.delegation.get_pending_count() > 0:
+                context["action"] = "check_delegations"
+                return context
+
+        # ── Level 5: 에이전트 생성 제안 (4시간마다, 목표 필요 시) ──
+        if self._hours_since(self._state.get("last_spawn_check", "")) >= 4:
+            active_goals = self.planner.get_active_goals()
+            if active_goals and self.agent_factory.get_agent_count() < 10:
+                context["action"] = "consider_spawn_agent"
+                return context
 
         context["action"] = "find_work"
         return context
@@ -1921,3 +1979,239 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                             break
 
         raise json.JSONDecodeError("No valid JSON found", clean, 0)
+
+    # ══════════════════════════════════════════════════
+    #  Level 4: 자기수정 액션
+    # ══════════════════════════════════════════════════
+
+    async def _do_self_improve(self, ctx: dict):
+        """실패 패턴 감지 → 코드 분석 → 수정 → 테스트 → 커밋"""
+        pattern = ctx.get("failure_pattern", {})
+        today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
+
+        await self.slack.send_message(
+            "ai-agents-general",
+            f"🔧 *[자기수정 시작]* 패턴: {pattern.get('type', '?')} "
+            f"(연속 실패 {pattern.get('count', 0)}회)\n"
+            f"_코드 분석 → 수정 → 테스트 → 커밋 진행 중..._",
+        )
+
+        result = await self.improver.improve(pattern, self.memory)
+
+        self._state["last_self_improve"] = today
+        self._save_state()
+
+        if result.get("success"):
+            changes_text = "\n".join(
+                f"  • `{c['file']}`: {c.get('description', '')[:60]}"
+                for c in result.get("changes", [])
+            )
+            await self.slack.send_message(
+                "ai-agents-general",
+                f"✅ *[자기수정 성공]* 커밋: `{result.get('commit_hash', '?')}`\n"
+                f"수정 파일:\n{changes_text}\n"
+                f"_자기 코드를 스스로 고쳤습니다._",
+            )
+            self.memory.record_insight(
+                f"자기수정 성공: {result.get('changes', [{}])[0].get('description', '')}",
+                context=f"패턴: {pattern.get('type')}",
+                category="self_improvement",
+            )
+        else:
+            reason = result.get("reason", "알 수 없는 오류")
+            rollback = " (롤백됨)" if result.get("rollback") else ""
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"❌ *[자기수정 실패]* {reason}{rollback}",
+            )
+            self.memory.record_evaluation(
+                action="self_improve",
+                result=reason,
+                grade="F",
+                lesson=f"자기수정 실패: {reason}",
+            )
+
+    # ══════════════════════════════════════════════════
+    #  Level 5: 멀티에이전트 액션
+    # ══════════════════════════════════════════════════
+
+    async def _do_evaluate_agents(self, ctx: dict):
+        """전체 에이전트 성과 평가 → 자동 인사 조치"""
+        today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
+
+        await self.slack.send_message(
+            "ai-agent-logs",
+            "📊 *[에이전트 조직 평가 시작]*\n_전체 에이전트 성과 분석 중..._",
+        )
+
+        review = await self.evaluator.evaluate_all()
+        actions = await self.evaluator.enforce_actions(review)
+
+        self._state["last_agent_eval"] = today
+        self._save_state()
+
+        # 결과 보고
+        grades_text = " | ".join(f"{n}: {g}" for n, g in review.get("grades", {}).items())
+        actions_text = "\n".join(
+            f"  • {a['action']}: `{a['agent']}` → {a['result']}"
+            for a in actions
+        ) if actions else "  (조치 없음)"
+
+        report = (
+            f"📊 *[에이전트 조직 평가 완료]*\n"
+            f"에이전트 수: {review.get('agent_count', 0)}\n"
+            f"등급: {grades_text}\n"
+            f"\n*인사 조치:*\n{actions_text}"
+        )
+
+        under = review.get("underperformers", [])
+        top = review.get("top_performers", [])
+        if under:
+            report += f"\n\n⚠️ 부진: {', '.join(u['name'] for u in under)}"
+        if top:
+            report += f"\n🌟 우수: {', '.join(t['name'] for t in top)}"
+
+        recs = review.get("recommendations", [])
+        if recs:
+            report += "\n\n*AI 추천:*\n" + "\n".join(f"  • {r}" for r in recs[:3])
+
+        await self.slack.send_message("ai-agents-general", report)
+
+        self.memory.record_insight(
+            f"조직 평가: {len(review.get('grades', {}))}개 에이전트, "
+            f"부진 {len(under)}개, 우수 {len(top)}개, 조치 {len(actions)}건",
+            context=grades_text,
+            category="organization",
+        )
+
+    async def _do_check_delegations(self, ctx: dict):
+        """위임 타임아웃 체크 + 재위임"""
+        timed_out = await self.delegation.check_timeouts()
+        self._state["last_delegation_check"] = self.now_kst().isoformat()
+        self._save_state()
+
+        if timed_out:
+            for dlg in timed_out:
+                await self.slack.send_message(
+                    "ai-agent-logs",
+                    f"⏰ *[위임 타임아웃]* `{dlg['assigned_to']}` → {dlg['task_description'][:60]}",
+                )
+                # 재위임 시도
+                await self.delegation.delegate(
+                    task_description=dlg["task_description"],
+                    task_type=dlg.get("task_type", "general"),
+                    deadline_minutes=dlg.get("deadline_minutes", 30),
+                    payload=dlg.get("payload", {}),
+                )
+
+    async def _do_consider_spawn_agent(self, ctx: dict):
+        """목표 달성을 위해 새 에이전트 생성이 필요한지 판단"""
+        today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
+        self._state["last_spawn_check"] = today
+        self._save_state()
+
+        active_goals = self.planner.get_active_goals()
+        existing_agents = list(self.agent_factory.get_active_agents().keys())
+        delegation_summary = self.delegation.get_summary()
+
+        # AI에게 판단 요청
+        response = await self.ai_think(
+            system_prompt="""현재 목표와 에이전트 현황을 분석하고,
+새로운 전문 에이전트가 필요한지 판단하라.
+
+필요하면 JSON: {"create": true, "spec": {"name": "이름", "purpose": "목적", "description": "설명", "observe_logic": "관찰 로직", "think_logic": "판단 로직", "act_logic": "실행 로직", "slack_channel": "ai-agent-logs", "loop_interval": 300}}
+불필요하면 JSON: {"create": false, "reason": "이유"}""",
+            user_prompt=f"""활성 목표:
+{json.dumps([{"title": g.title, "progress": g.progress_pct()} for g in active_goals], ensure_ascii=False)}
+
+기존 동적 에이전트: {existing_agents}
+위임 현황: {delegation_summary}""",
+        )
+
+        try:
+            parsed = self._parse_json(response)
+            if parsed.get("create") and parsed.get("spec"):
+                spec = parsed["spec"]
+                spec["created_by"] = "proactive"
+                result = await self.agent_factory.create_agent(spec)
+
+                if result.get("success"):
+                    await self.agent_factory.start_agent(result["agent_name"])
+                    await self.slack.send_message(
+                        "ai-agents-general",
+                        f"🤖 *[새 에이전트 생성]*\n"
+                        f"이름: `{result['agent_name']}`\n"
+                        f"목적: {spec.get('purpose', '')}\n"
+                        f"_자율적으로 새 에이전트를 만들어 가동합니다._",
+                    )
+                    self.memory.record_insight(
+                        f"에이전트 생성: {result['agent_name']} — {spec.get('purpose', '')}",
+                        category="organization",
+                    )
+                else:
+                    logger.info(f"[proactive] Agent spawn failed: {result.get('reason')}")
+            else:
+                logger.info(f"[proactive] No new agent needed: {parsed.get('reason', '')}")
+        except Exception as e:
+            logger.error(f"[proactive] Spawn check failed: {e}")
+
+    async def _do_delegate_task(self, ctx: dict):
+        """작업을 다른 에이전트에게 위임"""
+        task_desc = ctx.get("task_description", "")
+        task_type = ctx.get("task_type", "general")
+        preferred = ctx.get("preferred_agent")
+        deadline = ctx.get("deadline_minutes", 30)
+
+        result = await self.delegation.delegate(
+            task_description=task_desc,
+            task_type=task_type,
+            preferred_agent=preferred,
+            deadline_minutes=deadline,
+            payload=ctx.get("payload", {}),
+        )
+
+        if result.get("assigned_to"):
+            await self.slack.send_message(
+                "ai-agent-logs",
+                f"📤 *[작업 위임]* → `{result['assigned_to']}`\n"
+                f"작업: {task_desc[:80]}\n"
+                f"데드라인: {deadline}분",
+            )
+        else:
+            logger.warning(f"[proactive] Delegation failed: {result}")
+
+    # ── Level 5: 외부 작업 수신 (다른 에이전트가 보낸 작업) ──
+
+    async def handle_external_task(self, task) -> str:
+        """다른 에이전트 또는 TaskDelegation에서 받은 작업 처리"""
+        task_type = task.task_type if hasattr(task, "task_type") else task.get("task_type", "")
+        payload = task.payload if hasattr(task, "payload") else task.get("payload", {})
+        delegation_id = payload.get("delegation_id", "")
+
+        logger.info(f"[proactive] External task: {task_type}, delegation={delegation_id}")
+
+        try:
+            if task_type == "research":
+                result = await self._hourly_research(payload.get("task_description", "연구"))
+            elif task_type == "build":
+                result = await self._hourly_build(
+                    payload.get("task_description", "빌드"),
+                    payload.get("expected", ""),
+                )
+            else:
+                result = await self.ai_think(
+                    system_prompt="요청된 작업을 수행하고 결과를 보고하라.",
+                    user_prompt=json.dumps(payload, ensure_ascii=False),
+                )
+
+            # 위임 결과 보고
+            if delegation_id:
+                await self.delegation.handle_result(delegation_id, result, success=True)
+
+            return result[:1000]
+
+        except Exception as e:
+            error = f"작업 실패: {str(e)[:200]}"
+            if delegation_id:
+                await self.delegation.handle_result(delegation_id, error, success=False)
+            return error

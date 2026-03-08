@@ -299,7 +299,7 @@ def generate_agenda_opinions(agenda: str, members: list, research: str = "", pas
 }}"""
 
     message = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -389,7 +389,7 @@ def generate_vote(topic: str, members: list, research: str = "", past_context: s
 }}"""
 
     message = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )

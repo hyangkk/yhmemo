@@ -185,12 +185,22 @@ async def main():
     )
     quote = QuoteAgent(**common_kwargs)
     fortune = FortuneAgent(**common_kwargs)
-    invest = InvestAgent(**common_kwargs)
-    invest_report = InvestReportAgent(**common_kwargs)
+    # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
+    # invest_report = InvestReportAgent(**common_kwargs)  # 비용 절감 위해 비활성화
     task_board = TaskBoardAgent(
         task_board_db_id=config.get("NOTION_TASK_BOARD_DB_ID", ""),
         **common_kwargs,
     )
+
+    # ── Level 5: 동적 에이전트 시작 ──────────────────────
+    # ProactiveAgent의 agent_factory가 초기화된 후, 기존 동적 에이전트를 로드+시작
+    async def start_dynamic_agents():
+        try:
+            started = await proactive.agent_factory.start_all_active()
+            if started > 0:
+                logger.info(f"[orchestrator] Started {started} dynamic agents")
+        except Exception as e:
+            logger.error(f"[orchestrator] Dynamic agent start failed: {e}")
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -791,8 +801,8 @@ async def main():
         curator.stop()
         quote.stop()
         proactive.stop()
-        invest.stop()
-        invest_report.stop()
+        # invest.stop()          # 비활성화됨
+        # invest_report.stop()   # 비활성화됨
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -820,11 +830,17 @@ async def main():
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
         "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
-        "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
-        "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),
+        # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨
+        # "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),  # 비활성화됨
         "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
+
+    # Level 5: 동적 에이전트 시작 (proactive 시작 후 약간 대기)
+    async def _delayed_dynamic_start():
+        await asyncio.sleep(10)  # proactive 초기화 대기
+        await start_dynamic_agents()
+    asyncio.create_task(_delayed_dynamic_start(), name="dynamic_agents_init")
 
     # ── 마스터 워치독: 1시간마다 전체 시스템 점검 ────────────
     HEALTH_CHECK_INTERVAL = 3600  # 1시간 (초) — fallback
