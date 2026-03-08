@@ -49,6 +49,7 @@ from agents.quote_agent import QuoteAgent
 from agents.proactive_agent import ProactiveAgent
 from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
+from agents.task_board_agent import TaskBoardAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -126,6 +127,7 @@ def load_config() -> dict:
     # 선택적 설정
     config["NOTION_API_KEY"] = os.environ.get("NOTION_API_KEY", "")
     config["NOTION_DATABASE_ID"] = os.environ.get("NOTION_DATABASE_ID", "")
+    config["NOTION_TASK_BOARD_DB_ID"] = os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
 
     return config
 
@@ -183,6 +185,10 @@ async def main():
     quote = QuoteAgent(**common_kwargs)
     invest = InvestAgent(**common_kwargs)
     invest_report = InvestReportAgent(**common_kwargs)
+    task_board = TaskBoardAgent(
+        task_board_db_id=config.get("NOTION_TASK_BOARD_DB_ID", ""),
+        **common_kwargs,
+    )
 
     # ── 슬랙 명령어 등록 ───────────────────────────────
 
@@ -781,6 +787,7 @@ async def main():
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
         "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),
+        "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
