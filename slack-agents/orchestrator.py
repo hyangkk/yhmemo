@@ -826,13 +826,13 @@ async def main():
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
-    # ── 마스터 워치독: 10분마다 전체 시스템 점검 ────────────
-    HEALTH_CHECK_INTERVAL = 600  # 10분 (초) — fallback
+    # ── 마스터 워치독: 1시간마다 전체 시스템 점검 ────────────
+    HEALTH_CHECK_INTERVAL = 3600  # 1시간 (초) — fallback
     last_health_check_time = asyncio.get_event_loop().time()
-    last_report_slot = ""  # KST 정각 슬롯 추적 (e.g. "17:20")
+    last_report_slot = ""  # KST 정각 슬롯 추적 (e.g. "17:00")
 
     async def master_health_check():
-        """10분마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
+        """1시간마다 전체 시스템 점검 + 죽은 에이전트 자동 재시작 + Slack 가동 리포트"""
         nonlocal agent_tasks
         _rotate_log_file_if_needed()
         now = datetime.now(KST)
@@ -880,19 +880,19 @@ async def main():
                 except (ValueError, TypeError):
                     pass
 
-        # 3. 지난 10분 활동 요약 (로그 파싱)
+        # 3. 지난 1시간 활동 요약 (로그 파싱)
         past_activities = _parse_recent_log_activities(now)
 
         # 3.5. 이전 계획 이행률 검증
         fulfillment = _check_plan_fulfillment(past_activities)
 
-        # 4. 앞으로 10분 실제 실행 계획
-        next_activities = _get_next_10min_plan(now)
+        # 4. 앞으로 1시간 실제 실행 계획
+        next_activities = _get_next_1h_plan(now)
 
         # 4.5. 계획 저장 (다음 리포트에서 이행 검증용)
         _save_planned_tasks(now_str, next_activities)
 
-        # 5. Slack 가동 리포트 (매 10분마다 항상 전송)
+        # 5. Slack 가동 리포트 (매 1시간마다 항상 전송)
         alive = sum(1 for t in agent_tasks.values() if not t.done())
         total = len(agent_tasks)
 
@@ -911,7 +911,7 @@ async def main():
                 report_lines.append(line)
 
         report_lines.append("")
-        report_lines.append("*지난 10분:*")
+        report_lines.append("*지난 1시간:*")
         if past_activities:
             for line in past_activities:
                 report_lines.append(f"• {line}")
@@ -919,7 +919,7 @@ async def main():
             report_lines.append("• (활동 없음)")
 
         report_lines.append("")
-        report_lines.append("*앞으로 10분:*")
+        report_lines.append("*앞으로 1시간:*")
         for line in next_activities:
             report_lines.append(f"• {line}")
 
@@ -948,7 +948,7 @@ async def main():
             logger.info(f"[watchdog] All {len(agent_tasks)} agents OK")
 
     def _parse_recent_log_activities(now: datetime) -> list[str]:
-        """최근 10분간 로그에서 주요 활동 추출"""
+        """최근 1시간 로그에서 주요 활동 추출"""
         activities = []
         # 로그 타임스탬프는 UTC
         now_utc = now.astimezone(timezone.utc)
@@ -959,17 +959,17 @@ async def main():
         if not os.path.exists(log_file):
             return activities
 
-        ten_min_ago = now_utc - timedelta(minutes=10)
+        one_hour_ago = now_utc - timedelta(hours=1)
         # 자정 경계 처리: 날짜+시간 문자열로 비교
-        ten_min_date_str = ten_min_ago.strftime("%Y-%m-%d %H:%M")
+        one_hour_ago_str = one_hour_ago.strftime("%Y-%m-%d %H:%M")
         now_date_str = now_utc.strftime("%Y-%m-%d %H:%M")
 
         # 자정 경계 시 이전 날짜 로그도 확인
         log_files = [log_file]
-        if ten_min_ago.date() != now_utc.date():
+        if one_hour_ago.date() != now_utc.date():
             prev_log = os.path.join(
                 os.path.dirname(__file__), "data", "logs",
-                f"orchestrator-{ten_min_ago.strftime('%Y%m%d')}.log"
+                f"orchestrator-{one_hour_ago.strftime('%Y%m%d')}.log"
             )
             if os.path.exists(prev_log):
                 log_files.insert(0, prev_log)
@@ -988,7 +988,7 @@ async def main():
                     if len(line) < 20:
                         continue
                     date_time_part = line[:16]  # "YYYY-MM-DD HH:MM"
-                    if date_time_part < ten_min_date_str or date_time_part > now_date_str:
+                    if date_time_part < one_hour_ago_str or date_time_part > now_date_str:
                         continue
 
                     # 슬랙 메시지 수 카운트
@@ -1065,7 +1065,7 @@ async def main():
     PLANNED_TASKS_FILE = os.path.join(os.path.dirname(__file__), "data", "planned_tasks.json")
 
     def _save_planned_tasks(slot: str, tasks: list[str]):
-        """다음 10분 계획을 파일에 저장 → 다음 리포트에서 이행 여부 검증"""
+        """다음 1시간 계획을 파일에 저장 → 다음 리포트에서 이행 여부 검증"""
         try:
             data = {"slot": slot, "tasks": tasks, "saved_at": datetime.now(KST).isoformat()}
             with open(PLANNED_TASKS_FILE, "w", encoding="utf-8") as f:
@@ -1074,7 +1074,7 @@ async def main():
             pass
 
     def _load_planned_tasks() -> dict:
-        """이전 10분에 계획했던 태스크 로드"""
+        """이전 1시간에 계획했던 태스크 로드"""
         try:
             if os.path.exists(PLANNED_TASKS_FILE):
                 with open(PLANNED_TASKS_FILE, "r", encoding="utf-8") as f:
@@ -1140,11 +1140,11 @@ async def main():
                 keywords.append(word)
         return keywords
 
-    def _get_next_10min_plan(now: datetime) -> list[str]:
-        """앞으로 10분간 실제 실행될 작업 — proactive 24시간 플랜 + 목표 기반"""
+    def _get_next_1h_plan(now: datetime) -> list[str]:
+        """앞으로 1시간 실제 실행될 작업 — proactive 24시간 플랜 + 목표 기반"""
         plan = []
         current_hour = now.hour
-        next_slot_minute = ((now.minute // 10) + 1) * 10
+        next_hour = (current_hour + 1) % 24
 
         # 1. proactive agent의 24시간 플랜에서 현재/다음 시간 태스크 읽기
         try:
@@ -1210,8 +1210,8 @@ async def main():
         # 4. 뉴스 큐레이션 (항상 실행)
         plan.append("뉴스 수집 & 큐레이션")
 
-        # 5. slot_check (10분 경계에서)
-        if now.minute % 10 <= 2:
+        # 5. slot_check (매시 정각)
+        if now.minute <= 5:
             plan.append("slot_check → 이전 슬롯 결과 평가")
 
         # 계획이 비면 기본값
@@ -1324,13 +1324,13 @@ async def main():
 
     if socket_mode:
         # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
-        # 하지만 헬스체크는 여전히 10분마다 실행
-        logger.info("All agents running. Socket Mode active + watchdog enabled (10분 정각 리포트)")
+        # 하지만 헬스체크는 여전히 1시간마다 실행
+        logger.info("All agents running. Socket Mode active + watchdog enabled (1시간 정각 리포트)")
         while not shutdown_event.is_set():
             agent_tracker.heartbeat("orchestrator")
             now_kst = datetime.now(KST)
-            current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
-            if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
+            current_slot = f"{now_kst.hour}:00"
+            if now_kst.minute == 0 and current_slot != last_report_slot:
                 last_report_slot = current_slot
                 try:
                     await master_health_check()
@@ -1341,8 +1341,8 @@ async def main():
             except asyncio.TimeoutError:
                 pass
     else:
-        # 폴링 모드: 3초마다 메시지 확인 + 10분마다 헬스체크
-        logger.info("All agents running. Polling (3s) + watchdog (10분 점검) 시작...")
+        # 폴링 모드: 3초마다 메시지 확인 + 1시간마다 헬스체크
+        logger.info("All agents running. Polling (3s) + watchdog (1시간 점검) 시작...")
         poll_count = 0
         while not shutdown_event.is_set():
             poll_count += 1
@@ -1356,10 +1356,10 @@ async def main():
             except Exception as e:
                 logger.error(f"Poll error: {e}")
 
-            # 10분 정각(KST :00, :10, :20, :30, :40, :50)에 마스터 헬스체크
+            # 매시 정각(KST :00)에 마스터 헬스체크
             now_kst = datetime.now(KST)
-            current_slot = f"{now_kst.hour}:{(now_kst.minute // 10) * 10:02d}"
-            if now_kst.minute % 10 == 0 and current_slot != last_report_slot:
+            current_slot = f"{now_kst.hour}:00"
+            if now_kst.minute == 0 and current_slot != last_report_slot:
                 last_report_slot = current_slot
                 try:
                     await master_health_check()
