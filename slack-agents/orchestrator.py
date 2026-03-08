@@ -50,6 +50,7 @@ from agents.proactive_agent import ProactiveAgent
 from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
+from agents.fortune_agent import FortuneAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -183,6 +184,7 @@ async def main():
         **common_kwargs,
     )
     quote = QuoteAgent(**common_kwargs)
+    fortune = FortuneAgent(**common_kwargs)
     invest = InvestAgent(**common_kwargs)
     invest_report = InvestReportAgent(**common_kwargs)
     task_board = TaskBoardAgent(
@@ -298,6 +300,34 @@ async def main():
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
 
+    # "!운세" → 운세 에이전트 즉시 실행
+    async def cmd_fortune(args: str, user: str, channel: str, thread_ts: str = None):
+        now = datetime.now(KST)
+        context = {
+            "current_time": now.strftime("%Y-%m-%d %H:%M"),
+            "current_hour": now.hour,
+            "date_str": now.strftime("%Y년 %m월 %d일"),
+            "weekday": ["월", "화", "수", "목", "금", "토", "일"][now.weekday()],
+            "period": "아침" if now.hour < 14 else "저녁",
+            "send_key": "manual",
+            "recent_fortunes": [h.get("summary", "") for h in fortune._fortune_history[-10:]],
+        }
+        decision = await fortune.think(context)
+        if decision:
+            decision["action"] = "send_fortune"
+            msg = fortune._format_message(decision)
+            await _reply(channel, msg, thread_ts)
+            fortune._fortune_history.append({
+                "date": context["date_str"],
+                "period": context["period"],
+                "summary": decision["data"].get("overall", "")[:100],
+            })
+            fortune._save_history()
+        else:
+            await _reply(channel, "운세 생성에 실패했어요.", thread_ts)
+
+    slack.on_command("운세", cmd_fortune)
+
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
     os.makedirs(os.path.dirname(experience_file), exist_ok=True)
@@ -390,6 +420,7 @@ async def main():
 - briefing: 이미 수집된 정보 브리핑/요약
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
+- fortune: 운세 보기, 오늘의 운세
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
@@ -404,7 +435,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|chat|dev|ignore",
+  "intent": "collect|briefing|dashboard|quote|fortune|chat|dev|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -463,6 +494,9 @@ async def main():
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
+            elif action == "fortune":
+                await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "운세 전송 완료"
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
@@ -784,6 +818,7 @@ async def main():
         "collector": lambda: asyncio.create_task(collector.start(), name="collector"),
         "curator": lambda: asyncio.create_task(curator.start(), name="curator"),
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
+        "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         "invest": lambda: asyncio.create_task(invest.start(), name="invest"),
         "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),
@@ -1084,6 +1119,7 @@ async def main():
             "투자": ["invest", "투자", "cycle"],
             "뉴스": ["curator", "뉴스", "news", "received"],
             "명언": ["quote", "명언"],
+            "운세": ["fortune", "운세"],
             "폴링": ["poll", "polling"],
             "slot_check": ["slot_check"],
             "시간별": ["hourly", "execute_hourly"],
