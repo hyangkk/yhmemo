@@ -541,7 +541,7 @@ def generate_idea(news_items: list, prompt_template: str = "") -> str:
         prompt = template + "\n\n" + news_block
 
     message = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
     )
