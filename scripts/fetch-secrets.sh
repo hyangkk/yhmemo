@@ -10,16 +10,24 @@ SUPABASE_URL="${SUPABASE_URL:-https://unuvbdqjgiypxfvlplpd.supabase.co}"
 export SUPABASE_URL
 
 # Service Role Key: 환경변수 → .env 파일 순서로 탐색
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  # 루트 .env에서 찾기 (Claude Code 세션용)
+  if [ -f "${ROOT_DIR}/.env" ]; then
+    SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "${ROOT_DIR}/.env" | cut -d'=' -f2- | tr -d '"' || true)
+  fi
+fi
 if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   # slack-agents/.env에서 찾기
-  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/slack-agents/.env"
+  ENV_FILE="${ROOT_DIR}/slack-agents/.env"
   if [ -f "$ENV_FILE" ]; then
     SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
   fi
 fi
 if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   # web-service/.env.local에서 찾기
-  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/web-service/.env.local"
+  ENV_FILE="${ROOT_DIR}/web-service/.env.local"
   if [ -f "$ENV_FILE" ]; then
     SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
   fi
