@@ -339,6 +339,11 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "business_research"
             return context
 
+        # ── 리딩룸 진행 보고 (30분마다) ──
+        if self._hours_since(self._state.get("last_reading_room_report", "")) >= 0.5:
+            context["action"] = "reading_room_report"
+            return context
+
         if self._hours_since(self._state.get("last_report", "")) >= 6:
             context["action"] = "progress_report"
             return context
@@ -1436,6 +1441,55 @@ JSON 응답:
         self._save_state()
 
     # ── 진행 보고 ──────────────────────────────────
+
+    async def _do_reading_room_report(self, ctx: dict):
+        """30분마다 AI 리딩룸 관련 개선 진행 상황 간단 보고."""
+        goals_summary = self.planner.get_status_summary()
+        achievement = self.memory.get_plan_achievement_rate()
+
+        # 최근 슬롯 결과 수집
+        recent_slots = []
+        for key, val in self._state.items():
+            if key.startswith("slot_") and key.endswith("_result") and val:
+                recent_slots.append(val if isinstance(val, str) else str(val)[:100])
+
+        recent_insights = self.memory.get_recent_evaluations(n=5)
+        insights_text = "\n".join(
+            f"- [{e.get('grade','?')}] {e.get('action','?')}: {e.get('result','')[:80]}"
+            for e in recent_insights
+        ) if recent_insights else "(아직 없음)"
+
+        report = await self.ai_think(
+            system_prompt="""AI 리딩룸(실시간 투자 시그널 플랫폼) 개선 진행 보고를 작성하라.
+5줄 이내로 짧고 핵심만.
+
+포함할 내용:
+- 지금 어떤 작업을 하고 있는지 (또는 방금 완료한 것)
+- 다음에 할 작업
+- 특이사항/이슈 (있으면)
+
+형식: 이모지 + 간결한 한줄씩. 인사말/맺음말 불필요.""",
+            user_prompt=f"""시간: {ctx['current_time']}
+계획 달성률: {achievement.get('rate', 0):.0f}%
+
+목표 상태:
+{goals_summary}
+
+최근 작업 결과:
+{insights_text}
+
+최근 슬롯 실행:
+{chr(10).join(recent_slots[-3:]) if recent_slots else '(없음)'}""",
+        )
+
+        if report:
+            await self.slack.send_message(
+                "ai-agents-general",
+                f"📡 *리딩룸 진행* ({ctx['current_time']})\n{report}",
+            )
+
+        self._state["last_reading_room_report"] = ctx["current_time"]
+        self._save_state()
 
     async def _do_progress_report(self, ctx: dict):
         """결과물 + 계획 달성률 보고."""
