@@ -4,15 +4,33 @@
 
 set -euo pipefail
 
-# Supabase 접속 정보 (CLAUDE.md 또는 GitHub Secrets에서 관리)
-SUPABASE_URL="${SUPABASE_URL:-}"
-SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-}"
+# Supabase 접속 정보
+# URL은 공개 정보이므로 기본값으로 설정
+SUPABASE_URL="${SUPABASE_URL:-https://unuvbdqjgiypxfvlplpd.supabase.co}"
+export SUPABASE_URL
 
-if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-  echo "[fetch-secrets] SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다." >&2
-  echo "[fetch-secrets] GitHub Secrets에서 이 값들을 먼저 설정해주세요." >&2
+# Service Role Key: 환경변수 → .env 파일 순서로 탐색
+if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  # slack-agents/.env에서 찾기
+  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/slack-agents/.env"
+  if [ -f "$ENV_FILE" ]; then
+    SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+  fi
+fi
+if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  # web-service/.env.local에서 찾기
+  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/web-service/.env.local"
+  if [ -f "$ENV_FILE" ]; then
+    SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+  fi
+fi
+
+if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  echo "[fetch-secrets] SUPABASE_SERVICE_ROLE_KEY를 찾을 수 없습니다." >&2
+  echo "[fetch-secrets] GitHub Secrets 또는 slack-agents/.env에 설정해주세요." >&2
   exit 1
 fi
+export SUPABASE_SERVICE_ROLE_KEY
 
 # Supabase REST API로 시크릿 조회
 RESPONSE=$(curl -s \
@@ -46,4 +64,7 @@ else
   exit 1
 fi
 
-echo "[fetch-secrets] ${COUNT}개 시크릿 로드 완료"
+# SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY도 export 유지
+export SUPABASE_URL
+export SUPABASE_SERVICE_ROLE_KEY
+echo "[fetch-secrets] ${COUNT}개 시크릿 로드 완료 (SUPABASE_URL/KEY 포함)"
