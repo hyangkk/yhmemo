@@ -1,8 +1,15 @@
 """
 TaskBoard 에이전트 — 노션 'AI 업무 지시 보드 DB' 폴링
 
-노션 DB에서 '시작 전' 상태인 업무를 읽어와서
+노션 DB에서 '착수 대기중' 상태인 업무를 읽어와서
 AI가 분석 → 실행 계획 수립 → executor로 실행 → 결과를 노션에 기록
+
+상태 흐름:
+  작성중 → 착수 대기중 → 진행 중 → 완료
+  - 작성중: 사용자가 요청사항을 작성하는 단계 (에이전트 착수 금지)
+  - 착수 대기중: 사용자가 작성 완료 후 에이전트에게 착수를 허가한 상태
+  - 진행 중: 에이전트가 실행 중
+  - 완료: 실행 완료
 
 또한, 완료된 업무의 댓글을 모니터링하여
 후속 지시가 있으면 자동으로 수행한다.
@@ -67,7 +74,7 @@ class TaskBoardAgent(BaseAgent):
     # ── Observe ─────────────────────────────────────────
 
     async def observe(self) -> dict | None:
-        """노션 DB에서 '시작 전' 상태 항목 확인 + 댓글 후속 지시 확인"""
+        """노션 DB에서 '착수 대기중' 상태 항목 확인 + 댓글 후속 지시 확인"""
         if not self.notion or not self._db_id:
             return None
 
@@ -84,13 +91,13 @@ class TaskBoardAgent(BaseAgent):
         return None
 
     async def _observe_new_tasks(self) -> dict | None:
-        """'시작 전' 상태 업무 확인"""
+        """'착수 대기중' 상태 업무 확인 ('작성중'은 무시)"""
         try:
             items = await self.notion.query_database(
                 self._db_id,
                 filter_dict={
                     "property": "상태",
-                    "status": {"equals": "시작 전"},
+                    "status": {"equals": "착수 대기중"},
                 },
                 sorts=[{"property": "생성 일시", "direction": "ascending"}],
                 page_size=5,
