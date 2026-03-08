@@ -2,6 +2,7 @@ import Link from "next/link";
 import MorningBriefing from "@/components/MorningBriefing";
 import MarketDashboard from "@/components/MarketDashboard";
 import TrendingTopics from "@/components/TrendingTopics";
+import InvestSignal from "@/components/InvestSignal";
 import Dashboard from "@/components/Dashboard";
 
 export default function Home() {
@@ -18,33 +19,32 @@ export default function Home() {
             </div>
 
             <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-              오늘{" "}
-              <span className="bg-gradient-to-r from-amber-500 to-orange-600 bg-clip-text text-transparent">
-                5개만
-              </span>{" "}
-              읽으면 끝
+              AI{" "}
+              <span className="bg-gradient-to-r from-violet-500 to-purple-600 bg-clip-text text-transparent">
+                리딩룸
+              </span>
             </h1>
 
             <p className="mt-3 text-base sm:text-lg text-gray-600 dark:text-gray-300 max-w-xl mx-auto">
-              AI가 수십 개 뉴스 중 꼭 알아야 할 5개만 골라드립니다.
+              실시간 시장 시그널 포착 + 펀더멘탈 분석 + 투자 전략 제시
               <br />
-              다 읽으면 오늘 뉴스는 끝. 더 이상 스크롤 없이.
+              AI가 24시간 뉴스와 시장을 크로스 분석합니다.
             </p>
 
             <div className="mt-6 flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
               <div className="flex items-center gap-1.5">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                AI 선별
+                실시간 시그널
               </div>
               <div className="w-1 h-1 rounded-full bg-gray-300" />
               <div className="flex items-center gap-1.5">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                5개면 충분
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                크로스 분석
               </div>
               <div className="w-1 h-1 rounded-full bg-gray-300" />
               <div className="flex items-center gap-1.5">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                2분 완독
+                24시간 운영
               </div>
             </div>
           </div>
@@ -85,6 +85,23 @@ export default function Home() {
 
       {/* 투자/시장 대시보드 */}
       <MarketDashboard />
+
+      {/* 구분선 - 투자 시그널 */}
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-800" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="px-4 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 text-sm text-gray-400">
+              AI 투자 시그널
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 투자 시그널 분석 */}
+      <InvestSignal />
 
       {/* 마켓 분석 페이지 링크 */}
       <div className="max-w-5xl mx-auto px-4 mt-4 text-center flex items-center justify-center gap-3">

@@ -119,61 +119,57 @@ class ProactiveAgent(BaseAgent):
             f.write(json.dumps(self._state, ensure_ascii=False, indent=2))
 
     def _seed_default_goals(self):
-        """핵심 목표 설정 — 베타 서비스 런칭 + 영향력 확대"""
+        """핵심 목표 설정 — 투자급 인사이트 플랫폼"""
 
-        # 최우선: 이번 주말까지 베타 서비스 런칭
+        # P1: 투자급 인사이트 플랫폼 (지속 개선)
         self.planner.add_goal(
-            title="AI 뉴스 브리핑 베타 서비스 런칭",
-            description="""이번 주말(3/8)까지 타인에게 소개할 수 있는 베타 서비스를 런칭한다.
+            title="투자급 인사이트 플랫폼 고도화",
+            description="""단순 뉴스 브리핑이 아닌, 실제 투자 의사결정에 활용 가능한 정보 취합 + 인사이트 도출 플랫폼.
 
-서비스 콘셉트: AI 기반 개인화 뉴스/트렌드 브리핑 서비스
-- 우리가 이미 가진 것: 뉴스 수집(Collector), AI 선별(Curator), 시장 분석(Proactive)
-- 이걸 웹 서비스로 포장해서 누구나 접속해서 쓸 수 있게 만든다
-- Next.js + Vercel로 빠르게 배포
-- 핵심 기능: AI가 매일 선별한 뉴스/인사이트를 보여주는 대시보드
+현재 문제:
+- 웹서비스에 안 뜨는 데이터, 사일런트 에러, 빈 화면 등 버그 다수
+- 단순 뉴스 나열 수준 → "와우" 하지 않음
+- 투자 판단에 필요한 심층 분석 부재
 
-실행 순서:
-1. 웹 프론트엔드 구축 (Next.js)
-2. API 엔드포인트 구축 (수집된 데이터 서빙)
-3. Vercel 배포
-4. 랜딩 페이지 + 소개글 작성
-5. 슬랙/SNS에 공유""",
+목표 서비스 비전:
+1. 실시간 시장 데이터 + AI 크로스 분석 (뉴스 × 가격 × 온체인 × 센티먼트)
+2. 투자 시그널 도출: 매수/매도/관망 근거와 확신도
+3. 섹터별 자금 흐름, 상관관계, 이상 징후 탐지
+4. API 서비스로 제공 — 다른 앱/봇에서 호출 가능
+
+실행 방향:
+- 웹서비스 버그 전면 수정 (빈 데이터, silent failure, 에러 표시)
+- 투자 인사이트 API 엔드포인트 신설 (/api/insight/signal, /api/insight/sector)
+- 데이터 소스 확장 (온체인 데이터, 소셜 센티먼트)
+- AI 분석 품질 고도화 (단순 요약 → 투자 시사점 + 리스크 분석)
+- UX 개선: 데이터가 없을 때 명확한 피드백, 로딩 상태, 에러 복구""",
             priority=1,
-            success_criteria="배포된 URL로 타인이 접속 가능 + AI 브리핑 최소 1개 표시",
-            deadline="2026-03-08",
+            success_criteria="투자 시그널 API 가동 + 웹 대시보드 버그 0건 + 일 1회 이상 유의미한 인사이트",
         )
 
-        # 핵심 목표: 긍정적 영향력 확대
+        # P2: 긍정적 영향력 확대
         self.planner.add_goal(
             title="긍정적 영향력 확대",
-            description="""대외적으로 뻗어나가기 위한 콘텐츠/서비스 활동.
-- 서비스 소개 콘텐츠 작성
-- AI 에이전트 구축 경험 공유
-- 커뮤니티 참여 및 피드백 수집""",
+            description="""투자 인사이트 플랫폼을 기반으로 대외 영향력 확보.
+- 플랫폼 소개 콘텐츠 작성
+- AI 에이전트 기반 투자 분석 경험 공유
+- 커뮤니티 피드백 수집 → 서비스 개선 반영""",
             priority=2,
-            success_criteria="외부 공유 가능한 콘텐츠 3건 이상 + 서비스 URL 공유",
+            success_criteria="외부 공유 콘텐츠 3건 + API 사용자 1명 이상",
         )
 
-        # 수익 창출 기반
+        # P3: 수익 모델 설계
         self.planner.add_goal(
             title="수익 모델 설계 및 검증",
-            description="""베타 서비스를 기반으로 수익 모델 검증.
-- 프리미엄 기능 설계 (심층 분석, 맞춤 알림 등)
-- 사용자 피드백으로 PMF 탐색
-- 결제 시스템 연동 준비""",
+            description="""투자 인사이트 API를 SaaS로 전환하기 위한 기반.
+- 프리미엄 API 티어 설계 (기본 무료 / 프로 유료)
+- 심층 분석, 실시간 알림, 맞춤 포트폴리오 추적
+- PMF 검증 후 결제 연동""",
             priority=3,
-            success_criteria="프리미엄 기능 1개 이상 설계 완료 + 가격 정책 초안",
+            success_criteria="프리미엄 기능 1개 설계 + 가격 정책 초안",
         )
 
-        # 시장 모니터링 (기존, 우선순위 낮춤)
-        self.planner.add_goal(
-            title="시장 모니터링 유지",
-            description="AI/스타트업/투자 시장 실시간 모니터링. 유의미한 변화 감지 시 알림.",
-            priority=4,
-            success_criteria="매일 1건 이상 유의미한 시장 인사이트",
-        )
-
-        logger.info("[proactive] Goals seeded: beta launch + impact + revenue")
+        logger.info("[proactive] Goals seeded: investment insight platform + impact + revenue")
 
     # ── Observe: 10분 단위 계획 기반 자율 운영 ────────────
 
