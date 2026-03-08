@@ -87,8 +87,8 @@ export async function GET() {
       : "";
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
-      max_tokens: 2500,
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
       system: `당신은 전문 투자 리서치 애널리스트입니다.
 시장 데이터, 뉴스, 센티먼트를 종합 분석하여 투자 의사결정에 도움이 되는 시그널을 도출합니다.
 

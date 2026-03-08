@@ -13,7 +13,7 @@ interface AssetPrice {
 
 // 인메모리 캐시 (10분 TTL)
 let insightCache: { data: unknown; timestamp: number } | null = null;
-const CACHE_TTL = 10 * 60 * 1000; // 10분
+const CACHE_TTL = 30 * 60 * 1000; // 30분
 
 export async function GET() {
   try {
@@ -85,8 +85,8 @@ export async function GET() {
       .join("\n");
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
-      max_tokens: 1500,
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1200,
       system: `당신은 금융 시장 분석가이자 뉴스 분석가입니다.
 시장 데이터와 최신 뉴스를 크로스 분석하여 일반인이 스스로 알기 어려운 인사이트를 제공합니다.
 

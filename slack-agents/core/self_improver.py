@@ -19,6 +19,7 @@ Level 4 자율 진화: 실패 패턴 감지 → 코드 분석 → 수정 → 테
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -525,54 +526,106 @@ JSON으로 답하라:
         return True
 
     async def _git_commit(self, changes: list[dict], pattern: dict) -> str:
-        """수정된 파일을 git commit + push"""
-        files = [c["file"] for c in changes]
+        """GitHub API로 수정된 파일을 커밋 (컨테이너에서도 동작)"""
         descriptions = [c.get("description", "") for c in changes]
-
         commit_msg = f"self-improve: {pattern.get('type', 'fix')} — {descriptions[0][:60]}"
 
+        # GitHub 토큰 가져오기
+        gh_token = os.environ.get("GH_TOKEN", "")
+        if not gh_token:
+            # Supabase secrets_vault에서 시도
+            try:
+                from supabase import create_client
+                sb_url = os.environ.get("SUPABASE_URL", "")
+                sb_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                if sb_url and sb_key:
+                    sb = create_client(sb_url, sb_key)
+                    result = sb.table("secrets_vault").select("secret_value").eq("secret_name", "GH_TOKEN").execute()
+                    if result.data:
+                        gh_token = result.data[0]["secret_value"]
+            except Exception as e:
+                logger.warning(f"[self_improver] Failed to fetch GH_TOKEN: {e}")
+
+        if not gh_token:
+            logger.warning("[self_improver] No GH_TOKEN — skipping push (local changes only)")
+            return "local-only"
+
+        repo = "hyangkk/yhmemo"
+        branch = "main"
+        api_base = f"https://api.github.com/repos/{repo}"
+        headers = {
+            "Authorization": f"token {gh_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+
         try:
-            # git add
-            for f in files:
-                proc = await asyncio.create_subprocess_exec(
-                    "git", "add", str(BASE_DIR / f),
-                    cwd=str(BASE_DIR.parent),  # yhmemo root
-                )
-                await proc.communicate()
+            import aiohttp
+            async with aiohttp.ClientSession(headers=headers) as session:
+                # 1. 현재 main의 최신 커밋 SHA 가져오기
+                async with session.get(f"{api_base}/git/ref/heads/{branch}") as resp:
+                    if resp.status != 200:
+                        logger.error(f"[self_improver] Failed to get ref: {resp.status}")
+                        return "local-only"
+                    ref_data = await resp.json()
+                    base_sha = ref_data["object"]["sha"]
 
-            # git commit
-            proc = await asyncio.create_subprocess_exec(
-                "git", "commit", "-m", commit_msg,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(BASE_DIR.parent),
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+                # 2. base tree 가져오기
+                async with session.get(f"{api_base}/git/commits/{base_sha}") as resp:
+                    commit_data = await resp.json()
+                    base_tree_sha = commit_data["tree"]["sha"]
 
-            # commit hash 추출
-            hash_proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--short", "HEAD",
-                stdout=asyncio.subprocess.PIPE,
-                cwd=str(BASE_DIR.parent),
-            )
-            hash_out, _ = await hash_proc.communicate()
-            commit_hash = hash_out.decode().strip()
+                # 3. 새로운 tree 생성 (변경 파일들)
+                tree_items = []
+                for change in changes:
+                    file_path = f"slack-agents/{change['file']}"
+                    content = change.get("new_content", "")
+                    # blob 생성
+                    async with session.post(f"{api_base}/git/blobs", json={
+                        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                        "encoding": "base64",
+                    }) as resp:
+                        blob_data = await resp.json()
+                        tree_items.append({
+                            "path": file_path,
+                            "mode": "100644",
+                            "type": "blob",
+                            "sha": blob_data["sha"],
+                        })
 
-            # git push (선택적 — 실패해도 커밋은 유지)
-            push_proc = await asyncio.create_subprocess_exec(
-                "git", "push",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(BASE_DIR.parent),
-            )
-            await asyncio.wait_for(push_proc.communicate(), timeout=30)
+                async with session.post(f"{api_base}/git/trees", json={
+                    "base_tree": base_tree_sha,
+                    "tree": tree_items,
+                }) as resp:
+                    tree_data = await resp.json()
+                    new_tree_sha = tree_data["sha"]
 
-            logger.info(f"[self_improver] Committed: {commit_hash} — {commit_msg}")
-            return commit_hash
+                # 4. 커밋 생성
+                async with session.post(f"{api_base}/git/commits", json={
+                    "message": commit_msg,
+                    "tree": new_tree_sha,
+                    "parents": [base_sha],
+                }) as resp:
+                    new_commit = await resp.json()
+                    new_commit_sha = new_commit["sha"]
 
+                # 5. ref 업데이트
+                async with session.patch(f"{api_base}/git/refs/heads/{branch}", json={
+                    "sha": new_commit_sha,
+                }) as resp:
+                    if resp.status == 200:
+                        short_sha = new_commit_sha[:7]
+                        logger.info(f"[self_improver] Pushed via GitHub API: {short_sha} — {commit_msg}")
+                        return short_sha
+                    else:
+                        logger.error(f"[self_improver] Failed to update ref: {resp.status}")
+                        return "local-only"
+
+        except ImportError:
+            logger.warning("[self_improver] aiohttp not installed — local changes only")
+            return "local-only"
         except Exception as e:
-            logger.error(f"[self_improver] Git commit failed: {e}")
-            return ""
+            logger.error(f"[self_improver] GitHub API commit failed: {e}")
+            return "local-only"
 
     # ── 기록 & 유틸리티 ──────────────────────────────
 
