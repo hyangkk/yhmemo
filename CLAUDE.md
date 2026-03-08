@@ -18,3 +18,55 @@
 ## Repository
 - Owner: hyangkk
 - Repo: yhmemo
+
+## 배포 가이드
+
+### 토큰 로드 (세션 시작 시 자동, 수동 필요 시)
+```bash
+source /home/user/yhmemo/scripts/fetch-secrets.sh
+```
+- Supabase `secrets_vault`에서 `GH_TOKEN`, `ANTHROPIC_API_KEY` 등 자동 로드
+- SUPABASE_URL/KEY 기본값이 스크립트에 내장되어 있어 별도 설정 불필요
+
+### PR 생성 (gh CLI 안 될 때 curl 사용)
+```bash
+source scripts/fetch-secrets.sh
+curl -s -X POST https://api.github.com/repos/hyangkk/yhmemo/pulls \
+  -H "Authorization: token $GH_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -d '{"title":"...", "head":"브랜치명", "base":"main", "body":"..."}'
+```
+- 로컬 git remote가 프록시(`127.0.0.1:28810`)라서 `gh` CLI가 GitHub 호스트 인식 불가 → curl 직접 사용
+- main 브랜치 직접 push 불가 (branch protection) → 반드시 PR 통해 머지
+
+### PR 머지 (curl)
+```bash
+curl -s -X PUT https://api.github.com/repos/hyangkk/yhmemo/pulls/{PR번호}/merge \
+  -H "Authorization: token $GH_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -d '{"merge_method":"squash"}'
+```
+
+### 서비스별 자동 배포 (main 머지 시 GitHub Actions 자동 실행)
+
+| 서비스 | 워크플로우 | 배포 대상 | 트리거 조건 |
+|--------|-----------|----------|------------|
+| **slack-agents** | `.github/workflows/deploy-slack-agents.yml` | Fly.io (`yhmbp14`, 도쿄 nrt) | `slack-agents/**` 변경 시 |
+| **web-service** | `.github/workflows/deploy-web-service.yml` | Vercel | `web-service/**` 변경 시 |
+| **webhook** | `.github/workflows/deploy-webhook.yml` | - | 관련 파일 변경 시 |
+
+### 수동 배포 (필요 시)
+```bash
+# Fly.io (slack-agents)
+source scripts/fetch-secrets.sh
+cd slack-agents && flyctl deploy  # FLY_API_TOKEN 필요
+
+# flyctl 미설치 시
+curl -L https://fly.io/install.sh | sh
+export PATH="/root/.fly/bin:$PATH"
+```
+
+### 주의사항
+- `GH_TOKEN`이 만료되면 Supabase Dashboard → `secrets_vault` 테이블에서 갱신
+- main에 직접 push 불가 → PR 생성 후 머지만 가능
+- 머지하면 해당 경로 변경에 따라 자동 배포 워크플로우 실행됨
