@@ -38,7 +38,7 @@ class SlackChannels:
 @dataclass
 class WatchdogConfig:
     """Master watchdog / health-check parameters."""
-    health_check_interval: int = 600   # 10 minutes
+    health_check_interval: int = 3600   # 1 hour
     heartbeat_timeout: int = 900       # 15 minutes -- no heartbeat => warning
     max_restarts: int = 50             # overnight crash-restart budget
 

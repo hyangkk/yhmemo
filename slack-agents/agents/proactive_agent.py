@@ -362,7 +362,7 @@ class ProactiveAgent(BaseAgent):
             logger.error(f"[proactive] Action '{action}' failed: {e}", exc_info=True)
             act_result = f"error: {str(e)[:80]}"
 
-        # ── 사이클 로그만 (슬랙 전송 안 함, 10분 가동 리포트로 대체) ──
+        # ── 사이클 로그만 (슬랙 전송 안 함, 1시간 가동 리포트로 대체) ──
         logger.info(f"[proactive] Cycle #{cycle} ({slot_key}): {action} → {act_result}")
 
     # ══════════════════════════════════════════════════
