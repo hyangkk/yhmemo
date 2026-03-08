@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# 프로젝트 루트 경로 (source로 실행 시 $0이 셸 자체가 되므로 BASH_SOURCE 우선 사용)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Supabase 접속 정보
 # URL은 공개 정보이므로 기본값으로 설정
 SUPABASE_URL="${SUPABASE_URL:-https://unuvbdqjgiypxfvlplpd.supabase.co}"
@@ -11,15 +15,22 @@ export SUPABASE_URL
 
 # Service Role Key: 환경변수 → .env 파일 순서로 탐색
 if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  # 루트 .env에서 찾기
+  ROOT_ENV="${PROJECT_ROOT}/.env"
+  if [ -f "$ROOT_ENV" ]; then
+    SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ROOT_ENV" | cut -d'=' -f2- | tr -d '"' || true)
+  fi
+fi
+if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   # slack-agents/.env에서 찾기
-  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/slack-agents/.env"
+  ENV_FILE="${PROJECT_ROOT}/slack-agents/.env"
   if [ -f "$ENV_FILE" ]; then
     SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
   fi
 fi
 if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   # web-service/.env.local에서 찾기
-  ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/web-service/.env.local"
+  ENV_FILE="${PROJECT_ROOT}/web-service/.env.local"
   if [ -f "$ENV_FILE" ]; then
     SUPABASE_SERVICE_ROLE_KEY=$(grep -m1 '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' || true)
   fi
