@@ -451,6 +451,14 @@ class ProactiveAgent(BaseAgent):
         h_str = str(task_hour).zfill(2)
         logger.info(f"[proactive] ▶ [{h_str}:00] Executing: {task_desc} (method={method})")
 
+        # 실행 시작 전에 슬롯 상태를 즉시 업데이트 (race condition 방지)
+        # observe()가 90초마다 돌기 때문에, 작업 완료 전에 같은 슬롯이 다시 트리거되지 않도록
+        slot_key = ctx.get("slot_key", h_str)
+        if not ctx.get("is_retry"):
+            self._state["last_executed_slot"] = slot_key
+            self._state["last_executed_hour"] = task_hour
+            self._save_state()
+
         await self.slack.send_message(
             "ai-agent-logs",
             f"⏰ *[{h_str}:00 계획 실행]* [{method}] {task_desc}\n"
