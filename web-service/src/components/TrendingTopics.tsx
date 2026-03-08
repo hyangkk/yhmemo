@@ -45,14 +45,20 @@ const TREND_REFRESH = 10 * 60; // seconds
 export default function TrendingTopics() {
   const [data, setData] = useState<TrendData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [countdown, setCountdown] = useState(TREND_REFRESH);
 
   async function fetchTrends() {
     try {
+      setError(false);
       const res = await fetch("/api/trends");
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        setData(await res.json());
+      } else {
+        setError(true);
+      }
     } catch {
-      // silent
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -97,7 +103,30 @@ export default function TrendingTopics() {
     );
   }
 
-  if (!data || !data.topics || data.topics.length === 0) return null;
+  if (error) {
+    return (
+      <section className="max-w-5xl mx-auto px-4 py-6">
+        <div className="rounded-xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-900/10 p-6 text-center">
+          <p className="text-sm text-red-600 dark:text-red-400 mb-2">트렌드 데이터를 불러오지 못했습니다</p>
+          <button onClick={fetchTrends} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition">
+            다시 시도
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!data || !data.topics || data.topics.length === 0) {
+    return (
+      <section className="max-w-5xl mx-auto px-4 py-6">
+        <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 p-6 text-center">
+          <p className="text-2xl mb-2">📊</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">아직 분석할 뉴스가 충분하지 않습니다.</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">뉴스가 수집되면 자동으로 트렌드가 표시됩니다.</p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="max-w-5xl mx-auto px-4 py-6">

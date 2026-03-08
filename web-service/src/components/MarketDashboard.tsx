@@ -62,15 +62,21 @@ export default function MarketDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [countdown, setCountdown] = useState(MARKET_REFRESH);
 
+  const [error, setError] = useState(false);
+
   const fetchData = useCallback(async () => {
     setRefreshing(true);
     try {
+      setError(false);
       const res = await fetch("/api/market");
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError(true);
+        return;
+      }
       const json = await res.json();
       setData(json);
     } catch {
-      // silent fail
+      setError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -112,7 +118,29 @@ export default function MarketDashboard() {
     );
   }
 
-  if (!data || data.assets.length === 0) return null;
+  if (error) {
+    return (
+      <section className="max-w-5xl mx-auto px-4 py-8">
+        <div className="rounded-2xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-900/10 p-6 text-center">
+          <p className="text-sm text-red-600 dark:text-red-400 mb-2">시장 데이터를 불러오지 못했습니다</p>
+          <button onClick={fetchData} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition">
+            다시 시도
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!data || data.assets.length === 0) {
+    return (
+      <section className="max-w-5xl mx-auto px-4 py-8">
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 p-6 text-center">
+          <p className="text-2xl mb-2">📈</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">시장 데이터를 로딩 중입니다...</p>
+        </div>
+      </section>
+    );
+  }
 
   const { assets, fearGreed, updatedAt } = data;
 

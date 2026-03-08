@@ -3,23 +3,23 @@ import FeedbackButton from "@/components/FeedbackButton";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI 뉴스 브리핑 — 매일 AI가 골라주는 핵심 뉴스",
+  title: "AI 리딩룸 — 실시간 투자 시그널 + 시장 분석",
   description:
-    "AI 에이전트가 24시간 뉴스를 수집하고, 분석하고, 핵심만 골라드립니다. 매일 자동 업데이트되는 개인화 뉴스 브리핑 서비스.",
-  keywords: ["AI 뉴스", "뉴스 브리핑", "AI 큐레이션", "자동 뉴스", "뉴스 요약", "AI 에이전트"],
-  authors: [{ name: "AI News Briefing" }],
+    "AI가 24시간 뉴스·시장·센티먼트를 크로스 분석하여 투자 시그널을 도출합니다. 실시간 리딩룸.",
+  keywords: ["AI 투자", "투자 시그널", "시장 분석", "AI 리딩룸", "크립토 분석", "AI 에이전트", "실시간 분석"],
+  authors: [{ name: "AI Reading Room" }],
   robots: { index: true, follow: true },
   openGraph: {
-    title: "AI 뉴스 브리핑 — 오늘 5개만 읽으면 끝",
-    description: "AI가 24시간 수집·선별한 핵심 뉴스. 다 읽으면 오늘 뉴스는 끝.",
+    title: "AI 리딩룸 — 실시간 투자 시그널",
+    description: "AI가 뉴스×시장×센티먼트를 크로스 분석. 투자 시그널 실시간 도출.",
     type: "website",
     locale: "ko_KR",
-    siteName: "AI 뉴스 브리핑",
+    siteName: "AI 리딩룸",
   },
   twitter: {
     card: "summary_large_image",
-    title: "AI 뉴스 브리핑 — 오늘 5개만 읽으면 끝",
-    description: "AI가 24시간 수집·선별한 핵심 뉴스",
+    title: "AI 리딩룸 — 실시간 투자 시그널",
+    description: "AI가 뉴스×시장×센티먼트를 크로스 분석",
   },
 };
 
