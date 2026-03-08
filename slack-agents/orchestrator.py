@@ -878,8 +878,11 @@ async def main():
                     issues.append(f"❌ {name}: 죽음 (재시작 불가)")
 
         # 2. heartbeat 체크 — loop_interval의 2배 또는 최소 15분 이상 응답 없으면 경고
+        #    비활성화된 에이전트(agent_starters에 없는)는 무시
         tracker_data = agent_tracker._load()
         for name, info in tracker_data.get("agents", {}).items():
+            if name not in agent_starters:
+                continue  # 비활성화된 에이전트는 heartbeat 체크 스킵
             last_hb = info.get("last_heartbeat", "")
             if last_hb:
                 try:

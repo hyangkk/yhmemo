@@ -183,18 +183,21 @@ class ProactiveAgent(BaseAgent):
 
         계획 구조는 두 가지를 지원:
         1. 10분 슬롯: hours["14:20"] = {...}
-        2. 시간 슬롯 (호환): hours["14"] = {...}  → 해당 시간 전체에 적용
+        2. 시간 슬롯 (호환): hours["14"] = {...}  → 해당 시간의 첫 슬롯(:00)에만 적용
         """
         slot_key = self._current_slot(hour, minute)
-        hour_key = str(hour).zfill(2)
 
         # 10분 슬롯이 있으면 우선
         task = self.memory.get_hour_plan_by_key(slot_key)
         if task:
             return task
 
-        # 없으면 시간 단위 계획 사용 (기존 호환)
-        return self.memory.get_hour_plan(hour)
+        # 시간 단위 계획은 첫 슬롯(:00)에서만 실행 (중복 방지)
+        slot_min = (minute // 10) * 10
+        if slot_min == 0:
+            return self.memory.get_hour_plan(hour)
+
+        return None
 
     async def observe(self) -> dict | None:
         """10분마다 계획을 확인하고 실행한다. 결과물을 만든다."""
