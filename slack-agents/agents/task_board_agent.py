@@ -401,7 +401,7 @@ class TaskBoardAgent(BaseAgent):
             await self.log(f"📋 업무 착수: {title}")
 
             # 2. 실행 및 결과 기록
-            result_text, success, approach = await self._execute_plan(plan, title)
+            result_text, success, approach = await self._execute_plan(plan, title, page_id=page_id)
 
             # 3. AI에게 결과 요약 요청
             summary = await self.ai_think(
@@ -465,7 +465,7 @@ class TaskBoardAgent(BaseAgent):
             )
 
             # 2. 실행
-            result_text, success, approach = await self._execute_plan(plan, f"{title} (후속)")
+            result_text, success, approach = await self._execute_plan(plan, f"{title} (후속)", page_id=page_id)
 
             # 3. AI에게 결과 요약
             summary = await self.ai_think(
@@ -520,23 +520,18 @@ class TaskBoardAgent(BaseAgent):
 
     # ── 공통 실행 로직 ──────────────────────────────────
 
-    async def _execute_plan(self, plan: dict, label: str) -> tuple[str, bool, str]:
+    async def _execute_plan(self, plan: dict, label: str, page_id: str = "") -> tuple[str, bool, str]:
         """실행 계획을 수행하고 (결과텍스트, 성공여부, 접근방식) 반환"""
         steps = plan.get("steps", [])
         analysis = plan.get("analysis", "")
         approach = plan.get("approach", "")
+        notion_link = f"\n<https://notion.so/{page_id.replace('-', '')}|노션에서 보기>" if page_id else ""
 
         result_text = ""
         success = True
 
         if steps:
             from core.executor import execute_plan, format_execution_results, ALLOWED_BASE
-
-            await self.say(
-                f"📋 *[업무 실행]* {label}\n"
-                f"> 접근: {approach}\n"
-                f"> {len(steps)}단계 실행 시작"
-            )
 
             exec_results = await execute_plan(
                 steps,
@@ -551,14 +546,16 @@ class TaskBoardAgent(BaseAgent):
             status_emoji = "✅" if success else "⚠️"
             await self.say(
                 f"{status_emoji} *실행 완료: {label}*\n"
-                f"> 성공: {success_count}/{len(exec_results)}단계\n"
-                f"```{result_text[:1500]}```"
+                f"> {approach}\n"
+                f"> 결과: {success_count}/{len(exec_results)}단계 성공{notion_link}"
             )
         elif analysis:
             result_text = analysis
+            # 분석 결과는 첫 줄만 간략히 표시
+            first_line = analysis.strip().split("\n")[0][:100]
             await self.say(
                 f"✅ *실행 완료: {label}*\n"
-                f"```{analysis[:1500]}```"
+                f"> {first_line}{notion_link}"
             )
         else:
             result_text = "실행할 단계가 없습니다."
