@@ -38,15 +38,39 @@ async function fetchTranscript(videoId: string): Promise<{
     });
     const html = await pageResp.text();
 
-    // Extract ytInitialPlayerResponse JSON
-    const playerMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;/);
-    if (!playerMatch) {
+    // Extract ytInitialPlayerResponse JSON using balanced brace matching
+    // Try both "var ytInitialPlayerResponse" and "ytInitialPlayerResponse"
+    let startIdx = html.indexOf("var ytInitialPlayerResponse");
+    if (startIdx === -1) {
+      startIdx = html.indexOf("ytInitialPlayerResponse");
+    }
+    if (startIdx === -1) {
       return { ok: false, error: "영상 데이터를 가져올 수 없습니다. 비공개 영상이거나 지역 제한이 있을 수 있습니다." };
+    }
+
+    // Find the opening brace after the variable assignment
+    const braceStart = html.indexOf("{", startIdx);
+    if (braceStart === -1) {
+      return { ok: false, error: "영상 데이터 파싱에 실패했습니다." };
+    }
+
+    // Find matching closing brace
+    let depth = 0;
+    let jsonEnd = braceStart;
+    for (let i = braceStart; i < html.length; i++) {
+      if (html[i] === "{") depth++;
+      else if (html[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          jsonEnd = i + 1;
+          break;
+        }
+      }
     }
 
     let playerData: Record<string, unknown>;
     try {
-      playerData = JSON.parse(playerMatch[1]);
+      playerData = JSON.parse(html.slice(braceStart, jsonEnd));
     } catch {
       return { ok: false, error: "영상 데이터 파싱에 실패했습니다." };
     }
