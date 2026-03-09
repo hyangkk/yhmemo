@@ -628,6 +628,7 @@ async def main():
 - briefing: 이미 수집된 정보 브리핑/요약
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
+- diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
 - fortune: 운세 보기, 오늘의 운세
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
@@ -637,6 +638,7 @@ async def main():
 중요: 실제 코드/프로젝트를 만들어달라는 요청은 dev입니다. 단순 논의/질문은 chat.
 중요: 시스템/에이전트 상태 질문은 dashboard.
 중요: 주식 매수/매도/잔고/시세 관련은 stock_trade. 종목명은 한국어→종목코드 매핑: 삼성전자=005930, SK하이닉스=000660, 네이버=035420, 카카오=035720, LG에너지솔루션=373220, 현대차=005380, 삼성바이오로직스=207940, 기아=000270, 셀트리온=068270, POSCO홀딩스=005490
+중요: 의도가 애매하거나 여러 해석이 가능할 때는 clarify를 사용하고, clarify_question에 되물을 질문을 넣으세요.
 
 {thread_hint}
 
@@ -645,7 +647,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|fortune|stock_trade|chat|dev|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|stock_trade|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -653,6 +655,7 @@ async def main():
   "stock_code": "종목코드 6자리 (stock_trade일 때만, 예: 005930)",
   "stock_qty": 1,
   "stock_price": 0,
+  "clarify_question": "의도 확인용 질문 (clarify일 때만)",
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
             user_prompt=text,
@@ -682,6 +685,11 @@ async def main():
         if action == "ignore":
             return
 
+        if action == "clarify":
+            question = parsed.get("clarify_question", "어떤 작업을 원하시는지 좀 더 구체적으로 말씀해주세요.")
+            await _reply(channel, question, thread_ts)
+            return
+
         # 3단계: 접수 표시 (눈 리액션 + LLM이 맥락에 맞게 생성한 착수 멘트)
         if thread_ts and action != "ignore" and ack_msg:
             await slack.add_reaction(channel, thread_ts, "eyes")
@@ -708,6 +716,9 @@ async def main():
             elif action == "quote":
                 await cmd_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "명언 전송 완료"
+            elif action == "diary_quote":
+                await cmd_diary_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "생각일기 한마디 전송 완료"
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
