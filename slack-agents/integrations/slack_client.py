@@ -28,7 +28,7 @@ class SlackClient:
     CHANNEL_COLLECTOR = "ai-collector"
     CHANNEL_CURATOR = "ai-curator"
     CHANNEL_LOGS = "ai-agent-logs"
-    CHANNEL_QUOTE = "명언"
+    CHANNEL_QUOTE = "명언-한마디"
 
     def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
@@ -345,8 +345,9 @@ class SlackClient:
 
                 # 오래된 것부터 처리 (역순)
                 for msg in reversed(messages):
-                    # 봇 자신의 메시지 무시
-                    if msg.get("bot_id") or msg.get("user") == bot_id:
+                    # 봇 자신의 메시지 무시 (단, !명령어는 허용 → 셀프 테스트용)
+                    text_peek = msg.get("text", "")
+                    if (msg.get("bot_id") or msg.get("user") == bot_id) and not text_peek.startswith("!"):
                         continue
 
                     text = msg.get("text", "")
@@ -563,9 +564,8 @@ class SlackClient:
                 except Exception:
                     pass
 
-        # 메시지 수신 채널: ai-agents-general만 (rate limit 방지)
-        # 스레드 폴링은 _poll_channel 내에서 활성 스레드가 있는 채널만 체크
-        poll_channels = [self.CHANNEL_GENERAL]
+        # 메시지 수신 채널 (명령어 + 자연어)
+        poll_channels = [self.CHANNEL_GENERAL, self.CHANNEL_QUOTE]
         saved_ts = self._load_last_ts()
         for ch_name in poll_channels:
             ch_id = self._channel_cache.get(ch_name)

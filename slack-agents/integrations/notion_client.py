@@ -51,6 +51,32 @@ class NotionClient:
             logger.error(f"Notion query failed: {e}")
             return []
 
+    async def query_database_all(self, database_id: str, filter_dict: dict = None,
+                                sorts: list = None) -> list[dict]:
+        """노션 데이터베이스 전체 조회 (페이지네이션)"""
+        all_results = []
+        start_cursor = None
+        while True:
+            body: dict[str, Any] = {"page_size": 100}
+            if filter_dict:
+                body["filter"] = filter_dict
+            if sorts:
+                body["sorts"] = sorts
+            if start_cursor:
+                body["start_cursor"] = start_cursor
+            try:
+                resp = await self._http.post(f"/databases/{database_id}/query", json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                all_results.extend(data.get("results", []))
+                if not data.get("has_more"):
+                    break
+                start_cursor = data.get("next_cursor")
+            except Exception as e:
+                logger.error(f"Notion query_all failed: {e}")
+                break
+        return all_results
+
     # ── 페이지 생성 ────────────────────────────────────
 
     async def create_page(self, database_id: str, properties: dict,
