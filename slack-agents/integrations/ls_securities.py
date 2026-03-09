@@ -111,6 +111,9 @@ class LSSecuritiesClient:
         self.base_url = BASE_URL_PAPER if paper_trading else BASE_URL_LIVE
         self._access_token = ""
         self._token_expires = datetime.min.replace(tzinfo=KST)
+        # 실서버 토큰 (시세 조회 fallback용)
+        self._live_token = ""
+        self._live_token_expires = datetime.min.replace(tzinfo=KST)
         self._http = httpx.AsyncClient(timeout=15.0, verify=False)
         self._last_balance: dict | None = None
         self._last_balance_time: datetime | None = None
@@ -153,6 +156,31 @@ class LSSecuritiesClient:
         mode = "모의투자" if self.paper_trading else "실전투자"
         logger.info(f"[ls] 접근토큰 발급 완료 ({mode})")
 
+    async def _ensure_live_token(self):
+        """실서버 토큰 발급 (시세 조회 fallback용)"""
+        now = datetime.now(KST)
+        if self._live_token and now < self._live_token_expires:
+            return
+        url = f"{BASE_URL_LIVE}/oauth2/token"
+        resp = await self._http.post(
+            url,
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "client_credentials",
+                "appkey": self.app_key,
+                "appsecretkey": self.app_secret,
+                "scope": "oob",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self._live_token = data["access_token"]
+        tomorrow = datetime.now(KST).replace(hour=6, minute=50, second=0, microsecond=0)
+        if tomorrow < datetime.now(KST):
+            tomorrow += timedelta(days=1)
+        self._live_token_expires = tomorrow
+        logger.info("[ls] 실서버 접근토큰 발급 완료 (시세 조회용)")
+
     def _auth_header(self, tr_cd: str, tr_cont: str = "N") -> dict:
         """API 요청용 공통 헤더"""
         return {
@@ -165,8 +193,36 @@ class LSSecuritiesClient:
 
     # ── 시세 조회 ────────────────────────────────────────
 
+    async def _fetch_price_from(self, base_url: str, token: str, stock_code: str) -> dict:
+        """특정 서버에서 시세 조회"""
+        url = f"{base_url}/stock/market-data"
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {token}",
+            "tr_cd": "t1101",
+            "tr_cont": "N",
+            "tr_cont_key": "",
+        }
+        resp = await self._http.post(
+            url, headers=headers, json={"t1101InBlock": {"shcode": stock_code}},
+        )
+        resp.raise_for_status()
+        block = resp.json().get("t1101OutBlock", {})
+        return {
+            "종목명": block.get("hname", ""),
+            "현재가": int(block.get("price", 0)),
+            "등락부호": block.get("sign", ""),
+            "전일대비": int(block.get("change", 0)),
+            "등락률": float(block.get("diff", 0)),
+            "거래량": int(block.get("volume", 0)),
+            "매도호가1": int(block.get("offerho1", 0)),
+            "매수호가1": int(block.get("bidho1", 0)),
+            "raw": block,
+            "cached": False,
+        }
+
     async def get_price(self, stock_code: str) -> dict:
-        """주식 현재가 호가 조회 (t1101). 실패 시 캐시 반환.
+        """주식 현재가 호가 조회 (t1101). 모의서버 실패 시 실서버 fallback.
 
         Args:
             stock_code: 종목코드 (예: "005930" = 삼성전자)
@@ -174,47 +230,35 @@ class LSSecuritiesClient:
         Returns:
             dict with price info
         """
+        # 1차: 기본 서버 (모의투자 or 실전)
         try:
             await self._ensure_token()
-            url = f"{self.base_url}/stock/market-data"
-            resp = await self._http.post(
-                url,
-                headers=self._auth_header("t1101"),
-                json={"t1101InBlock": {"shcode": stock_code}},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            block = data.get("t1101OutBlock", {})
-            result = {
-                "종목명": block.get("hname", ""),
-                "현재가": int(block.get("price", 0)),
-                "등락부호": block.get("sign", ""),
-                "전일대비": int(block.get("change", 0)),
-                "등락률": float(block.get("diff", 0)),
-                "거래량": int(block.get("volume", 0)),
-                "매도호가1": int(block.get("offerho1", 0)),
-                "매수호가1": int(block.get("bidho1", 0)),
-                "raw": block,
-                "cached": False,
-            }
-            self._price_cache[stock_code] = {
-                "data": result,
-                "time": datetime.now(KST),
-            }
+            result = await self._fetch_price_from(self.base_url, self._access_token, stock_code)
+            self._price_cache[stock_code] = {"data": result, "time": datetime.now(KST)}
             return result
         except Exception as e:
             logger.warning(f"[ls] 시세 조회 실패 ({stock_code}): {e}")
-            cached = self._price_cache.get(stock_code)
-            if cached:
-                result = dict(cached["data"])
-                result["cached"] = True
-                result["cached_time"] = cached["time"]
+
+        # 2차: 모의투자 모드이면 실서버로 fallback (시세는 읽기 전용)
+        if self.paper_trading:
+            try:
+                await self._ensure_live_token()
+                result = await self._fetch_price_from(BASE_URL_LIVE, self._live_token, stock_code)
+                self._price_cache[stock_code] = {"data": result, "time": datetime.now(KST)}
+                logger.info(f"[ls] 실서버 fallback 시세 조회 성공 ({stock_code})")
                 return result
-            return {
-                "unavailable": True,
-                "error": e,
-                "종목코드": stock_code,
-            }
+            except Exception as e2:
+                logger.warning(f"[ls] 실서버 fallback도 실패 ({stock_code}): {e2}")
+
+        # 3차: 캐시
+        cached = self._price_cache.get(stock_code)
+        if cached:
+            result = dict(cached["data"])
+            result["cached"] = True
+            result["cached_time"] = cached["time"]
+            return result
+
+        return {"unavailable": True, "error": e, "종목코드": stock_code}
 
     async def get_stock_info(self, stock_code: str) -> dict:
         """주식 종목 마스터 조회 (t1102)"""
