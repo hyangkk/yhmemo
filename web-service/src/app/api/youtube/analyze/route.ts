@@ -26,12 +26,104 @@ function extractCaptionTracks(playerData: any): CaptionTrack[] {
   }
 }
 
+async function getYouTubeSessionCookies(): Promise<string> {
+  try {
+    const resp = await fetch("https://www.youtube.com", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      },
+      redirect: "manual",
+    });
+    const setCookies = resp.headers.getSetCookie?.() || [];
+    const cookieParts: string[] = [];
+    for (const sc of setCookies) {
+      const nameValue = sc.split(";")[0];
+      if (nameValue) cookieParts.push(nameValue);
+    }
+    // consent 쿠키 추가 (유럽 GDPR 동의 우회)
+    cookieParts.push("SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB");
+    cookieParts.push("CONSENT=YES+cb.20210328-17-p0.en+FX+987");
+    return cookieParts.join("; ");
+  } catch (e) {
+    console.error("Failed to get YouTube session cookies:", e);
+    return "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB; CONSENT=YES+cb.20210328-17-p0.en+FX+987";
+  }
+}
+
+function parsePlayerResponseFromHTML(html: string): { data: unknown | null; error?: string } {
+  let startIdx = html.indexOf("var ytInitialPlayerResponse");
+  if (startIdx === -1) startIdx = html.indexOf("ytInitialPlayerResponse");
+  if (startIdx === -1) return { data: null, error: "영상 데이터를 가져올 수 없습니다." };
+
+  const braceStart = html.indexOf("{", startIdx);
+  if (braceStart === -1) return { data: null, error: "영상 데이터 파싱에 실패했습니다." };
+
+  let depth = 0;
+  let jsonEnd = braceStart;
+  for (let i = braceStart; i < html.length; i++) {
+    if (html[i] === "{") depth++;
+    else if (html[i] === "}") {
+      depth--;
+      if (depth === 0) { jsonEnd = i + 1; break; }
+    }
+  }
+
+  try {
+    return { data: JSON.parse(html.slice(braceStart, jsonEnd)) };
+  } catch {
+    return { data: null, error: "영상 데이터 파싱에 실패했습니다." };
+  }
+}
+
 async function getPlayerResponse(videoId: string): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any | null;
   error?: string;
 }> {
-  // Method 1: YouTube innertube API (works from server environments)
+  // Method 1: HTML scraping (세션 쿠키로 봇 감지 우회)
+  try {
+    const cookies = await getYouTubeSessionCookies();
+    const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        "Accept-Language": "ko,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Cookie": cookies,
+      },
+    });
+    const html = await pageResp.text();
+    const result = parsePlayerResponseFromHTML(html);
+    if (result.data) {
+      const tracks = extractCaptionTracks(result.data);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const status = (result.data as any)?.playabilityStatus?.status;
+      if (tracks.length > 0 || status === "OK") {
+        return result;
+      }
+      console.log(`HTML scraping: status=${status}, tracks=${tracks.length}`);
+    }
+  } catch (e) {
+    console.error("HTML scraping error:", e);
+  }
+
+  // Method 2: Fallback - consent 쿠키만으로 재시도
+  try {
+    const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        "Accept-Language": "ko,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Cookie": "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB; CONSENT=YES+cb.20210328-17-p0.en+FX+987",
+      },
+    });
+    const html = await pageResp.text();
+    const result = parsePlayerResponseFromHTML(html);
+    if (result.data) {
+      return result;
+    }
+  } catch (e) {
+    console.error("HTML scraping fallback error:", e);
+  }
+
+  // Method 3: Innertube API (일부 환경에서 작동)
   try {
     const innertubeResp = await fetch(
       "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
@@ -44,7 +136,7 @@ async function getPlayerResponse(videoId: string): Promise<{
               hl: "ko",
               gl: "KR",
               clientName: "WEB",
-              clientVersion: "2.20240101.00.00",
+              clientVersion: "2.20260301.00.00",
             },
           },
           videoId,
@@ -54,11 +146,7 @@ async function getPlayerResponse(videoId: string): Promise<{
     if (innertubeResp.ok) {
       const data = await innertubeResp.json();
       const tracks = extractCaptionTracks(data);
-      if (tracks.length > 0) {
-        return { data };
-      }
-      // Innertube returned data but no captions - video might genuinely have none
-      if (data.playabilityStatus?.status === "OK") {
+      if (tracks.length > 0 || data.playabilityStatus?.status === "OK") {
         return { data };
       }
     }
@@ -66,37 +154,7 @@ async function getPlayerResponse(videoId: string): Promise<{
     console.error("Innertube API error:", e);
   }
 
-  // Method 2: Fallback to HTML scraping
-  try {
-    const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: {
-        "Accept-Language": "ko,en;q=0.9",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    const html = await pageResp.text();
-
-    let startIdx = html.indexOf("var ytInitialPlayerResponse");
-    if (startIdx === -1) startIdx = html.indexOf("ytInitialPlayerResponse");
-    if (startIdx === -1) return { data: null, error: "영상 데이터를 가져올 수 없습니다." };
-
-    const braceStart = html.indexOf("{", startIdx);
-    if (braceStart === -1) return { data: null, error: "영상 데이터 파싱에 실패했습니다." };
-
-    let depth = 0;
-    let jsonEnd = braceStart;
-    for (let i = braceStart; i < html.length; i++) {
-      if (html[i] === "{") depth++;
-      else if (html[i] === "}") {
-        depth--;
-        if (depth === 0) { jsonEnd = i + 1; break; }
-      }
-    }
-
-    return { data: JSON.parse(html.slice(braceStart, jsonEnd)) };
-  } catch {
-    return { data: null, error: "영상 데이터 파싱에 실패했습니다." };
-  }
+  return { data: null, error: "영상 데이터를 가져올 수 없습니다. YouTube가 요청을 차단했을 수 있습니다." };
 }
 
 async function fetchTranscript(videoId: string): Promise<{
@@ -131,7 +189,16 @@ async function fetchTranscript(videoId: string): Promise<{
 
   try {
     // Fetch the transcript XML
-    const trackResp = await fetch(selectedTrack.baseUrl);
+    const trackResp = await fetch(selectedTrack.baseUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "ko,en;q=0.9",
+      },
+    });
+    if (!trackResp.ok) {
+      console.error(`Transcript XML fetch failed: ${trackResp.status}`);
+      return { ok: false, error: "자막 데이터를 다운로드할 수 없습니다." };
+    }
     const xml = await trackResp.text();
 
     // Parse XML transcript
