@@ -73,11 +73,91 @@ class SentimentAgent(BaseAgent):
             **kwargs,
         )
         self._target_channel = target_channel
+        self._ensure_table()
         self._state = self._load_state()
         self._last_briefing_hour: int | None = self._state.get("last_briefing_hour")
         self._last_scores: dict = self._state.get("last_scores", {})
         self._history = self._load_history()
         self._seen_hashes: set = set(self._state.get("seen_hashes", []))
+
+    # ── 테이블 자동 생성 ────────────────────────────────
+
+    def _ensure_table(self):
+        """Supabase에 social_sentiment 테이블이 없으면 psycopg2로 직접 생성"""
+        try:
+            if not self.supabase:
+                return
+            self.supabase.table("social_sentiment").select("id").limit(1).execute()
+            logger.info("[sentiment] social_sentiment table exists")
+        except Exception:
+            logger.info("[sentiment] social_sentiment table not found, creating via psycopg2...")
+            try:
+                import psycopg2
+
+                supabase_url = os.environ.get("SUPABASE_URL", "")
+                service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                ref = supabase_url.replace("https://", "").split(".")[0] if supabase_url else ""
+
+                if not ref or not service_key:
+                    logger.warning("[sentiment] Missing SUPABASE_URL or SERVICE_ROLE_KEY for table creation")
+                    return
+
+                conn = psycopg2.connect(
+                    host="aws-0-ap-northeast-1.pooler.supabase.com",
+                    port=5432,
+                    dbname="postgres",
+                    user=f"postgres.{ref}",
+                    password=service_key,
+                    sslmode="require",
+                    connect_timeout=15,
+                )
+                conn.autocommit = True
+                cur = conn.cursor()
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS social_sentiment (
+                        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                        overall_score int NOT NULL CHECK (overall_score BETWEEN 0 AND 100),
+                        overall_label text NOT NULL DEFAULT '중립',
+                        asset_scores jsonb NOT NULL DEFAULT '{}'::jsonb,
+                        trending_topics text[] DEFAULT ARRAY[]::text[],
+                        summary text,
+                        risk_alert text,
+                        source_feeds jsonb DEFAULT '{}'::jsonb,
+                        bullish_signals text[] DEFAULT ARRAY[]::text[],
+                        bearish_signals text[] DEFAULT ARRAY[]::text[],
+                        analyzed_at timestamptz NOT NULL DEFAULT now(),
+                        created_at timestamptz NOT NULL DEFAULT now()
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_social_sentiment_analyzed_at
+                        ON social_sentiment (analyzed_at DESC);
+                """)
+                cur.execute("ALTER TABLE social_sentiment ENABLE ROW LEVEL SECURITY;")
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_policies
+                            WHERE tablename = 'social_sentiment'
+                            AND policyname = 'Service role full access'
+                        ) THEN
+                            CREATE POLICY "Service role full access" ON social_sentiment
+                                FOR ALL USING (true) WITH CHECK (true);
+                        END IF;
+                    END $$;
+                """)
+
+                cur.close()
+                conn.close()
+                logger.info("[sentiment] Created social_sentiment table via psycopg2")
+
+                import time
+                time.sleep(2)
+
+            except Exception as e2:
+                logger.warning(f"[sentiment] Table auto-create failed: {e2}")
 
     # ── 상태 관리 ──────────────────────────────────────
 
