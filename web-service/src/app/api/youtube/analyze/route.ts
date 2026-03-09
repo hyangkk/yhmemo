@@ -35,6 +35,7 @@ async function getYouTubeSessionCookies(): Promise<string> {
         "User-Agent": BROWSER_UA,
       },
       redirect: "manual",
+      cache: "no-store",
     });
     const setCookies = resp.headers.getSetCookie?.() || [];
     const cookieParts: string[] = [];
@@ -92,6 +93,7 @@ async function getPlayerResponse(videoId: string): Promise<{
         "User-Agent": BROWSER_UA,
         "Cookie": cookies,
       },
+      cache: "no-store",
     });
     const html = await pageResp.text();
     const result = parsePlayerResponseFromHTML(html);
@@ -117,6 +119,7 @@ async function getPlayerResponse(videoId: string): Promise<{
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Cookie": fallbackCookies,
       },
+      cache: "no-store",
     });
     const html = await pageResp.text();
     const result = parsePlayerResponseFromHTML(html);
@@ -245,7 +248,7 @@ async function fetchTranscript(videoId: string): Promise<{
 
   try {
     // Attempt 1: XML 형식 (기본)
-    const trackResp = await fetch(selectedTrack.baseUrl, { headers: fetchHeaders });
+    const trackResp = await fetch(selectedTrack.baseUrl, { headers: fetchHeaders, cache: "no-store" });
     if (trackResp.ok) {
       const xml = await trackResp.text();
       if (xml.length > 0) {
@@ -264,7 +267,7 @@ async function fetchTranscript(videoId: string): Promise<{
 
     // Attempt 2: json3 형식
     const json3Url = selectedTrack.baseUrl + "&fmt=json3";
-    const json3Resp = await fetch(json3Url, { headers: fetchHeaders });
+    const json3Resp = await fetch(json3Url, { headers: fetchHeaders, cache: "no-store" });
     if (json3Resp.ok) {
       const text = await json3Resp.text();
       if (text.length > 0) {
@@ -299,7 +302,7 @@ async function fetchTranscript(videoId: string): Promise<{
     for (const altTrack of captionTracks) {
       if (altTrack === selectedTrack) continue;
       try {
-        const altResp = await fetch(altTrack.baseUrl, { headers: fetchHeaders });
+        const altResp = await fetch(altTrack.baseUrl, { headers: fetchHeaders, cache: "no-store" });
         if (altResp.ok) {
           const altXml = await altResp.text();
           if (altXml.length > 0) {
