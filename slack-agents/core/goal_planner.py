@@ -245,13 +245,14 @@ class GoalPlanner:
 - propose: 파트너에게 제안/승인 요청
 - build: 코드 작성/서비스 구축 (Claude Code 활용)
 - measure: 결과 측정/데이터 분석
-- communicate: 슬랙으로 보고/소통
+- communicate: 내부 슬랙 보고 (업무 실적으로 집계 안 됨)
 
 규칙:
 - 3-7개 스텝으로 구성 (너무 세분화하지 말 것)
 - 각 스텝은 하나의 사이클(2분)에 완료 가능한 크기
 - 이전 계획의 피드백을 반영할 것
 - 측정 가능한 스텝을 포함할 것
+- communicate는 내부 보고용이므로 독립 스텝으로 넣지 말 것. 실제 업무(build/research/measure)를 우선 배치할 것
 
 JSON 배열로만 응답:
 [{"description": "스텝 설명", "method": "research|propose|build|measure|communicate"}]""",

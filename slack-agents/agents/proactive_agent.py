@@ -440,7 +440,7 @@ class ProactiveAgent(BaseAgent):
         - build → Claude Code CLI로 코드 작성
         - research → 웹 검색 + AI 분석
         - measure → 성과 측정 + 평가
-        - communicate → 슬랙 보고/외부 공유
+        - communicate → 내부 슬랙 보고 (업무 실적 아님)
         """
         hour_task = ctx["hour_task"]
         task_hour = ctx["task_hour"]
@@ -489,10 +489,15 @@ class ProactiveAgent(BaseAgent):
             success = False
             logger.error(f"[proactive] Hourly task failed: {e}")
 
-        # 결과 평가
-        grade = await self._evaluate_hourly_result(
-            task_desc, expected, result, success
-        )
+        # communicate는 내부 슬랙 보고일 뿐이므로 업무 실적으로 평가하지 않음
+        if method == "communicate":
+            grade = "N/A"
+            logger.info(f"[proactive] communicate task skipped evaluation (internal report only)")
+        else:
+            # 결과 평가
+            grade = await self._evaluate_hourly_result(
+                task_desc, expected, result, success
+            )
 
         # 상태 저장 — 이 슬롯 실행 완료
         slot_key = ctx.get("slot_key", h_str)
@@ -699,7 +704,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
         return analysis[:500] if analysis else "측정 실패"
 
     async def _hourly_communicate(self, task_desc: str) -> str:
-        """communicate 메서드: 보고/공유"""
+        """communicate 메서드: 내부 슬랙 보고 (업무 실적으로 집계하지 않음)"""
         goals_summary = self.planner.get_status_summary()
         recent_evals = self.memory.get_recent_evaluations(5)
         evals_text = "\n".join(
@@ -713,9 +718,9 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
                         f"목표:\n{goals_summary}",
         )
         if msg:
-            await self.slack.send_message("ai-agents-general", f"📋 {msg}")
-            return "보고 전송 완료"
-        return "보고 생성 실패"
+            await self.slack.send_message("ai-agents-general", f"📋 *[내부 보고]* {msg}")
+            return "(내부 보고) 전송 완료 — 업무 실적 아님"
+        return "(내부 보고) 생성 실패"
 
     async def _evaluate_hourly_result(self, task: str, expected: str,
                                        result: str, success: bool) -> str:
@@ -725,7 +730,8 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
                 system_prompt="""작업 결과를 평가하세요. JSON:
 {"grade": "A|B|C|D|F", "insight": "배운 점 (한줄)", "next": "다음에 할 것 (있으면)"}
 
-A=외부 공개 가능한 결과물, B=의미있는 진전, C=약간의 진전, D=거의 없음, F=실패""",
+A=외부 공개 가능한 결과물, B=의미있는 진전, C=약간의 진전, D=거의 없음, F=실패
+⚠️ 내부 슬랙 보고/메시지 전송만으로는 B 이상 받을 수 없음. 실제 산출물(코드, 배포, 데이터 등)이 있어야 의미있는 등급.""",
                 user_prompt=f"작업: {task}\n예상: {expected}\n성공: {success}\n결과: {result[:300]}",
             )
             parsed = self._parse_json(eval_resp)
@@ -768,7 +774,8 @@ A=외부 공개 가능한 결과물, B=의미있는 진전, C=약간의 진전, 
 - 아니면 그대로 진행
 - 수정 시 실패 원인을 우회하는 대안 작업으로 교체
 
-JSON: {"adjust": true/false, "reason": "이유", "changes": {"HH": {"task": "새 작업", "method": "build|research|measure|communicate", "expected": "예상 결과"}}}""",
+JSON: {"adjust": true/false, "reason": "이유", "changes": {"HH": {"task": "새 작업", "method": "build|research|measure", "expected": "예상 결과"}}}
+⚠️ communicate는 내부 보고용이며 업무로 치지 않으므로, 대체 작업으로 communicate를 사용하지 말 것.""",
             user_prompt=f"실패한 작업: {task}\n결과: {result[:200]}\n\n남은 계획:\n{json.dumps(remaining_plan, ensure_ascii=False)}",
         )
 
@@ -1010,14 +1017,15 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
         return response[:300] if response else "측정 실패"
 
     async def _execute_communicate_step(self, goal, step) -> str:
+        """내부 슬랙 보고 — 업무 실적으로 집계하지 않음"""
         msg = await self.ai_think(
             system_prompt="파트너에게 보낼 진행 보고 메시지를 슬랙 형식으로 작성. 10줄 이내.",
             user_prompt=f"목표: {goal.title}\n진행률: {goal.progress_pct()}%\n스텝: {step.description}",
         )
         if msg:
-            await self.slack.send_message("ai-agents-general", f"📋 *진행 보고*\n\n{msg}")
-            return "보고 전송 완료"
-        return "보고 생성 실패"
+            await self.slack.send_message("ai-agents-general", f"📋 *[내부 보고]* {msg}")
+            return "(내부 보고) 전송 완료 — 업무 실적 아님"
+        return "(내부 보고) 생성 실패"
 
     # ── 목표 평가 & 재계획 ──────────────────────────
 
@@ -1082,6 +1090,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
 - 베타 서비스 런칭이 최우선 (3/8 마감)
 - 빌드 작업은 연속 2-3시간 블록으로 잡을 것
 - 매시간 체크가 가능하도록 측정 가능한 예상 결과를 명시
+- ⚠️ communicate는 내부 슬랙 보고일 뿐이며 업무 실적으로 집계되지 않음. 실제 업무 시간은 build/research/measure로 채울 것. communicate를 독립 시간대에 배정하지 말고, 필요 시 다른 업무 시간 안에 부수적으로만 포함할 것
 
 JSON 응답:
 {{
