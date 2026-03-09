@@ -292,6 +292,12 @@ async def main():
         else:
             await _reply(channel, "명언 생성에 실패했어요.", thread_ts)
 
+    # "!생각일기" → 생각일기 한 마디 즉시 실행
+    async def cmd_diary_quote(args: str, user: str, channel: str, thread_ts: str = None):
+        err = await diary_quote.run_once(channel=channel, thread_ts=thread_ts)
+        if err:
+            await _reply(channel, err, thread_ts)
+
     # "!로그" → 요청사항 이력 보기
     async def cmd_log(args: str, user: str, channel: str, thread_ts: str = None):
         log_file = os.path.join(os.path.dirname(__file__), "data", "request_log.json")
@@ -333,6 +339,7 @@ async def main():
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
+    slack.on_command("생각일기", cmd_diary_quote)
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)

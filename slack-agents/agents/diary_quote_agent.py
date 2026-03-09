@@ -253,6 +253,69 @@ class DiaryQuoteAgent(BaseAgent):
         })
         self._save_history()
 
+    async def run_once(self, channel: str = None, thread_ts: str = None):
+        """수동 실행: 슬랙 명령어로 즉시 생각일기 한 마디 전송"""
+        if not self._diary_db_id or not self.notion:
+            return "노션 연동이 안 되어 있어요."
+
+        now = datetime.now(KST)
+        three_months_ago = (now - timedelta(days=90)).strftime("%Y-%m-%dT00:00:00+09:00")
+
+        pages = await self.notion.query_database(
+            self._diary_db_id,
+            filter_dict={"timestamp": "created_time", "created_time": {"after": three_months_ago}},
+            sorts=[{"timestamp": "created_time", "direction": "descending"}],
+            page_size=100,
+        )
+        if not pages:
+            return "최근 3개월간 생각일기가 없어요."
+
+        used_ids = self._recently_used_page_ids()
+        candidates = [p for p in pages if p.get("id") not in used_ids] or pages
+        selected = random.choice(candidates)
+
+        title = "(제목 없음)"
+        for prop in selected.get("properties", {}).values():
+            if prop.get("type") == "title":
+                title = "".join(rt.get("plain_text", "") for rt in prop.get("title", [])).strip() or "(제목 없음)"
+                break
+
+        page_id = selected.get("id", "")
+        content = await self.notion.get_page_text(page_id)
+        full_text = f"{title}\n{content}" if content.strip() else title
+
+        if len(full_text.strip()) < 10:
+            return "선택된 일기가 너무 짧아요. 다시 시도해주세요."
+
+        context = {
+            "current_time": now.strftime("%Y-%m-%d %H:%M"),
+            "current_hour": now.hour,
+            "page_id": page_id,
+            "page_url": selected.get("url", ""),
+            "title": title,
+            "content": full_text[:3000],
+            "created_time": selected.get("created_time", ""),
+            "recent_quotes": [h.get("quote", "") for h in self._quote_history[-20:]],
+        }
+
+        decision = await self.think(context)
+        if not decision:
+            return "핵심 문장 추출에 실패했어요."
+
+        message = self._format_message(decision)
+        target = channel or self._target_channel
+        await self._reply(target, message, thread_ts=thread_ts)
+
+        self._quote_history.append({
+            "quote": decision["quote"],
+            "title": decision["title"],
+            "page_id": decision["page_id"],
+            "category": decision.get("category", ""),
+            "sent_at": datetime.now(KST).isoformat(),
+        })
+        self._save_history()
+        return None  # 성공
+
     def _format_message(self, decision: dict) -> str:
         """생각일기 명언 메시지 포맷"""
         quote = decision.get("quote", "")
@@ -282,15 +345,15 @@ class DiaryQuoteAgent(BaseAgent):
         }
         emoji = emoji_map.get(category, "📝")
 
-        # 제목에 노션 링크 연결
-        title_display = f"<{page_url}|{title}>" if page_url else title
+        # 원문 보기 링크
+        link = f"<{page_url}|원문 보기>" if page_url else ""
 
         message = f"{emoji} *나의 생각일기에서*\n\n"
         message += f"> _{quote}_\n"
         if date_str:
-            message += f"> — {date_str} 〈{title_display}〉"
-        elif title:
-            message += f"> — 〈{title_display}〉"
+            message += f"> — {date_str}"
+        if link:
+            message += f"  {link}"
         if context_note:
             message += f"\n\n💭 _{context_note}_"
         return message
