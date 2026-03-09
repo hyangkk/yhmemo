@@ -23,6 +23,76 @@ BASE_URL_LIVE = "https://openapi.ls-sec.co.kr:8080"
 BASE_URL_PAPER = "https://openapi.ls-sec.co.kr:29080"
 
 
+def is_market_open() -> bool:
+    """한국 주식시장 정규장 운영 시간인지 확인 (평일 09:00~15:30 KST)"""
+    now = datetime.now(KST)
+    # 주말 체크 (0=월, 5=토, 6=일)
+    if now.weekday() >= 5:
+        return False
+    market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
+def market_hours_message() -> str:
+    """장 마감 시 안내 메시지 생성"""
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        return "🕐 주말에는 주식시장이 열리지 않아요. 월요일 09:00에 다시 시도해주세요."
+    hour = now.hour
+    if hour < 9:
+        return "🕐 아직 장이 열리지 않았어요. 정규장은 09:00부터 시작합니다."
+    return "🕐 장이 마감됐어요. 정규장은 평일 09:00~15:30입니다. 내일 다시 시도해주세요."
+
+
+def friendly_error_message(error: Exception) -> str:
+    """LS증권 API 에러를 사용자 친화적 메시지로 변환"""
+    err_str = str(error)
+
+    # httpx HTTP 에러에서 상태코드/본문 추출
+    if hasattr(error, 'response') and error.response is not None:
+        try:
+            body = error.response.json()
+            rsp_msg = body.get("rsp_msg", "") or body.get("msg1", "") or body.get("message", "")
+            rsp_cd = body.get("rsp_cd", "")
+        except Exception:
+            rsp_msg = error.response.text[:300] if error.response.text else ""
+            rsp_cd = ""
+
+        status = error.response.status_code
+
+        # 인증 에러
+        if status == 401:
+            return "🔑 인증이 만료됐어요. 잠시 후 다시 시도해주세요."
+        # 서버 에러
+        if status >= 500:
+            if not is_market_open():
+                return f"{market_hours_message()}\n(서버 응답: {rsp_msg or status})"
+            return f"⚠️ LS증권 서버에 문제가 있어요. 잠시 후 다시 시도해주세요.\n({rsp_msg or status})"
+        # 400 에러 - API 거부
+        if status == 400:
+            if not is_market_open():
+                return f"{market_hours_message()}\n(API: {rsp_msg})" if rsp_msg else market_hours_message()
+            return f"⚠️ 요청이 거부됐어요: {rsp_msg}" if rsp_msg else f"⚠️ 요청 오류 ({status})"
+
+        # 기타 에러 코드
+        if rsp_msg:
+            if not is_market_open():
+                return f"{market_hours_message()}\n(API: {rsp_msg})"
+            return f"⚠️ {rsp_msg}"
+
+    # 네트워크 에러 (연결 실패, 타임아웃 등)
+    if "connect" in err_str.lower() or "timeout" in err_str.lower():
+        if not is_market_open():
+            return f"{market_hours_message()}\n(모의투자 서버는 장 시간에만 안정적으로 운영됩니다)"
+        return "⚠️ LS증권 서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요."
+
+    # 기타 에러
+    if not is_market_open():
+        return f"{market_hours_message()}\n(오류: {err_str[:200]})" if err_str else market_hours_message()
+    return f"⚠️ 오류가 발생했어요: {err_str[:200]}"
+
+
 class LSSecuritiesClient:
     """LS증권 Open API REST 클라이언트"""
 
