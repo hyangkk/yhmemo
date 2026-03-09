@@ -501,6 +501,7 @@ class SlackClient:
 
         @self._app.event("message")
         async def handle_message(event):
+            # 봇/subtype 메시지 무시 (단, !명령어 또는 [마스터] 접두사는 허용)
             text_peek = event.get("text", "")
             is_master = text_peek.startswith("!") or text_peek.startswith("[마스터]")
             if (event.get("bot_id") or event.get("subtype")) and not is_master:
