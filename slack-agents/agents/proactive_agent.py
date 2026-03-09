@@ -360,8 +360,8 @@ class ProactiveAgent(BaseAgent):
                 context["failure_pattern"] = failure_pattern
                 return context
 
-        # ── Level 5: 에이전트 평가 (12시간마다) ──
-        if self._hours_since(self._state.get("last_agent_eval", "")) >= 12:
+        # ── Level 5: 에이전트 평가 (6시간마다) ──
+        if self._hours_since(self._state.get("last_agent_eval", "")) >= 6:
             context["action"] = "evaluate_agents"
             return context
 
@@ -371,8 +371,8 @@ class ProactiveAgent(BaseAgent):
                 context["action"] = "check_delegations"
                 return context
 
-        # ── Level 5: 에이전트 생성 제안 (4시간마다, 목표 필요 시) ──
-        if self._hours_since(self._state.get("last_spawn_check", "")) >= 4:
+        # ── Level 5: 에이전트 생성 제안 (2시간마다, 목표 필요 시) ──
+        if self._hours_since(self._state.get("last_spawn_check", "")) >= 2:
             active_goals = self.planner.get_active_goals()
             if active_goals and self.agent_factory.get_agent_count() < 10:
                 context["action"] = "consider_spawn_agent"
@@ -1839,6 +1839,39 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                 self.planner.complete_goal(goal_id, "일일 리뷰에서 폐기 결정")
                 logger.info(f"[daily_review] Retired goal: {goal.title}")
 
+        # 6.5단계: 에이전트 조직 평가 + 인사조치 (생성/해고 사이클)
+        try:
+            eval_review = await self.evaluator.evaluate_all()
+            eval_actions = await self.evaluator.enforce_actions(eval_review)
+
+            if eval_actions:
+                actions_text = "\n".join(
+                    f"  • {a['action']}: `{a['agent']}` → {a['result']}"
+                    for a in eval_actions
+                )
+                await self.slack.send_message(
+                    SlackClient.CHANNEL_GENERAL,
+                    f"🏢 *[야간 조직 인사조치]*\n{actions_text}",
+                )
+
+            # 평가에서 새 에이전트 생성 추천이 있으면 실행
+            for spec in eval_review.get("should_create", []):
+                if self.agent_factory.get_agent_count() < 10:
+                    result = await self.agent_factory.create_agent(spec)
+                    if result.get("success"):
+                        await self.agent_factory.start_agent(result["agent_name"])
+                        await self.slack.send_message(
+                            SlackClient.CHANNEL_GENERAL,
+                            f"🤖 *[야간 리뷰 → 새 에이전트 생성]*\n"
+                            f"이름: `{result['agent_name']}`\n목적: {spec.get('purpose', '')}",
+                        )
+
+            self._state["last_agent_eval"] = ctx["today"]
+            self._save_state()
+            logger.info(f"[daily_review] 에이전트 평가 완료: {len(eval_review.get('grades', {}))}개, 조치 {len(eval_actions)}건")
+        except Exception as e:
+            logger.error(f"[daily_review] 에이전트 평가 실패: {e}")
+
         # 7단계: 노션 타임라인 업데이트
         await self._update_notion_timeline(ctx, parsed)
 
@@ -2098,22 +2131,41 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
     # ══════════════════════════════════════════════════
 
     async def _do_evaluate_agents(self, ctx: dict):
-        """전체 에이전트 성과 평가 → 자동 인사 조치"""
+        """전체 에이전트 성과 평가 → 자동 인사 조치 → 필요 시 즉시 에이전트 생성"""
         today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
 
         await self.slack.send_message(
             SlackClient.CHANNEL_LOGS,
-            "📊 *[에이전트 조직 평가 시작]*\n_전체 에이전트 성과 분석 중..._",
+            "📊 *[에이전트 조직 평가 시작]*\n_전체 에이전트 성과 분석 중 (agent_tracker 실데이터 기반)..._",
         )
 
         review = await self.evaluator.evaluate_all()
         actions = await self.evaluator.enforce_actions(review)
 
-        self._state["last_agent_eval"] = today
+        self._state["last_agent_eval"] = self.now_kst().isoformat()
         self._save_state()
 
-        # 결과 보고
-        grades_text = " | ".join(f"{n}: {g}" for n, g in review.get("grades", {}).items())
+        # 상세 메트릭 포함 보고
+        grade_lines = []
+        for name, ev in sorted(review.get("grades", {}).items()):
+            grade = ev if isinstance(ev, str) else "?"
+            # evaluations에서 상세 메트릭 찾기
+            for e in self.evaluator._evals.get("evaluations", [])[-50:]:
+                if e.get("agent") == name and e.get("date") == today:
+                    m = e.get("metrics", {})
+                    uptime = m.get("uptime_pct", 0)
+                    cycles = m.get("cycle_count", 0)
+                    errors = m.get("error_count", 0)
+                    score = m.get("composite_score", 0)
+                    is_dyn = "🔄" if m.get("is_dynamic") else "📌"
+                    grade_lines.append(
+                        f"  {is_dyn} `{name}`: *{grade}* "
+                        f"(가동 {uptime:.0f}%, 사이클 {cycles}, 에러 {errors}, 점수 {score:.2f})"
+                    )
+                    break
+            else:
+                grade_lines.append(f"  📌 `{name}`: *{grade}*")
+
         actions_text = "\n".join(
             f"  • {a['action']}: `{a['agent']}` → {a['result']}"
             for a in actions
@@ -2121,8 +2173,8 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
 
         report = (
             f"📊 *[에이전트 조직 평가 완료]*\n"
-            f"에이전트 수: {review.get('agent_count', 0)}\n"
-            f"등급: {grades_text}\n"
+            f"에이전트 수: {review.get('agent_count', 0)}\n\n"
+            f"*등급 상세:*\n" + "\n".join(grade_lines) + "\n"
             f"\n*인사 조치:*\n{actions_text}"
         )
 
@@ -2137,12 +2189,24 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if recs:
             report += "\n\n*AI 추천:*\n" + "\n".join(f"  • {r}" for r in recs[:3])
 
+        # 동적 에이전트 현황 추가
+        factory_summary = self.agent_factory.get_summary()
+        report += f"\n\n📦 {factory_summary}"
+
         await self.slack.send_message(SlackClient.CHANNEL_GENERAL, report)
 
+        # 해고가 발생했으면 즉시 대체 에이전트 생성 고려
+        retired_count = sum(1 for a in actions if a.get("action") in ("retire", "rebuild"))
+        if retired_count > 0 and self.agent_factory.get_agent_count() < 8:
+            logger.info(f"[evaluate_agents] {retired_count}개 해고 후 대체 에이전트 생성 검토")
+            # 다음 사이클에서 consider_spawn_agent가 트리거되도록 타임스탬프 리셋
+            self._state["last_spawn_check"] = ""
+            self._save_state()
+
         self.memory.record_insight(
-            f"조직 평가: {len(review.get('grades', {}))}개 에이전트, "
+            f"조직 평가: {review.get('agent_count', 0)}개 에이전트, "
             f"부진 {len(under)}개, 우수 {len(top)}개, 조치 {len(actions)}건",
-            context=grades_text,
+            context=factory_summary,
             category="organization",
         )
 
