@@ -349,4 +349,5 @@ class DiaryQuoteAgent(BaseAgent):
             message += f"  {link}"
         if context_note:
             message += f"\n\n💭 _{context_note}_"
+        message += "\n\n`⏰ 매시각 정시 자동 발송`"
         return message
