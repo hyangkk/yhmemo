@@ -491,7 +491,11 @@ async def main():
             await _reply(channel, "사용법: `!시세조회 005930`", thread_ts)
             return
         try:
-            result = await ls_client.get_price(stock_code)
+            from integrations.ls_securities import fetch_naver_volume
+            result, naver_vol = await asyncio.gather(
+                ls_client.get_price(stock_code),
+                fetch_naver_volume(stock_code),
+            )
 
             if result.get("unavailable"):
                 from integrations.ls_securities import is_market_open, market_hours_message
@@ -511,10 +515,13 @@ async def main():
                 header = f"📊 *{result['종목명']}* ({stock_code}) _(📋 {time_str} 기준)_"
             else:
                 header = f"📊 *{result['종목명']}* ({stock_code})"
+            vol_line = f"거래량: {result['거래량']:,}"
+            if naver_vol is not None:
+                vol_line += f" (네이버: {naver_vol:,})"
             lines = [
                 header,
                 f"현재가: {result['현재가']:,}원 {sign}{abs(result['전일대비']):,}원 ({result['등락률']:+.2f}%)",
-                f"거래량: {result['거래량']:,}",
+                vol_line,
                 f"매수호가: {result['매수호가1']:,}원 | 매도호가: {result['매도호가1']:,}원",
                 f"<https://finance.naver.com/item/main.naver?code={stock_code}|네이버 증권에서 확인>",
             ]
