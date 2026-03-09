@@ -51,6 +51,7 @@ from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
+from agents.diary_quote_agent import DiaryQuoteAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -129,6 +130,27 @@ def load_config() -> dict:
     config["NOTION_API_KEY"] = os.environ.get("NOTION_API_KEY", "")
     config["NOTION_DATABASE_ID"] = os.environ.get("NOTION_DATABASE_ID", "")
     config["NOTION_TASK_BOARD_DB_ID"] = os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
+    config["DIARY_NOTION_DATABASE_ID"] = os.environ.get("DIARY_NOTION_DATABASE_ID", "")
+
+    # Supabase agent_settings에서 설정 로드 (env var 미설정 시 폴백)
+    try:
+        sb_url = config.get("SUPABASE_URL", "")
+        sb_key = config.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        if sb_url and sb_key:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{sb_url}/rest/v1/agent_settings?select=diary_notion_database_id,task_board_notion_database_id",
+                headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                settings = json.loads(resp.read())
+                if settings:
+                    s = settings[0]
+                    if not config["DIARY_NOTION_DATABASE_ID"] and s.get("diary_notion_database_id"):
+                        config["DIARY_NOTION_DATABASE_ID"] = s["diary_notion_database_id"]
+                        logger.info(f"Loaded diary DB ID from agent_settings")
+    except Exception as e:
+        logger.warning(f"Failed to load agent_settings from Supabase: {e}")
 
     return config
 
@@ -184,6 +206,10 @@ async def main():
     #     **common_kwargs,
     # )
     quote = QuoteAgent(**common_kwargs)
+    diary_quote = DiaryQuoteAgent(
+        diary_db_id=config.get("DIARY_NOTION_DATABASE_ID", ""),
+        **common_kwargs,
+    )
     fortune = FortuneAgent(**common_kwargs)
     # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
     # invest_report = InvestReportAgent(**common_kwargs)  # 비용 절감 위해 비활성화
@@ -828,6 +854,7 @@ async def main():
         # "collector": lambda: asyncio.create_task(collector.start(), name="collector"),  # ai-curator 알림 중지
         # "curator": lambda: asyncio.create_task(curator.start(), name="curator"),      # ai-curator 알림 중지
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
+        "diary_quote": lambda: asyncio.create_task(diary_quote.start(), name="diary_quote"),
         "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨
