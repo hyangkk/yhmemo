@@ -1637,6 +1637,8 @@ async def main():
             agent_tracker.heartbeat("orchestrator")
             poll_tick += 1
             # 30초마다 폴링 (봇 자신의 !명령어/[마스터] 메시지 수신용)
+            if poll_tick % 4 == 1:  # 2분마다 로그
+                logger.info(f"[socket-poll] tick #{poll_tick}, channels={len(slack._poll_channels)}, running={slack._running}")
             try:
                 await slack.poll_once()
                 await process_command_queue()
