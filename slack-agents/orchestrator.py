@@ -359,6 +359,71 @@ async def main():
         except Exception as e:
             await _reply(channel, f"시세 조회 실패: {e}", thread_ts)
 
+    # ── 영상 요약 명령어 ──────────────────────────────────
+    from core.youtube_transcript import (
+        extract_video_id,
+        has_youtube_url,
+        fetch_transcript,
+        fetch_video_info,
+        summarize_transcript,
+    )
+
+    async def cmd_video_summary(args: str, user: str, channel: str, thread_ts: str = None):
+        """!영상요약 <YouTube URL> [요약|전체|포인트] - YouTube 영상 자막 기반 요약"""
+        if not args.strip():
+            await _reply(channel,
+                "사용법: `!영상요약 <YouTube URL>` [요약|전체|포인트]\n"
+                "예: `!영상요약 https://youtube.com/watch?v=xxx`\n"
+                "예: `!영상요약 https://youtu.be/xxx 전체`",
+                thread_ts)
+            return
+
+        parts = args.strip().split()
+        mode_map = {"요약": "summary", "전체": "full", "포인트": "key_points"}
+        mode = "summary"
+        for p in parts:
+            if p in mode_map:
+                mode = mode_map[p]
+
+        video_id = extract_video_id(args)
+        if not video_id:
+            await _reply(channel, "YouTube URL을 인식할 수 없습니다.", thread_ts)
+            return
+
+        await _reply(channel, "영상 자막을 가져오는 중...", thread_ts)
+
+        video_info = await fetch_video_info(video_id)
+        transcript_result = await fetch_transcript(video_id)
+
+        if not transcript_result["ok"]:
+            await _reply(channel, f"자막 추출 실패: {transcript_result['error']}", thread_ts)
+            return
+
+        transcript_text = transcript_result["text"]
+        lang = transcript_result.get("language", "")
+        auto = " (자동 생성)" if transcript_result.get("auto_generated") else ""
+        title = video_info.get("title", "")
+        author = video_info.get("author", "")
+
+        header = f"*{title}*" if title else f"영상 `{video_id}`"
+        if author:
+            header += f" — {author}"
+        header += f"\n자막 언어: {lang}{auto} | 길이: {len(transcript_text):,}자"
+
+        await _reply(channel, f"{header}\n\nClaude로 요약 중...", thread_ts)
+
+        try:
+            summary = await summarize_transcript(
+                curator.ai, transcript_text, video_title=title, mode=mode
+            )
+            mode_label = {"summary": "요약", "full": "전체 정리", "key_points": "핵심 포인트"}
+            await _reply(channel,
+                f"{header}\n\n*[{mode_label.get(mode, '요약')}]*\n\n{summary}",
+                thread_ts)
+        except Exception as e:
+            logger.error(f"Video summary error: {e}")
+            await _reply(channel, f"{header}\n\n요약 생성 실패: {str(e)[:200]}", thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
@@ -367,6 +432,7 @@ async def main():
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
+    slack.on_command("영상요약", cmd_video_summary)
 
     # ── 주식 매매 명령어 ──────────────────────────────────
     async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
@@ -673,6 +739,7 @@ async def main():
 - diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
 - fortune: 운세 보기, 오늘의 운세
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
+- youtube_summarize: YouTube 영상 요약, 자막 추출, 영상 내용 정리. 메시지에 YouTube URL이 포함되어 있거나 "영상 요약해줘", "이 영상 뭐야", "유튜브 요약" 등의 요청. summary_mode(summary/full/key_points) 필드 포함
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
@@ -689,7 +756,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|stock_trade|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|stock_trade|youtube_summarize|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -697,6 +764,7 @@ async def main():
   "stock_code": "종목코드 6자리 (stock_trade일 때만, 예: 005930)",
   "stock_qty": 1,
   "stock_price": 0,
+  "summary_mode": "summary|full|key_points (youtube_summarize일 때만, 기본 summary)",
   "clarify_question": "의도 확인용 질문 (clarify일 때만)",
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
@@ -764,6 +832,20 @@ async def main():
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
+            elif action == "youtube_summarize":
+                summary_mode = parsed.get("summary_mode", "summary") or "summary"
+                video_id = extract_video_id(text)
+                if not video_id:
+                    await _reply(channel, "YouTube URL을 찾을 수 없습니다. 링크를 포함해서 다시 보내주세요.", thread_ts)
+                    result_text = "YouTube URL 미발견"
+                    success = False
+                else:
+                    mode_arg = {"summary": "요약", "full": "전체", "key_points": "포인트"}.get(summary_mode, "")
+                    await cmd_video_summary(
+                        args=f"https://youtube.com/watch?v={video_id} {mode_arg}",
+                        user=user, channel=channel, thread_ts=thread_ts
+                    )
+                    result_text = f"영상 요약 완료: {video_id}"
             elif action == "stock_trade":
                 stock_action = parsed.get("stock_action", "").strip()
                 stock_code = parsed.get("stock_code", "").strip()
