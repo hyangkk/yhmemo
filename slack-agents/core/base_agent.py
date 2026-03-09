@@ -132,7 +132,7 @@ class BaseAgent(ABC):
 
     # ── AI 판단 (Claude) ────────────────────────────────
 
-    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-haiku-4-5-20251001") -> str:
+    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-haiku-4-5-20251001", max_tokens: int = 2048) -> str:
         """Claude AI에게 판단 요청 (비용 추적 + 예산 제한 포함)"""
         tracker = get_cost_tracker()
         if not tracker.can_call():
@@ -142,7 +142,7 @@ class BaseAgent(ABC):
         try:
             response = await self.ai.messages.create(
                 model=model,
-                max_tokens=4096,
+                max_tokens=max_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
@@ -152,6 +152,7 @@ class BaseAgent(ABC):
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
                     caller=self.name,
+                    model=model,
                 )
             return response.content[0].text
         except RuntimeError:

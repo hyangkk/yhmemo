@@ -2,7 +2,7 @@
 API 비용 추적 및 일일 예산 제한
 
 모든 AI 호출의 토큰 사용량을 추적하고, 일일 예산을 초과하면 호출을 차단한다.
-비용 계산: Claude Sonnet 4 기준 input $3/MTok, output $15/MTok
+비용 계산: 모델별 가격 적용 (Haiku: $0.80/$4, Sonnet: $3/$15 per MTok)
 """
 
 import json
@@ -15,9 +15,20 @@ logger = logging.getLogger("cost_tracker")
 KST = timezone(timedelta(hours=9))
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
-# Claude Sonnet 4 pricing (per token)
-PRICE_INPUT = 3.0 / 1_000_000   # $3 per 1M input tokens
-PRICE_OUTPUT = 15.0 / 1_000_000  # $15 per 1M output tokens
+# 모델별 pricing (per token)
+MODEL_PRICING = {
+    "claude-haiku-4-5-20251001": {
+        "input": 0.80 / 1_000_000,   # $0.80 per 1M input tokens
+        "output": 4.0 / 1_000_000,   # $4 per 1M output tokens
+    },
+    "claude-sonnet-4-20250514": {
+        "input": 3.0 / 1_000_000,    # $3 per 1M input tokens
+        "output": 15.0 / 1_000_000,  # $15 per 1M output tokens
+    },
+}
+# 기본 가격 (Haiku — 대부분의 호출에 사용)
+DEFAULT_PRICE_INPUT = 0.80 / 1_000_000
+DEFAULT_PRICE_OUTPUT = 4.0 / 1_000_000
 
 # 일일 예산 (기본 $10 — 약 3.3M input tokens 또는 666K output tokens)
 DAILY_BUDGET_USD = float(os.environ.get("DAILY_AI_BUDGET_USD", "10.0"))
@@ -72,9 +83,12 @@ class CostTracker:
         today_data = self._get_today()
         return max(0, DAILY_BUDGET_USD - today_data["cost_usd"])
 
-    def record_usage(self, input_tokens: int, output_tokens: int, caller: str = ""):
+    def record_usage(self, input_tokens: int, output_tokens: int, caller: str = "", model: str = ""):
         """API 호출 후 토큰 사용량 기록"""
-        cost = (input_tokens * PRICE_INPUT) + (output_tokens * PRICE_OUTPUT)
+        pricing = MODEL_PRICING.get(model, {})
+        price_in = pricing.get("input", DEFAULT_PRICE_INPUT)
+        price_out = pricing.get("output", DEFAULT_PRICE_OUTPUT)
+        cost = (input_tokens * price_in) + (output_tokens * price_out)
         today_data = self._get_today()
         today_data["cost_usd"] += cost
         today_data["input_tokens"] += input_tokens

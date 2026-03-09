@@ -38,7 +38,7 @@ class QuoteAgent(BaseAgent):
             name="quote",
             description="매 시각마다 최근 대화 맥락에 맞는 영감을 주는 명언을 보내주는 에이전트",
             slack_channel=target_channel,
-            loop_interval=60,  # 1분마다 체크 (정각에만 실행)
+            loop_interval=600,  # 10분마다 체크 (정각에만 실행)
             **kwargs,
         )
         self._target_channel = target_channel
