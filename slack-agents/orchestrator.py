@@ -51,6 +51,7 @@ from agents.invest_agent import InvestAgent
 from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
+from agents.diary_quote_agent import DiaryQuoteAgent
 from integrations.ls_securities import LSSecuritiesClient
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -184,6 +185,10 @@ async def main():
     #     **common_kwargs,
     # )
     quote = QuoteAgent(**common_kwargs)
+    diary_quote = DiaryQuoteAgent(
+        diary_db_id=config.get("NOTION_DATABASE_ID", ""),
+        **common_kwargs,
+    )
     fortune = FortuneAgent(**common_kwargs)
     # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
     # invest_report = InvestReportAgent(**common_kwargs)  # 비용 절감 위해 비활성화
@@ -828,6 +833,7 @@ async def main():
         # "collector": lambda: asyncio.create_task(collector.start(), name="collector"),  # ai-curator 알림 중지
         # "curator": lambda: asyncio.create_task(curator.start(), name="curator"),      # ai-curator 알림 중지
         "quote": lambda: asyncio.create_task(quote.start(), name="quote"),
+        "diary_quote": lambda: asyncio.create_task(diary_quote.start(), name="diary_quote"),
         "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨

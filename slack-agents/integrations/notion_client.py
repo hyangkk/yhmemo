@@ -166,6 +166,34 @@ class NotionClient:
     def block_divider() -> dict:
         return {"type": "divider", "divider": {}}
 
+    # ── 페이지 블록(콘텐츠) 읽기 ────────────────────────
+
+    async def get_page_blocks(self, page_id: str, page_size: int = 100) -> list[dict]:
+        """페이지의 자식 블록(콘텐츠) 목록 조회"""
+        try:
+            resp = await self._http.get(
+                f"/blocks/{page_id}/children",
+                params={"page_size": page_size},
+            )
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception as e:
+            logger.error(f"Notion get page blocks failed: {e}")
+            return []
+
+    async def get_page_text(self, page_id: str) -> str:
+        """페이지 블록에서 텍스트만 추출하여 반환"""
+        blocks = await self.get_page_blocks(page_id)
+        lines = []
+        for block in blocks:
+            btype = block.get("type", "")
+            rich_text = block.get(btype, {}).get("rich_text", [])
+            if rich_text:
+                text = "".join(rt.get("plain_text", "") for rt in rich_text).strip()
+                if text:
+                    lines.append(text)
+        return "\n".join(lines)
+
     # ── 액션아이템 편의 메서드 ─────────────────────────
 
     async def get_action_items(self, database_id: str, status: str = "Not started") -> list[dict]:
