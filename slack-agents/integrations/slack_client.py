@@ -312,7 +312,7 @@ class SlackClient:
             if channel_id in self._last_ts:
                 kwargs["oldest"] = self._last_ts[channel_id]
 
-            logger.info(f"[poll] Checking {channel_id} (oldest={kwargs.get('oldest', 'none')})")
+            logger.debug(f"[poll] Checking {channel_id} (oldest={kwargs.get('oldest', 'none')})")
             result = await asyncio.wait_for(
                 self.client.conversations_history(**kwargs), timeout=10.0
             )
@@ -574,7 +574,7 @@ class SlackClient:
             if ch_id in saved_ts:
                 self._last_ts[ch_id] = saved_ts[ch_id]
             else:
-                self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
+                self._last_ts[ch_id] = f"{time.time() - 60:.6f}"  # 1분 전
         self._poll_channels = poll_channels
 
         # 활성 스레드 복원

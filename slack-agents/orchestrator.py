@@ -1100,7 +1100,7 @@ async def main():
         import time as _time
         slack._poll_channels = [slack.CHANNEL_GENERAL, slack.CHANNEL_INVEST]
         for ch_id in slack._poll_channels:
-            slack._last_ts[ch_id] = str(_time.time())
+            slack._last_ts[ch_id] = f"{_time.time():.6f}"
         slack._running = True
     else:
         logger.info("Socket Mode 불가 → 폴링 모드로 운영")
@@ -1637,7 +1637,7 @@ async def main():
             agent_tracker.heartbeat("orchestrator")
             poll_tick += 1
             # 30초마다 폴링 (봇 자신의 !명령어/[마스터] 메시지 수신용)
-            if poll_tick % 4 == 1:  # 2분마다 로그
+            if poll_tick % 20 == 1:  # 10분마다 로그
                 logger.info(f"[socket-poll] tick #{poll_tick}, channels={len(slack._poll_channels)}, running={slack._running}")
             try:
                 await slack.poll_once()
