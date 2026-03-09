@@ -76,16 +76,28 @@ export async function GET(request: Request) {
       };
       if (visitorData) ctx.client.visitorData = visitorData;
 
+      // API 키 추출
+      const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
+      const apiKey = apiKeyMatch ? apiKeyMatch[1] : "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+      log.push(`  API key: ${apiKey}`);
+
+      // URL 디코딩 (HTML에서 추출 시 %3D 등이 포함될 수 있음)
+      const decodedParams = decodeURIComponent(transcriptParams);
+      log.push(`  Decoded params: ${decodedParams.substring(0, 40)}...`);
+
       const gtResp = await fetch(
-        "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false",
+        `https://www.youtube.com/youtubei/v1/get_transcript?key=${apiKey}&prettyPrint=false`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "User-Agent": BROWSER_UA,
             "Cookie": cookieStr,
+            "X-YouTube-Client-Name": "1",
+            "X-YouTube-Client-Version": "2.20260301.00.00",
+            ...(visitorData ? { "X-Goog-Visitor-Id": visitorData } : {}),
           },
-          body: JSON.stringify({ context: ctx, params: transcriptParams }),
+          body: JSON.stringify({ context: ctx, params: decodedParams }),
           cache: "no-store",
         }
       );
