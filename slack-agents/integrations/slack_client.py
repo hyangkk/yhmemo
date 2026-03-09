@@ -312,6 +312,7 @@ class SlackClient:
             if channel_id in self._last_ts:
                 kwargs["oldest"] = self._last_ts[channel_id]
 
+            logger.info(f"[poll] Checking {channel_id} (oldest={kwargs.get('oldest', 'none')})")
             result = await asyncio.wait_for(
                 self.client.conversations_history(**kwargs), timeout=10.0
             )
@@ -321,7 +322,7 @@ class SlackClient:
 
             # ── 1. 새 채널 메시지 처리 ──
             if messages:
-                logger.info(f"[poll] {channel_name}: {len(messages)} new messages")
+                logger.info(f"[poll] {channel_id}: {len(messages)} new messages")
 
                 # 가장 최신 타임스탬프 저장 (디스크에도 영속)
                 newest_ts = messages[0]["ts"]
