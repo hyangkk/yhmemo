@@ -261,14 +261,22 @@ class LSSecuritiesClient:
             self._last_balance = result
             self._last_balance_time = datetime.now(KST)
             return result
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[ls] 잔고 조회 실패: {e}")
             # 실패 시 캐시된 잔고 반환
             if self._last_balance:
                 cached = dict(self._last_balance)
                 cached["cached"] = True
                 cached["cached_time"] = self._last_balance_time
                 return cached
-            raise  # 캐시도 없으면 원래 에러 전파
+            # 캐시도 없으면 빈 결과 + 에러 정보 반환
+            return {
+                "summary": {},
+                "holdings": [],
+                "cached": False,
+                "unavailable": True,
+                "error": e,
+            }
 
     # ── 주문 ─────────────────────────────────────────────
 

@@ -418,6 +418,17 @@ async def main():
             return
         try:
             result = await ls_client.get_balance()
+
+            # API 실패 + 캐시도 없는 경우
+            if result.get("unavailable"):
+                from integrations.ls_securities import is_market_open, market_hours_message
+                if not is_market_open():
+                    await _reply(channel, f"📋 표시할 잔고가 없습니다.\n{market_hours_message()}\n저장된 마지막 잔고가 없어서, 장중에 한 번 조회하면 이후 장외에서도 볼 수 있어요.", thread_ts)
+                else:
+                    err = result.get("error")
+                    await _reply(channel, f"❌ 잔고 조회에 실패했어요.\n{friendly_error_message(err) if err else '알 수 없는 오류'}", thread_ts)
+                return
+
             summary = result.get("summary", {})
             holdings = result.get("holdings", [])
             is_cached = result.get("cached", False)
