@@ -111,7 +111,12 @@ export default function YouTubePage() {
             mode,
           });
         }
-        setError(data.error || "분석에 실패했습니다.");
+        // 자막이 있지만 서버에서 다운로드 실패 시 수동 입력 안내
+        if (data.hasSubtitles) {
+          setError("자막 자동 추출이 차단되었습니다. 아래에서 자막을 직접 붙여넣어 주세요.");
+        } else {
+          setError(data.error || "분석에 실패했습니다.");
+        }
         setShowManualInput(true);
         return;
       }
@@ -284,11 +289,15 @@ export default function YouTubePage() {
             <h3 className="font-semibold text-gray-900 dark:text-white mb-2">
               자막 직접 입력
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-              YouTube에서 자막을 복사해서 붙여넣으세요.
-              영상 하단 <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">...</code> 버튼
-              → <strong>스크립트 보기</strong>에서 복사할 수 있습니다.
-            </p>
+            <div className="text-sm text-gray-500 dark:text-gray-400 mb-3 space-y-1">
+              <p>YouTube에서 자막을 복사해서 붙여넣으세요.</p>
+              <ol className="list-decimal ml-5 space-y-0.5">
+                <li>YouTube 영상 페이지에서 영상 아래 <strong>...더보기</strong> 클릭</li>
+                <li><strong>스크립트 보기</strong> 클릭</li>
+                <li>텍스트를 전체 선택(Ctrl+A)하고 복사(Ctrl+C)</li>
+                <li>아래 입력란에 붙여넣기(Ctrl+V)</li>
+              </ol>
+            </div>
             <textarea
               value={manualTranscript}
               onChange={(e) => setManualTranscript(e.target.value)}
