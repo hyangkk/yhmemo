@@ -52,6 +52,7 @@ from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
 from agents.diary_quote_agent import DiaryQuoteAgent
+from agents.sentiment_agent import SentimentAgent
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -231,6 +232,7 @@ async def main():
         **common_kwargs,
     )
     fortune = FortuneAgent(**common_kwargs)
+    sentiment = SentimentAgent(**common_kwargs)
     # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
     # invest_report = InvestReportAgent(**common_kwargs)  # 비용 절감 위해 비활성화
     task_board = TaskBoardAgent(
@@ -561,6 +563,17 @@ async def main():
             await _reply(channel, "운세 생성에 실패했어요.", thread_ts)
 
     slack.on_command("운세", cmd_fortune)
+
+    # "!센티멘트" → 소셜 센티멘트 분석 즉시 실행
+    async def cmd_sentiment(args: str, user: str, channel: str, thread_ts: str = None):
+        query = args.strip() if args.strip() else None
+        if query:
+            await _reply(channel, f"🔍 *'{query}'* 소셜 센티멘트 분석 중...", thread_ts)
+        else:
+            await _reply(channel, "🔍 소셜 센티멘트 종합 분석 중... (1-2분 소요)", thread_ts)
+        await sentiment.run_manual(channel=channel, thread_ts=thread_ts, query=query)
+
+    slack.on_command("센티멘트", cmd_sentiment)
 
     # ── 경험 저장소 ────────────────────────────────────
     experience_file = os.path.join(os.path.dirname(__file__), "data", "experience.json")
@@ -1098,6 +1111,7 @@ async def main():
         # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨
         # "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),  # 비활성화됨
         "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
+        "sentiment": lambda: asyncio.create_task(sentiment.start(), name="sentiment"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 

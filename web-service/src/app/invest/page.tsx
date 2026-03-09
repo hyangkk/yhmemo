@@ -1,6 +1,7 @@
 import Link from "next/link";
 import MorningBriefing from "@/components/MorningBriefing";
 import MarketDashboard from "@/components/MarketDashboard";
+import SocialSentiment from "@/components/SocialSentiment";
 import TrendingTopics from "@/components/TrendingTopics";
 import InvestSignal from "@/components/InvestSignal";
 import Dashboard from "@/components/Dashboard";
@@ -107,6 +108,22 @@ export default function InvestPage() {
       </div>
 
       <MarketDashboard />
+
+      {/* 구분선 - 소셜 센티멘트 */}
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-800" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="px-4 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 text-sm text-gray-400">
+              소셜 센티멘트 분석
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <SocialSentiment />
 
       {/* 구분선 - 투자 시그널 */}
       <div className="max-w-5xl mx-auto px-4 py-8">

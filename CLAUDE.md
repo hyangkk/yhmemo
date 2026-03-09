@@ -1,5 +1,22 @@
 # CLAUDE.md - Project Configuration
 
+## 핵심 원칙
+
+### 1. 자연어 우선 (Natural Language First)
+- **모든 기능은 자연어로 호출 가능해야 한다.** `!명령어`는 단축키일 뿐, 사용자는 자연어로 항상 동일한 기능을 사용할 수 있어야 함.
+- 예: "비트코인 시장 분위기 알려줘" = `!센티멘트 bitcoin` = "소셜 센티멘트 분석해줘"
+- 새 기능 추가 시 반드시 자연어 인식 패턴도 함께 구현할 것.
+
+### 2. 애매하면 질문하기 (Clarify Before Acting)
+- 사용자의 자연어가 **애매하거나 여러 해석이 가능**하면, 바로 실행하지 말고 **질문으로 의도를 확인**한다.
+- 예: "삼성 알려줘" → "삼성전자(005930) 시세를 조회할까요, 아니면 삼성전자 관련 뉴스/센티멘트를 분석할까요?"
+- 단, 명확한 의도가 파악되면 바로 실행. 불필요한 질문은 하지 않는다.
+
+### 3. 슬랙 봇 기능 구축 규칙
+- 모든 새 기능은 `!명령어` + 자연어 인식 두 가지 모두 지원
+- 자연어 처리는 `orchestrator.py`의 `on_natural_language()` 함수에서 Claude AI가 판단
+- 투자/시세 기능은 `ai-invest` 채널, 일반 기능은 `ai-agents-general` 채널
+
 ## 토큰 저장 위치
 - **루트 `.env`** (`/home/user/yhmemo/.env`): `GH_TOKEN`, `FLY_API_TOKEN`
 - **slack-agents/.env**: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NOTION_API_KEY`
