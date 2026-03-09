@@ -7,7 +7,7 @@ export async function GET() {
   try {
     const supabase = getServiceSupabase();
 
-    // 최신 센티멘트 1건
+    // 최신 센티멘트 1건 (원본 글 포함)
     const { data: latest, error: latestErr } = await supabase
       .from("social_sentiment")
       .select("*")
@@ -35,24 +35,25 @@ export async function GET() {
       return NextResponse.json({ latest: null, history: [], hasData: false });
     }
 
-    // asset_scores가 문자열이면 파싱
-    let assetScores = latest.asset_scores;
-    if (typeof assetScores === "string") {
-      try {
-        assetScores = JSON.parse(assetScores);
-      } catch {
-        assetScores = {};
+    // jsonb 문자열 파싱 헬퍼
+    function parseJsonb(val: unknown): Record<string, unknown> | unknown[] {
+      if (typeof val === "string") {
+        try { return JSON.parse(val); } catch { return {}; }
       }
+      return (val as Record<string, unknown>) || {};
     }
 
     return NextResponse.json({
       latest: {
         overallScore: latest.overall_score,
         overallLabel: latest.overall_label,
-        assetScores: assetScores || {},
+        assetScores: parseJsonb(latest.asset_scores),
         trendingTopics: latest.trending_topics || [],
         summary: latest.summary || "",
         riskAlert: latest.risk_alert || "",
+        sourceFeeds: parseJsonb(latest.source_feeds),
+        bullishSignals: latest.bullish_signals || [],
+        bearishSignals: latest.bearish_signals || [],
         analyzedAt: latest.analyzed_at,
       },
       history: (history || []).map((h: { overall_score: number; overall_label: string; analyzed_at: string }) => ({

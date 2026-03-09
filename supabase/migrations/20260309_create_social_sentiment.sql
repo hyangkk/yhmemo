@@ -7,6 +7,9 @@ create table if not exists social_sentiment (
   trending_topics text[] default '{}',
   summary text,
   risk_alert text,
+  source_feeds jsonb default '{}',
+  bullish_signals text[] default '{}',
+  bearish_signals text[] default '{}',
   analyzed_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );

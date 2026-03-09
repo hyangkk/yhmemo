@@ -190,8 +190,13 @@ class SentimentAgent(BaseAgent):
 
         actions = []
 
-        # 항상 분석 결과 저장
-        actions.append({"type": "save", "data": analysis})
+        # 항상 분석 결과 저장 (원본 글 포함)
+        actions.append({
+            "type": "save",
+            "data": analysis,
+            "reddit_posts": reddit_posts,
+            "crypto_news": crypto_news,
+        })
 
         # 급변 알림
         if alerts:
@@ -216,7 +221,11 @@ class SentimentAgent(BaseAgent):
         for action in decision.get("actions", []):
             try:
                 if action["type"] == "save":
-                    await self._save_analysis(action["data"])
+                    await self._save_analysis(
+                        action["data"],
+                        reddit_posts=action.get("reddit_posts", []),
+                        crypto_news=action.get("crypto_news", []),
+                    )
                 elif action["type"] == "alert":
                     await self._send_sentiment_alert(action["data"], action["analysis"])
                 elif action["type"] == "briefing":
@@ -421,9 +430,36 @@ class SentimentAgent(BaseAgent):
 
     # ── 결과 저장 ──────────────────────────────────────
 
-    async def _save_analysis(self, analysis: dict):
-        """분석 결과를 Supabase + 로컬에 저장"""
+    async def _save_analysis(self, analysis: dict, reddit_posts: list = None, crypto_news: list = None):
+        """분석 결과를 Supabase + 로컬에 저장 (원본 글 포함)"""
         now = datetime.now(KST)
+        reddit_posts = reddit_posts or []
+        crypto_news = crypto_news or []
+
+        # 원본 글을 채널별로 그룹핑
+        source_feeds = {}
+        for p in reddit_posts[:20]:
+            src = p.get("source", "r/unknown")
+            if src not in source_feeds:
+                source_feeds[src] = []
+            source_feeds[src].append({
+                "title": p.get("title", ""),
+                "url": p.get("url", ""),
+                "score": p.get("score", 0),
+                "comments": p.get("num_comments", 0),
+                "snippet": (p.get("selftext", "") or "")[:150],
+            })
+        for n in crypto_news[:15]:
+            src = n.get("source", "News")
+            if src not in source_feeds:
+                source_feeds[src] = []
+            source_feeds[src].append({
+                "title": n.get("title", ""),
+                "url": n.get("url", ""),
+                "votes": n.get("votes", {}),
+                "sentiment": n.get("sentiment", ""),
+            })
+
         entry = {
             "timestamp": now.isoformat(),
             "overall_score": analysis.get("overall_score", 50),
@@ -431,6 +467,7 @@ class SentimentAgent(BaseAgent):
             "scores": analysis.get("scores", {}),
             "trending_topics": analysis.get("trending_topics", []),
             "summary": analysis.get("summary", ""),
+            "source_feeds": source_feeds,
         }
 
         # 로컬 저장
@@ -445,6 +482,10 @@ class SentimentAgent(BaseAgent):
                     "asset_scores": json.dumps(entry["scores"], ensure_ascii=False),
                     "trending_topics": entry["trending_topics"],
                     "summary": entry["summary"],
+                    "risk_alert": analysis.get("risk_alert", ""),
+                    "source_feeds": json.dumps(source_feeds, ensure_ascii=False),
+                    "bullish_signals": analysis.get("bullish_signals", []),
+                    "bearish_signals": analysis.get("bearish_signals", []),
                     "analyzed_at": now.isoformat(),
                 }).execute()
         except Exception as e:
