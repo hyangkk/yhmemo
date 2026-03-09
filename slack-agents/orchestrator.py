@@ -420,8 +420,14 @@ async def main():
             result = await ls_client.get_balance()
             summary = result.get("summary", {})
             holdings = result.get("holdings", [])
+            is_cached = result.get("cached", False)
             mode = "모의투자" if ls_client.paper_trading else "실전투자"
-            lines = [f"💰 *[{mode}] 계좌 잔고*"]
+            if is_cached:
+                cached_time = result.get("cached_time")
+                time_str = cached_time.strftime("%H:%M") if cached_time else "?"
+                lines = [f"💰 *[{mode}] 계좌 잔고* (📋 {time_str} 기준 캐시)"]
+            else:
+                lines = [f"💰 *[{mode}] 계좌 잔고*"]
             lines.append(f"추정순자산: {summary.get('추정순자산', 0):,}원")
             lines.append(f"총매입금액: {summary.get('총매입금액', 0):,}원")
             lines.append(f"추정손익: {summary.get('추정손익', 0):,}원")

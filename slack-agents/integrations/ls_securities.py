@@ -112,6 +112,8 @@ class LSSecuritiesClient:
         self._access_token = ""
         self._token_expires = datetime.min.replace(tzinfo=KST)
         self._http = httpx.AsyncClient(timeout=15.0, verify=False)
+        self._last_balance: dict | None = None
+        self._last_balance_time: datetime | None = None
 
     @property
     def is_configured(self) -> bool:
@@ -211,48 +213,62 @@ class LSSecuritiesClient:
         """주식 잔고 조회 (t0424)
 
         Returns:
-            dict with account balance info
+            dict with account balance info. 실패 시 캐시된 잔고 반환.
         """
-        await self._ensure_token()
-        url = f"{self.base_url}/stock/accno"
-        resp = await self._http.post(
-            url,
-            headers=self._auth_header("t0424"),
-            json={
-                "t0424InBlock": {
-                    "pession": "0",
-                    "chegb": "0",
-                    "dangb": "0",
-                    "charge": "1",
-                    "cts_expcode": "",
-                    "accno": self.account_no,
-                }
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        summary = data.get("t0424OutBlock", {})
-        holdings = data.get("t0424OutBlock1", [])
-        return {
-            "summary": {
-                "추정순자산": int(summary.get("sunamt", 0)),
-                "총매입금액": int(summary.get("mamt", 0)),
-                "추정손익": int(summary.get("dtsunik", 0)),
-                "수익률": float(summary.get("sunamt1", 0)),
-            },
-            "holdings": [
-                {
-                    "종목코드": h.get("expcode", ""),
-                    "종목명": h.get("jangname", ""),
-                    "잔고수량": int(h.get("janqty", 0)),
-                    "매입단가": int(h.get("pamt", 0)),
-                    "현재가": int(h.get("price", 0)),
-                    "평가손익": int(h.get("dtsunik", 0)),
-                    "수익률": float(h.get("sunikrt", 0)),
-                }
-                for h in holdings
-            ],
-        }
+        try:
+            await self._ensure_token()
+            url = f"{self.base_url}/stock/accno"
+            resp = await self._http.post(
+                url,
+                headers=self._auth_header("t0424"),
+                json={
+                    "t0424InBlock": {
+                        "pession": "0",
+                        "chegb": "0",
+                        "dangb": "0",
+                        "charge": "1",
+                        "cts_expcode": "",
+                        "accno": self.account_no,
+                    }
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            summary = data.get("t0424OutBlock", {})
+            holdings = data.get("t0424OutBlock1", [])
+            result = {
+                "summary": {
+                    "추정순자산": int(summary.get("sunamt", 0)),
+                    "총매입금액": int(summary.get("mamt", 0)),
+                    "추정손익": int(summary.get("dtsunik", 0)),
+                    "수익률": float(summary.get("sunamt1", 0)),
+                },
+                "holdings": [
+                    {
+                        "종목코드": h.get("expcode", ""),
+                        "종목명": h.get("jangname", ""),
+                        "잔고수량": int(h.get("janqty", 0)),
+                        "매입단가": int(h.get("pamt", 0)),
+                        "현재가": int(h.get("price", 0)),
+                        "평가손익": int(h.get("dtsunik", 0)),
+                        "수익률": float(h.get("sunikrt", 0)),
+                    }
+                    for h in holdings
+                ],
+                "cached": False,
+            }
+            # 성공 시 캐시 갱신
+            self._last_balance = result
+            self._last_balance_time = datetime.now(KST)
+            return result
+        except Exception:
+            # 실패 시 캐시된 잔고 반환
+            if self._last_balance:
+                cached = dict(self._last_balance)
+                cached["cached"] = True
+                cached["cached_time"] = self._last_balance_time
+                return cached
+            raise  # 캐시도 없으면 원래 에러 전파
 
     # ── 주문 ─────────────────────────────────────────────
 
