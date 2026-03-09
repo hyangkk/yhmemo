@@ -1223,19 +1223,18 @@ async def main():
         except Exception:
             pass
 
-        # 3. 투자 모니터링 (항상 실행)
-        plan.append("투자 모니터링 사이클 (600초 간격)")
+        # 3. 리딩방 진행 보고 (30분 간격)
+        plan.append("리딩방 진행 보고 (30분 간격)")
 
-        # 4. 뉴스 큐레이션 (항상 실행)
-        plan.append("뉴스 수집 & 큐레이션")
-
-        # 5. slot_check (매시 정각)
-        if now.minute <= 5:
-            plan.append("slot_check → 이전 슬롯 결과 평가")
+        # 4. 재시도 대기 작업 (있으면)
+        retry_queue = pstate.get("retry_queue", [])
+        if retry_queue:
+            for rt in retry_queue[:2]:
+                plan.append(f"[재시도] {rt.get('task', '미상')[:40]}")
 
         # 계획이 비면 기본값
         if not plan:
-            plan = ["슬랙 메시지 폴링 (12초 간격)", "투자 모니터링 사이클", "뉴스 수집 & 큐레이션"]
+            plan = ["슬랙 메시지 폴링 (12초 간격)", "활성 목표 스텝 실행"]
 
         return plan
 
