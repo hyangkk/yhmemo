@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
+import { getSecret } from "@/lib/secrets";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +42,11 @@ export async function GET() {
       .map((n) => `[${n.source}] ${n.title}: ${(n.content || "").slice(0, 100)}`)
       .join("\n");
 
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const apiKey = await getSecret("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+    }
+    const anthropic = new Anthropic({ apiKey });
 
     const response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
