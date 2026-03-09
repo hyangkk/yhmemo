@@ -132,6 +132,25 @@ def load_config() -> dict:
     config["NOTION_TASK_BOARD_DB_ID"] = os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
     config["DIARY_NOTION_DATABASE_ID"] = os.environ.get("DIARY_NOTION_DATABASE_ID", "")
 
+    # NOTION_API_KEY가 env에 없으면 secrets_vault에서 로드
+    if not config["NOTION_API_KEY"]:
+        try:
+            sb_url = config.get("SUPABASE_URL", "")
+            sb_key = config.get("SUPABASE_SERVICE_ROLE_KEY", "")
+            if sb_url and sb_key:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"{sb_url}/rest/v1/secrets_vault?select=value&key=eq.NOTION_API_KEY",
+                    headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    rows = json.loads(resp.read())
+                    if rows and rows[0].get("value"):
+                        config["NOTION_API_KEY"] = rows[0]["value"]
+                        logger.info("Loaded NOTION_API_KEY from secrets_vault")
+        except Exception as e:
+            logger.warning(f"Failed to load NOTION_API_KEY from secrets_vault: {e}")
+
     # Supabase agent_settings에서 설정 로드 (env var 미설정 시 폴백)
     try:
         sb_url = config.get("SUPABASE_URL", "")
