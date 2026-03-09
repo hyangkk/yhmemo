@@ -3,7 +3,7 @@ import type { MetadataRoute } from "next";
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
-      url: "https://ai-briefing.vercel.app",
+      url: "https://web-service-ruby.vercel.app",
       lastModified: new Date(),
       changeFrequency: "daily",
       priority: 1,
