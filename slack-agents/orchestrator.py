@@ -497,6 +497,7 @@ async def main():
                 f"현재가: {result['현재가']:,}원 {sign}{abs(result['전일대비']):,}원 ({result['등락률']:+.2f}%)",
                 f"거래량: {result['거래량']:,}",
                 f"매수호가: {result['매수호가1']:,}원 | 매도호가: {result['매도호가1']:,}원",
+                f"<https://finance.naver.com/item/main.naver?code={stock_code}|네이버 증권에서 확인>",
             ]
             await _reply(channel, "\n".join(lines), thread_ts)
         except Exception as e:
