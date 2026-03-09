@@ -174,7 +174,7 @@ async def extract_strategies(
     response = await client.messages.create(
         model=model,
         max_tokens=4096,
-        system=EXTRACT_SYSTEM_PROMPT,
+        system=[{"type": "text", "text": EXTRACT_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
         messages=[{
             "role": "user",
             "content": f"아래 투자 전략 리포트에서 매매전략을 추출해주세요.\n\n{report_text}",
