@@ -42,8 +42,8 @@ print(f"Sent: ok={result['ok']}, ts={ts}")
 print(f"Text: {result.get('message', {}).get('text', '')}")
 
 # Wait for bot response
-print("Waiting 20s for bot response...")
-time.sleep(20)
+print("Waiting 60s for bot response (polling interval: 30s)...")
+time.sleep(60)
 
 # Check thread
 replies = get_replies(CHANNEL, ts)

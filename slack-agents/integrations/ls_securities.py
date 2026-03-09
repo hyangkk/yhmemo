@@ -458,7 +458,7 @@ async def fetch_naver_volume(stock_code: str) -> int | None:
             # datas[0].tradeVolume or accumulatedTradingVolume
             item = data.get("datas", [{}])[0]
             vol = item.get("accumulatedTradingVolume") or item.get("tradeVolume")
-            return int(vol) if vol else None
+            return int(str(vol).replace(",", "")) if vol else None
     except Exception as e:
         logger.warning(f"[naver] 거래량 조회 실패 ({stock_code}): {e}")
         return None
