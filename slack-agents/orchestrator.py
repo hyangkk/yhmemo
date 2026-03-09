@@ -336,6 +336,135 @@ async def main():
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
 
+    # ── 주식 매매 명령어 ──────────────────────────────────
+    async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
+        """!매수 종목코드 수량 [가격] - LS증권 매수 주문"""
+        if not ls_client:
+            await _reply(channel, "⚠️ LS증권 연동이 설정되지 않았습니다. (LS_APP_KEY 환경변수 필요)", thread_ts)
+            return
+        parts = args.strip().split()
+        if len(parts) < 2:
+            await _reply(channel, "사용법: `!매수 005930 1` (종목코드 수량) 또는 `!매수 005930 1 55000` (지정가)", thread_ts)
+            return
+        stock_code = parts[0]
+        try:
+            qty = int(parts[1])
+        except ValueError:
+            await _reply(channel, "수량은 숫자여야 합니다.", thread_ts)
+            return
+        price = 0
+        order_type = "03"  # 시장가
+        if len(parts) >= 3:
+            try:
+                price = int(parts[2])
+                order_type = "00"  # 지정가
+            except ValueError:
+                pass
+        mode = "모의투자" if ls_client.paper_trading else "실전투자"
+        price_str = f"{price:,}원" if price else "시장가"
+        await _reply(channel, f"📈 *[{mode}] 매수 주문 접수*\n종목: {stock_code} | 수량: {qty}주 | 가격: {price_str}", thread_ts)
+        try:
+            result = await ls_client.buy(stock_code=stock_code, qty=qty, price=price, order_type=order_type)
+            if result.get("결과") == "성공":
+                await _reply(channel, f"✅ *매수 주문 성공!*\n주문번호: {result['주문번호']}\n종목: {result['종목코드']} | {qty}주 | {price_str}", thread_ts)
+            else:
+                raw = result.get("raw", {})
+                err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
+                await _reply(channel, f"❌ *매수 주문 실패*\n{err_msg}", thread_ts)
+        except Exception as e:
+            await _reply(channel, f"❌ 매수 주문 오류: {str(e)[:300]}", thread_ts)
+
+    async def cmd_sell(args: str, user: str, channel: str, thread_ts: str = None):
+        """!매도 종목코드 수량 [가격] - LS증권 매도 주문"""
+        if not ls_client:
+            await _reply(channel, "⚠️ LS증권 연동이 설정되지 않았습니다.", thread_ts)
+            return
+        parts = args.strip().split()
+        if len(parts) < 2:
+            await _reply(channel, "사용법: `!매도 005930 1` (종목코드 수량) 또는 `!매도 005930 1 55000` (지정가)", thread_ts)
+            return
+        stock_code = parts[0]
+        try:
+            qty = int(parts[1])
+        except ValueError:
+            await _reply(channel, "수량은 숫자여야 합니다.", thread_ts)
+            return
+        price = 0
+        order_type = "03"
+        if len(parts) >= 3:
+            try:
+                price = int(parts[2])
+                order_type = "00"
+            except ValueError:
+                pass
+        mode = "모의투자" if ls_client.paper_trading else "실전투자"
+        price_str = f"{price:,}원" if price else "시장가"
+        await _reply(channel, f"📉 *[{mode}] 매도 주문 접수*\n종목: {stock_code} | 수량: {qty}주 | 가격: {price_str}", thread_ts)
+        try:
+            result = await ls_client.sell(stock_code=stock_code, qty=qty, price=price, order_type=order_type)
+            if result.get("결과") == "성공":
+                await _reply(channel, f"✅ *매도 주문 성공!*\n주문번호: {result['주문번호']}\n종목: {result['종목코드']} | {qty}주 | {price_str}", thread_ts)
+            else:
+                raw = result.get("raw", {})
+                err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
+                await _reply(channel, f"❌ *매도 주문 실패*\n{err_msg}", thread_ts)
+        except Exception as e:
+            await _reply(channel, f"❌ 매도 주문 오류: {str(e)[:300]}", thread_ts)
+
+    async def cmd_balance(args: str, user: str, channel: str, thread_ts: str = None):
+        """!잔고 - LS증권 계좌 잔고 조회"""
+        if not ls_client:
+            await _reply(channel, "⚠️ LS증권 연동이 설정되지 않았습니다.", thread_ts)
+            return
+        try:
+            result = await ls_client.get_balance()
+            summary = result.get("summary", {})
+            holdings = result.get("holdings", [])
+            mode = "모의투자" if ls_client.paper_trading else "실전투자"
+            lines = [f"💰 *[{mode}] 계좌 잔고*"]
+            lines.append(f"추정순자산: {summary.get('추정순자산', 0):,}원")
+            lines.append(f"총매입금액: {summary.get('총매입금액', 0):,}원")
+            lines.append(f"추정손익: {summary.get('추정손익', 0):,}원")
+            if holdings:
+                lines.append("\n*보유 종목:*")
+                for h in holdings:
+                    pnl = h.get('평가손익', 0)
+                    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+                    lines.append(f"{pnl_emoji} {h['종목명']} ({h['종목코드']}) | {h['잔고수량']}주 | 수익률: {h['수익률']:.1f}%")
+            else:
+                lines.append("\n보유 종목이 없습니다.")
+            await _reply(channel, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await _reply(channel, f"❌ 잔고 조회 오류: {str(e)[:300]}", thread_ts)
+
+    async def cmd_price(args: str, user: str, channel: str, thread_ts: str = None):
+        """!시세조회 종목코드 - LS증권 현재가 조회"""
+        if not ls_client:
+            await _reply(channel, "⚠️ LS증권 연동이 설정되지 않았습니다.", thread_ts)
+            return
+        stock_code = args.strip()
+        if not stock_code:
+            await _reply(channel, "사용법: `!시세조회 005930`", thread_ts)
+            return
+        try:
+            result = await ls_client.get_price(stock_code)
+            sign_map = {"1": "▲", "2": "▲", "3": "", "4": "▼", "5": "▼"}
+            sign = sign_map.get(result.get("등락부호", ""), "")
+            lines = [
+                f"📊 *{result['종목명']}* ({stock_code})",
+                f"현재가: {result['현재가']:,}원 {sign}{abs(result['전일대비']):,}원 ({result['등락률']:+.2f}%)",
+                f"거래량: {result['거래량']:,}",
+                f"매수호가: {result['매수호가1']:,}원 | 매도호가: {result['매도호가1']:,}원",
+            ]
+            await _reply(channel, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await _reply(channel, f"❌ 시세 조회 오류: {str(e)[:300]}", thread_ts)
+
+    slack.on_command("매수", cmd_buy)
+    slack.on_command("매도", cmd_sell)
+    slack.on_command("잔고", cmd_balance)
+    slack.on_command("시세조회", cmd_price)
+
     # "!운세" → 운세 에이전트 즉시 실행
     async def cmd_fortune(args: str, user: str, channel: str, thread_ts: str = None):
         now = datetime.now(KST)
@@ -457,12 +586,14 @@ async def main():
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
 - fortune: 운세 보기, 오늘의 운세
+- stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
 중요: 가격, 날씨, 환율, 분석, 비교 등은 chat. collect가 아닙니다.
 중요: 실제 코드/프로젝트를 만들어달라는 요청은 dev입니다. 단순 논의/질문은 chat.
 중요: 시스템/에이전트 상태 질문은 dashboard.
+중요: 주식 매수/매도/잔고/시세 관련은 stock_trade. 종목명은 한국어→종목코드 매핑: 삼성전자=005930, SK하이닉스=000660, 네이버=035420, 카카오=035720, LG에너지솔루션=373220, 현대차=005380, 삼성바이오로직스=207940, 기아=000270, 셀트리온=068270, POSCO홀딩스=005490
 
 {thread_hint}
 
@@ -471,10 +602,14 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|fortune|chat|dev|ignore",
+  "intent": "collect|briefing|dashboard|quote|fortune|stock_trade|chat|dev|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
+  "stock_action": "buy|sell|balance|price (stock_trade일 때만)",
+  "stock_code": "종목코드 6자리 (stock_trade일 때만, 예: 005930)",
+  "stock_qty": 1,
+  "stock_price": 0,
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
             user_prompt=text,
@@ -533,6 +668,29 @@ async def main():
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
+            elif action == "stock_trade":
+                stock_action = parsed.get("stock_action", "").strip()
+                stock_code = parsed.get("stock_code", "").strip()
+                stock_qty = int(parsed.get("stock_qty", 1) or 1)
+                stock_price = int(parsed.get("stock_price", 0) or 0)
+                if stock_action == "balance":
+                    await cmd_balance(args="", user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = "잔고 조회 완료"
+                elif stock_action == "price" and stock_code:
+                    await cmd_price(args=stock_code, user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = f"시세 조회 완료: {stock_code}"
+                elif stock_action == "buy" and stock_code:
+                    price_arg = f" {stock_price}" if stock_price else ""
+                    await cmd_buy(args=f"{stock_code} {stock_qty}{price_arg}", user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = f"매수 주문: {stock_code} {stock_qty}주"
+                elif stock_action == "sell" and stock_code:
+                    price_arg = f" {stock_price}" if stock_price else ""
+                    await cmd_sell(args=f"{stock_code} {stock_qty}{price_arg}", user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = f"매도 주문: {stock_code} {stock_qty}주"
+                else:
+                    await _reply(channel, "매매 명령을 이해하지 못했어요. 예: `삼성전자 1주 시장가 매수해줘`", thread_ts)
+                    result_text = "stock_trade 파싱 실패"
+                    success = False
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
@@ -1250,8 +1408,8 @@ async def main():
         except Exception:
             pass
 
-        # 3. 리딩방 진행 보고 (30분 간격)
-        plan.append("리딩방 진행 보고 (30분 간격)")
+        # 3. AI 전략실 진행보고 (30분 간격)
+        plan.append("AI 전략실 진행보고 (30분 간격)")
 
         # 4. 재시도 대기 작업 (있으면)
         retry_queue = pstate.get("retry_queue", [])
