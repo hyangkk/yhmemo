@@ -4,6 +4,7 @@ import MarketDashboard from "@/components/MarketDashboard";
 import TrendingTopics from "@/components/TrendingTopics";
 import InvestSignal from "@/components/InvestSignal";
 import Dashboard from "@/components/Dashboard";
+import CollectionSummary from "@/components/CollectionSummary";
 
 export default function Home() {
   return (
@@ -68,6 +69,9 @@ export default function Home() {
         </div>
       </div>
       <TrendingTopics />
+
+      {/* 정보 수집 현황 요약 */}
+      <CollectionSummary />
 
       {/* 구분선 - 시장 현황 */}
       <div className="max-w-5xl mx-auto px-4 py-8">
