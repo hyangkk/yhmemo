@@ -30,8 +30,8 @@ MODEL_PRICING = {
 DEFAULT_PRICE_INPUT = 0.80 / 1_000_000
 DEFAULT_PRICE_OUTPUT = 4.0 / 1_000_000
 
-# 일일 예산 (기본 $20 — 프롬프트 캐싱 적용으로 실질 소비는 $10 이하 예상)
-DAILY_BUDGET_USD = float(os.environ.get("DAILY_AI_BUDGET_USD", "20.0"))
+# 일일 예산 (기본 $10 — 프롬프트 캐싱 적용으로 실질 소비는 $5 이하 예상)
+DAILY_BUDGET_USD = float(os.environ.get("DAILY_AI_BUDGET_USD", "10.0"))
 
 
 class CostTracker:
