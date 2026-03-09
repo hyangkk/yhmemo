@@ -52,7 +52,7 @@ from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
 from agents.diary_quote_agent import DiaryQuoteAgent
-from integrations.ls_securities import LSSecuritiesClient
+from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
@@ -372,7 +372,7 @@ async def main():
                 err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
                 await _reply(channel, f"❌ *매수 주문 실패*\n{err_msg}", thread_ts)
         except Exception as e:
-            await _reply(channel, f"❌ 매수 주문 오류: {str(e)[:300]}", thread_ts)
+            await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)
 
     async def cmd_sell(args: str, user: str, channel: str, thread_ts: str = None):
         """!매도 종목코드 수량 [가격] - LS증권 매도 주문"""
@@ -409,7 +409,7 @@ async def main():
                 err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
                 await _reply(channel, f"❌ *매도 주문 실패*\n{err_msg}", thread_ts)
         except Exception as e:
-            await _reply(channel, f"❌ 매도 주문 오류: {str(e)[:300]}", thread_ts)
+            await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)
 
     async def cmd_balance(args: str, user: str, channel: str, thread_ts: str = None):
         """!잔고 - LS증권 계좌 잔고 조회"""
@@ -435,7 +435,7 @@ async def main():
                 lines.append("\n보유 종목이 없습니다.")
             await _reply(channel, "\n".join(lines), thread_ts)
         except Exception as e:
-            await _reply(channel, f"❌ 잔고 조회 오류: {str(e)[:300]}", thread_ts)
+            await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)
 
     async def cmd_price(args: str, user: str, channel: str, thread_ts: str = None):
         """!시세조회 종목코드 - LS증권 현재가 조회"""
@@ -458,7 +458,7 @@ async def main():
             ]
             await _reply(channel, "\n".join(lines), thread_ts)
         except Exception as e:
-            await _reply(channel, f"❌ 시세 조회 오류: {str(e)[:300]}", thread_ts)
+            await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)
 
     slack.on_command("매수", cmd_buy)
     slack.on_command("매도", cmd_sell)
