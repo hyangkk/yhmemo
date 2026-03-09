@@ -603,6 +603,10 @@ class SlackClient:
     async def poll_once(self):
         """한 번 폴링 (외부에서 주기적으로 호출)"""
         if not self._running:
+            logger.debug("[poll_once] not running, skip")
+            return
+        if not self._poll_channels:
+            logger.warning("[poll_once] _poll_channels is empty!")
             return
         for ch_name in self._poll_channels:
             await self._poll_channel(ch_name)
