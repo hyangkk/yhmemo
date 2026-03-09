@@ -289,7 +289,7 @@ class ProactiveAgent(BaseAgent):
             context["slot_key"] = slot_key
             return context
 
-        # 2.5단계: 리딩방 진행 보고 (30분마다, 슬롯 실행 다음으로 우선)
+        # 2.5단계: AI 전략실 진행보고 (30분마다, 슬롯 실행 다음으로 우선)
         if self._hours_since(self._state.get("last_reading_room_report", "")) >= 0.5:
             context["action"] = "reading_room_report"
             return context
@@ -1454,7 +1454,7 @@ JSON 응답:
     # ── 진행 보고 ──────────────────────────────────
 
     async def _do_reading_room_report(self, ctx: dict):
-        """30분마다 AI 리딩방 관련 개선 진행 상황 간단 보고."""
+        """30분마다 AI 전략실 관련 개선 진행 상황 간단 보고."""
         goals_summary = self.planner.get_status_summary()
         achievement = self.memory.get_plan_achievement_rate()
 
@@ -1471,7 +1471,7 @@ JSON 응답:
         ) if recent_insights else "(아직 없음)"
 
         report = await self.ai_think(
-            system_prompt="""AI 리딩방(실시간 투자 시그널 플랫폼) 개선 진행 보고를 작성하라.
+            system_prompt="""AI 전략실(실시간 투자 시그널 플랫폼) 개선 진행 보고를 작성하라.
 5줄 이내로 짧고 핵심만.
 
 포함할 내용:
@@ -1496,7 +1496,7 @@ JSON 응답:
         if report:
             await self.slack.send_message(
                 "ai-agents-general",
-                f"📡 *리딩방 진행 보고* ({ctx['current_time']})\n{report}",
+                f"📡 *AI 전략실 진행보고* ({ctx['current_time']})\n{report}",
             )
 
         self._state["last_reading_room_report"] = ctx["current_time"]

@@ -36,6 +36,7 @@ class LSSecuritiesClient:
         self.app_key = app_key or os.environ.get("LS_APP_KEY", "")
         self.app_secret = app_secret or os.environ.get("LS_APP_SECRET", "")
         self.account_no = account_no or os.environ.get("LS_ACCOUNT_NO", "")
+        self.account_pwd = os.environ.get("LS_ACCOUNT_PWD", "0000")
         self.paper_trading = paper_trading
         self.base_url = BASE_URL_PAPER if paper_trading else BASE_URL_LIVE
         self._access_token = ""
@@ -154,6 +155,7 @@ class LSSecuritiesClient:
                     "dangb": "0",
                     "charge": "1",
                     "cts_expcode": "",
+                    "accno": self.account_no,
                 }
             },
         )
@@ -260,6 +262,8 @@ class LSSecuritiesClient:
                     "MgntrnCode": "000",
                     "LoanDt": "",
                     "OrdCndiTpCode": "0",
+                    "AcntNo": self.account_no,
+                    "InptPwd": self.account_pwd,
                 }
             },
         )
