@@ -11,8 +11,8 @@ export async function GET(request: Request) {
   const log: string[] = [];
 
   try {
-    // Step 1: Get YouTube session cookies
-    log.push("Step 1: Getting session cookies...");
+    // Step 1: Fetch video page with cookies
+    log.push("Step 1: Fetching video page...");
     const cookieResp = await fetch("https://www.youtube.com", {
       headers: { "User-Agent": BROWSER_UA },
       redirect: "manual",
@@ -21,16 +21,13 @@ export async function GET(request: Request) {
     const setCookies = cookieResp.headers.getSetCookie?.() || [];
     const cookieParts: string[] = [];
     for (const sc of setCookies) {
-      const nameValue = sc.split(";")[0];
-      if (nameValue) cookieParts.push(nameValue);
+      const nv = sc.split(";")[0];
+      if (nv) cookieParts.push(nv);
     }
     cookieParts.push("SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB");
     cookieParts.push("CONSENT=YES+cb.20210328-17-p0.en+FX+987");
     const cookieStr = cookieParts.join("; ");
-    log.push(`  Cookies: ${cookieParts.length} items (${setCookies.length} from YouTube)`);
 
-    // Step 2: Fetch video page
-    log.push("\nStep 2: Fetching video page...");
     const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
       headers: {
         "Accept-Language": "ko,en;q=0.9",
@@ -40,64 +37,108 @@ export async function GET(request: Request) {
       cache: "no-store",
     });
     const html = await pageResp.text();
-    log.push(`  HTML length: ${html.length}`);
-    log.push(`  Page status: ${pageResp.status}`);
+    log.push(`  HTML: ${html.length} bytes, status: ${pageResp.status}`);
 
-    // Extract visitorData
-    const vdMatch = html.match(/"visitorData":"([^"]+)"/);
-    const visitorData = vdMatch ? vdMatch[1] : null;
-    log.push(`  visitorData: ${visitorData ? visitorData.substring(0, 40) + "..." : "NOT FOUND"}`);
+    // Check for transcript data directly in page
+    const transcriptInPage = (html.match(/transcriptSegmentRenderer/g) || []).length;
+    log.push(`  transcriptSegmentRenderer in page: ${transcriptInPage}`);
 
-    // Extract getTranscriptEndpoint params
-    const paramsMatch = html.match(/getTranscriptEndpoint.*?"params"\s*:\s*"([^"]+)"/);
-    const transcriptParams = paramsMatch ? paramsMatch[1] : null;
-    log.push(`  getTranscriptEndpoint params: ${transcriptParams ? transcriptParams.substring(0, 40) + "..." : "NOT FOUND"}`);
-
-    // Caption tracks check
-    const captionTracks = JSON.parse(html.split('"captions":')[1]?.split(',"videoDetails')[0] || "{}");
-    const tracks = captionTracks?.playerCaptionsTracklistRenderer?.captionTracks || [];
+    // Extract caption tracks
+    let tracks: { baseUrl: string; languageCode: string; kind?: string }[] = [];
+    try {
+      const captions = JSON.parse(html.split('"captions":')[1]?.split(',"videoDetails')[0] || "{}");
+      tracks = captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+    } catch { /* ignore */ }
     log.push(`  Caption tracks: ${tracks.length}`);
-    for (const t of tracks.slice(0, 3)) {
-      log.push(`    - ${t.languageCode} (${t.kind || "manual"})`);
+
+    // Step 2: Try video.google.com/timedtext API
+    log.push("\nStep 2: Testing video.google.com/timedtext...");
+    const ttUrls = [
+      `https://video.google.com/timedtext?type=list&v=${videoId}`,
+      `https://video.google.com/timedtext?lang=en&v=${videoId}`,
+    ];
+    for (const ttUrl of ttUrls) {
+      try {
+        const ttResp = await fetch(ttUrl, {
+          headers: { "User-Agent": BROWSER_UA },
+          cache: "no-store",
+        });
+        const ttText = await ttResp.text();
+        const shortUrl = ttUrl.split("timedtext")[1];
+        log.push(`  ${shortUrl}: status=${ttResp.status}, length=${ttText.length}`);
+        if (ttText.length > 0 && ttText.length < 500) {
+          log.push(`    content: ${ttText.substring(0, 200)}`);
+        } else if (ttText.length > 0) {
+          log.push(`    preview: ${ttText.substring(0, 200)}`);
+        }
+      } catch (e) {
+        log.push(`  Error: ${e}`);
+      }
     }
 
-    // Step 3: Try get_transcript API
-    if (transcriptParams) {
-      log.push("\nStep 3: Testing get_transcript API...");
+    // Step 3: Try caption URL with Origin header
+    if (tracks.length > 0) {
+      const enTrack = tracks.find(t => t.languageCode === "en" && t.kind !== "asr") || tracks[0];
+      log.push(`\nStep 3: Caption URL download (${enTrack.languageCode})...`);
 
-      // 페이지에서 전체 INNERTUBE_CONTEXT 추출
-      const ctxMatch = html.match(/"INNERTUBE_CONTEXT"\s*:\s*(\{[\s\S]*?\})\s*,\s*"INNERTUBE/);
-      let fullContext = null;
-      if (ctxMatch) {
+      // Test with Origin header (mimicking same-origin request)
+      const variants = [
+        { name: "with Origin+Referer", headers: {
+          "User-Agent": BROWSER_UA, "Cookie": cookieStr,
+          "Origin": "https://www.youtube.com",
+          "Referer": `https://www.youtube.com/watch?v=${videoId}`,
+          "Accept": "*/*",
+        }},
+        { name: "with Sec-Fetch headers", headers: {
+          "User-Agent": BROWSER_UA, "Cookie": cookieStr,
+          "Origin": "https://www.youtube.com",
+          "Referer": `https://www.youtube.com/watch?v=${videoId}`,
+          "Sec-Fetch-Dest": "empty",
+          "Sec-Fetch-Mode": "cors",
+          "Sec-Fetch-Site": "same-origin",
+        }},
+        { name: "plain (no extra headers)", headers: {
+          "User-Agent": BROWSER_UA,
+        }},
+      ];
+
+      for (const v of variants) {
         try {
-          fullContext = JSON.parse(ctxMatch[1]);
-          log.push(`  INNERTUBE_CONTEXT: found (clientName=${fullContext?.client?.clientName})`);
-        } catch { log.push("  INNERTUBE_CONTEXT: parse error"); }
-      } else {
-        log.push("  INNERTUBE_CONTEXT: NOT FOUND");
+          const resp = await fetch(enTrack.baseUrl, {
+            headers: v.headers,
+            cache: "no-store",
+          });
+          const text = await resp.text();
+          log.push(`  ${v.name}: status=${resp.status}, length=${text.length}`);
+          if (text.length > 0) {
+            log.push(`    preview: ${text.substring(0, 150)}`);
+          }
+        } catch (e) {
+          log.push(`  ${v.name}: error=${e}`);
+        }
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ctx: any = fullContext || {
-        client: {
-          hl: "ko",
-          gl: "KR",
-          clientName: "WEB",
-          clientVersion: "2.20260301.00.00",
-        },
-      };
-      if (visitorData && ctx.client) ctx.client.visitorData = visitorData;
+      // Try with &fmt=srv3 (different format)
+      try {
+        const srv3Resp = await fetch(enTrack.baseUrl + "&fmt=srv3", {
+          headers: { "User-Agent": BROWSER_UA, "Cookie": cookieStr },
+          cache: "no-store",
+        });
+        const srv3Text = await srv3Resp.text();
+        log.push(`  fmt=srv3: status=${srv3Resp.status}, length=${srv3Text.length}`);
+        if (srv3Text.length > 0) {
+          log.push(`    preview: ${srv3Text.substring(0, 150)}`);
+        }
+      } catch (e) {
+        log.push(`  fmt=srv3: error=${e}`);
+      }
+    }
 
-      // API 키 추출
-      const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
-      const apiKey = apiKeyMatch ? apiKeyMatch[1] : "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
-      log.push(`  API key: ${apiKey}`);
-
-      const decodedParams = decodeURIComponent(transcriptParams);
-
-      // Test A: 전체 context + decoded params
-      const gtResp = await fetch(
-        `https://www.youtube.com/youtubei/v1/get_transcript?key=${apiKey}&prettyPrint=false`,
+    // Step 4: Try YouTube oEmbed + separate timedtext via innertube
+    log.push("\nStep 4: Try innertube player API for caption URLs...");
+    try {
+      const playerResp = await fetch(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
         {
           method: "POST",
           headers: {
@@ -105,62 +146,42 @@ export async function GET(request: Request) {
             "User-Agent": BROWSER_UA,
             "Cookie": cookieStr,
             "Origin": "https://www.youtube.com",
-            "Referer": `https://www.youtube.com/watch?v=${videoId}`,
-            "X-YouTube-Client-Name": "1",
-            "X-YouTube-Client-Version": ctx.client?.clientVersion || "2.20260301.00.00",
-            ...(visitorData ? { "X-Goog-Visitor-Id": visitorData } : {}),
+            "Referer": "https://www.youtube.com/",
           },
-          body: JSON.stringify({ context: ctx, params: decodedParams }),
+          body: JSON.stringify({
+            context: {
+              client: {
+                hl: "ko", gl: "KR",
+                clientName: "WEB",
+                clientVersion: "2.20260301.00.00",
+              },
+            },
+            videoId,
+          }),
           cache: "no-store",
         }
       );
-      log.push(`  Status: ${gtResp.status}`);
-      const gtText = await gtResp.text();
-      log.push(`  Response length: ${gtText.length}`);
-      const segCount = (gtText.match(/transcriptSegmentRenderer/g) || []).length;
-      log.push(`  Segments found: ${segCount}`);
-      if (segCount > 0) {
-        log.push(`  SUCCESS!`);
-        // Parse first segment
-        try {
-          const gtData = JSON.parse(gtText);
-          for (const action of gtData.actions || []) {
-            const segs = action?.updateEngagementPanelAction?.content?.transcriptRenderer?.content
-              ?.transcriptSearchPanelRenderer?.body?.transcriptSegmentListRenderer?.initialSegments;
-            if (segs && segs.length > 0) {
-              const first = segs[0]?.transcriptSegmentRenderer;
-              if (first) {
-                const text = first.snippet?.runs?.map((r: { text?: string }) => r.text || "").join("") || "";
-                log.push(`  First segment: "${text}"`);
-              }
-            }
-          }
-        } catch { /* ignore */ }
-      } else if (gtText.length < 1000) {
-        log.push(`  Response: ${gtText}`);
-      } else {
-        log.push(`  Response preview: ${gtText.substring(0, 500)}`);
-      }
-    } else {
-      log.push("\nStep 3: SKIPPED (no getTranscriptEndpoint params)");
-
-      // Fallback: Try caption URL download
-      if (tracks.length > 0) {
-        const track = tracks[0];
-        log.push(`\nStep 3b: Trying caption URL for ${track.languageCode}...`);
-        const xmlResp = await fetch(track.baseUrl, {
+      const playerData = await playerResp.json();
+      const apiTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+      log.push(`  Innertube tracks: ${apiTracks.length}`);
+      if (apiTracks.length > 0) {
+        const apiTrack = apiTracks.find((t: { languageCode: string; kind?: string }) => t.languageCode === "en" && t.kind !== "asr") || apiTracks[0];
+        log.push(`  Trying innertube track URL for ${apiTrack.languageCode}...`);
+        const apiXmlResp = await fetch(apiTrack.baseUrl, {
           headers: { "User-Agent": BROWSER_UA, "Cookie": cookieStr },
           cache: "no-store",
         });
-        const xml = await xmlResp.text();
-        log.push(`  Status: ${xmlResp.status}, Length: ${xml.length}`);
-        if (xml.length > 0) {
-          log.push(`  Preview: ${xml.substring(0, 200)}`);
+        const apiXml = await apiXmlResp.text();
+        log.push(`  Result: status=${apiXmlResp.status}, length=${apiXml.length}`);
+        if (apiXml.length > 0) {
+          log.push(`  preview: ${apiXml.substring(0, 200)}`);
         }
       }
+    } catch (e) {
+      log.push(`  Error: ${e}`);
     }
 
-    return NextResponse.json({ log, success: true });
+    return NextResponse.json({ log });
   } catch (error) {
     log.push(`\nERROR: ${error}`);
     return NextResponse.json({ log, error: String(error) });
