@@ -25,6 +25,8 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from integrations.slack_client import SlackClient
+
 logger = logging.getLogger("agent_factory")
 
 KST = timezone(timedelta(hours=9))
@@ -187,7 +189,7 @@ class AgentFactory:
             "description": spec.get("description", ""),
             "file": str(file_path.relative_to(BASE_DIR)),
             "class_name": self._to_class_name(name),
-            "slack_channel": spec.get("slack_channel", "ai-agent-logs"),
+            "slack_channel": spec.get("slack_channel", SlackClient.CHANNEL_LOGS),
             "loop_interval": spec.get("loop_interval", 300),
             "created_at": _now().isoformat(),
             "created_by": spec.get("created_by", "proactive"),
@@ -268,7 +270,7 @@ act 로직: {spec.get('act_logic', '결정 실행')}
             description=spec.get("description", f"동적 생성 에이전트: {name}"),
             purpose=spec.get("purpose", ""),
             created_at=_now().isoformat(),
-            slack_channel=spec.get("slack_channel", "ai-agent-logs"),
+            slack_channel=spec.get("slack_channel", SlackClient.CHANNEL_LOGS),
             loop_interval=spec.get("loop_interval", 300),
             observe_code=self._indent(observe_code, 8),
             think_code=self._indent(think_code, 8),

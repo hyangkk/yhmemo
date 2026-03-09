@@ -22,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from core.base_agent import BaseAgent
+from integrations.slack_client import SlackClient
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class TaskBoardAgent(BaseAgent):
         super().__init__(
             name="task_board",
             description="노션 'AI 업무 지시 보드 DB'에서 업무를 읽어 자동 실행한다.",
-            slack_channel="ai-agents-general",
+            slack_channel=SlackClient.CHANNEL_GENERAL,
             loop_interval=600,  # 10분 간격으로 폴링
             **kwargs,
         )

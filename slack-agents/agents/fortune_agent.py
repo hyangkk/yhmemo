@@ -19,6 +19,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from core.base_agent import BaseAgent
+from integrations.slack_client import SlackClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ SEND_HOURS = (8, 13, 20)
 class FortuneAgent(BaseAgent):
     """하루 3번 오늘의 운세를 보내주는 에이전트"""
 
-    def __init__(self, target_channel: str = "ai-agents-general", **kwargs):
+    def __init__(self, target_channel: str = SlackClient.CHANNEL_GENERAL, **kwargs):
         super().__init__(
             name="fortune",
             description="하루 3번 (오전 8시, 오후 1시, 오후 8시) 오늘의 운세를 보내주는 에이전트",

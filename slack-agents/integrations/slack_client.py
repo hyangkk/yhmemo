@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 class SlackClient:
     """슬랙 통합 클라이언트"""
 
-    # 기본 채널 이름들
-    CHANNEL_GENERAL = "ai-agents-general"
-    CHANNEL_COLLECTOR = "ai-collector"
-    CHANNEL_CURATOR = "ai-curator"
-    CHANNEL_LOGS = "ai-agent-logs"
-    CHANNEL_QUOTE = "명언-한마디"
+    # 채널 ID (이름 변경에도 영향 없음)
+    CHANNEL_GENERAL = "C0AJJ469SV8"    # ai-agents-general
+    CHANNEL_COLLECTOR = "C0AJBN0PDQB"  # ai-collector
+    CHANNEL_CURATOR = "C0AJEM4J5KP"    # ai-curator
+    CHANNEL_LOGS = "C0AJJ464VJN"       # ai-agent-logs
+    CHANNEL_QUOTE = "C0AJUJTHJGL"      # 명언-한마디
 
     def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
@@ -68,8 +68,7 @@ class SlackClient:
                 # (유저가 답글 달면 감지하기 위해)
                 # 로그 채널은 제외
                 msg_ts = result.get("ts")
-                log_ch = self._channel_cache.get(self.CHANNEL_LOGS)
-                if msg_ts and channel_id and channel_id != log_ch:
+                if msg_ts and channel_id and channel_id != self.CHANNEL_LOGS:
                     if channel_id not in self._active_threads:
                         self._active_threads[channel_id] = {}
                     self._active_threads[channel_id][msg_ts] = msg_ts
@@ -175,32 +174,16 @@ class SlackClient:
         return channel_name  # fallback
 
     async def ensure_channels_exist(self):
-        """필요한 채널들이 있는지 확인하고 없으면 생성, 봇을 join"""
+        """필요한 채널에 봇을 join (채널 ID 기반)"""
         required = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
                     self.CHANNEL_CURATOR, self.CHANNEL_LOGS, self.CHANNEL_QUOTE]
-        try:
-            result = await self.client.conversations_list(types="public_channel")
-            existing = {}
-            for ch in result["channels"]:
-                existing[ch["name"]] = ch["id"]
-
-            for ch_name in required:
-                if ch_name not in existing:
-                    logger.info(f"Creating channel: {ch_name}")
-                    resp = await self.client.conversations_create(name=ch_name)
-                    existing[ch_name] = resp["channel"]["id"]
-
-            # 봇을 모든 필수 채널에 join
-            for ch_name in required:
-                ch_id = existing.get(ch_name)
-                if ch_id:
-                    try:
-                        await self.client.conversations_join(channel=ch_id)
-                        logger.info(f"Joined channel: {ch_name} ({ch_id})")
-                    except Exception as e:
-                        logger.warning(f"Failed to join {ch_name}: {e}")
-        except Exception as e:
-            logger.warning(f"Could not ensure channels: {e}")
+        for ch_id in required:
+            try:
+                await self.client.conversations_join(channel=ch_id)
+                logger.info(f"Joined channel: {ch_id}")
+            except Exception as e:
+                if "already_in_channel" not in str(e):
+                    logger.warning(f"Failed to join {ch_id}: {e}")
 
     # ── 폴링 타임스탬프 영속 저장 ──────────────────────
 
@@ -317,9 +300,9 @@ class SlackClient:
             logger.error(f"NL handler error: {e}")
 
     async def _poll_channel(self, channel_name: str):
-        """한 채널의 새 메시지를 폴링"""
+        """한 채널의 새 메시지를 폴링 (채널 ID 또는 이름)"""
         channel_id = await self._resolve_channel(channel_name)
-        if not channel_id or channel_id == channel_name:
+        if not channel_id:
             return
 
         try:
@@ -449,12 +432,10 @@ class SlackClient:
         # 명령어는 GENERAL 채널에서만 수신 (rate limit 방지)
         channels = [self.CHANNEL_GENERAL]
 
-        for ch_name in channels:
-            ch_id = self._channel_cache.get(ch_name)
-            if ch_id:
-                self._last_ts[ch_id] = str(time.time())
+        for ch_id in channels:
+            self._last_ts[ch_id] = str(time.time())
 
-        logger.info(f"Polling channels: {[self._channel_cache.get(ch, '?') for ch in channels]}")
+        logger.info(f"Polling channels: {channels}")
 
         while self._running:
             try:
@@ -556,31 +537,27 @@ class SlackClient:
         await self._init_channel_cache()
 
         # 봇이 참여할 채널 (필수 채널만)
-        for ch_name in [self.CHANNEL_GENERAL, self.CHANNEL_LOGS]:
-            ch_id = self._channel_cache.get(ch_name)
-            if ch_id:
-                try:
-                    await self.client.conversations_join(channel=ch_id)
-                except Exception:
-                    pass
+        for ch_id in [self.CHANNEL_GENERAL, self.CHANNEL_LOGS]:
+            try:
+                await self.client.conversations_join(channel=ch_id)
+            except Exception:
+                pass
 
-        # 메시지 수신 채널 (명령어 + 자연어)
+        # 메시지 수신 채널 (명령어 + 자연어) — 채널 ID 직접 사용
         poll_channels = [self.CHANNEL_GENERAL, self.CHANNEL_QUOTE]
         saved_ts = self._load_last_ts()
-        for ch_name in poll_channels:
-            ch_id = self._channel_cache.get(ch_name)
-            if ch_id:
-                if ch_id in saved_ts:
-                    self._last_ts[ch_id] = saved_ts[ch_id]
-                else:
-                    self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
+        for ch_id in poll_channels:
+            if ch_id in saved_ts:
+                self._last_ts[ch_id] = saved_ts[ch_id]
+            else:
+                self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
         self._poll_channels = poll_channels
 
         # 활성 스레드 복원
         self._active_threads = self._load_active_threads()
 
         # 주요 채널의 최근 스레드 자동 발견 (시작 시 1회)
-        main_ch_id = self._channel_cache.get(self.CHANNEL_GENERAL)
+        main_ch_id = self.CHANNEL_GENERAL
         if main_ch_id:
             try:
                 result = await self.client.conversations_history(channel=main_ch_id, limit=20)

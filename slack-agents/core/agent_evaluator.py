@@ -21,6 +21,8 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
+from integrations.slack_client import SlackClient
+
 logger = logging.getLogger("agent_evaluator")
 
 KST = timezone(timedelta(hours=9))
@@ -241,7 +243,7 @@ JSON: {"recommendations": ["추천1", ...], "should_retire": ["에이전트명",
                 new_spec = {
                     "purpose": old_info.get("purpose", ""),
                     "description": f"재생성: {old_info.get('description', '')} — 이전 D등급으로 코드 개선",
-                    "slack_channel": old_info.get("slack_channel", "ai-agent-logs"),
+                    "slack_channel": old_info.get("slack_channel", SlackClient.CHANNEL_LOGS),
                     "loop_interval": old_info.get("loop_interval", 300),
                 }
                 result = await self._factory.rebuild_agent(name, new_spec)

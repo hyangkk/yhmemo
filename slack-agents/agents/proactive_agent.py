@@ -25,6 +25,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from core.base_agent import BaseAgent
+from integrations.slack_client import SlackClient
 from core.goal_planner import GoalPlanner, GoalStatus, PlanStepStatus
 from core.proposal_lifecycle import ProposalLifecycle, ProposalState
 from core.self_memory import SelfMemory
@@ -47,7 +48,7 @@ class ProactiveAgent(BaseAgent):
             name="proactive",
             description="완전 자율운영 에이전트. "
                         "목표 기반으로 기획, 개발, 런칭, 측정까지 자율 실행한다.",
-            slack_channel="ai-agents-general",
+            slack_channel=SlackClient.CHANNEL_GENERAL,
             loop_interval=300,  # 5분 간격
             **kwargs,
         )
@@ -460,7 +461,7 @@ class ProactiveAgent(BaseAgent):
             self._save_state()
 
         await self.slack.send_message(
-            "ai-agent-logs",
+            SlackClient.CHANNEL_LOGS,
             f"⏰ *[{h_str}:00 계획 실행]* [{method}] {task_desc}\n"
             f"예상 결과: {expected}",
         )
@@ -519,7 +520,7 @@ class ProactiveAgent(BaseAgent):
                     retry_queue.pop(retry_idx)
                     self._state["retry_queue"] = retry_queue
                     await self.slack.send_message(
-                        "ai-agent-logs",
+                        SlackClient.CHANNEL_LOGS,
                         f"✅ *[재시도 성공]* {task_desc[:60]} → {grade}",
                     )
                 else:
@@ -535,7 +536,7 @@ class ProactiveAgent(BaseAgent):
                             success_criteria=failed_task.get("expected", "작업 완료"),
                         )
                         await self.slack.send_message(
-                            "ai-agents-general",
+                            SlackClient.CHANNEL_GENERAL,
                             f"🔄 *[재시도 2회 실패 → Goal 에스컬레이션]* {failed_task['task'][:60]}\n_체계적 계획으로 재접근합니다._",
                         )
                     self._state["retry_queue"] = retry_queue
@@ -596,7 +597,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
         # 3단계: 실행 계획이 있으면 실제로 실행
         if steps:
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"🔧 *[실행 시작]* {task_desc[:80]}\n"
                 f"📋 계획: {len(steps)}단계\n"
                 + "\n".join(f"  {i+1}. {s.get('description', s.get('tool', '?'))}" for i, s in enumerate(steps[:5])),
@@ -620,7 +621,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
             report = summary or result_text[:500]
 
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"{'✅' if success_count == total else '⚠️'} *[실행 완료]* {task_desc[:80]} ({success_count}/{total})\n```{report[:500]}```",
             )
             self.memory.record_insight(report[:200], context=task_desc[:50])
@@ -629,7 +630,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
         # steps가 없으면 기존 방식 (AI 분석만)
         if analysis:
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"📝 *[분석 완료]* {task_desc[:80]}\n```{analysis[:500]}```",
             )
             self.memory.record_insight(analysis[:200], context=task_desc[:50])
@@ -650,7 +651,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
 
         if result:
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"✅ *[작업 완료]* {task_desc[:100]}\n```{result[:500]}```",
             )
             self.memory.record_insight(result[:200], context=task_desc[:50])
@@ -713,7 +714,7 @@ JSON만 응답하세요. 다른 텍스트를 붙이지 마세요.""",
                         f"목표:\n{goals_summary}",
         )
         if msg:
-            await self.slack.send_message("ai-agents-general", f"📋 {msg}")
+            await self.slack.send_message(SlackClient.CHANNEL_GENERAL, f"📋 {msg}")
             return "보고 전송 완료"
         return "보고 생성 실패"
 
@@ -783,7 +784,7 @@ JSON: {"adjust": true/false, "reason": "이유", "changes": {"HH": {"task": "새
                 self.memory.set_daily_plan(current_plan)
 
                 await self.slack.send_message(
-                    "ai-agent-logs",
+                    SlackClient.CHANNEL_LOGS,
                     f"🔄 *[계획 수정]* {parsed.get('reason', '')[:100]}\n"
                     f"변경: {json.dumps(parsed['changes'], ensure_ascii=False)[:300]}",
                 )
@@ -919,7 +920,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
         from core.executor import execute_plan, format_execution_results, EXECUTOR_TOOL_SCHEMA, ALLOWED_BASE
 
         await self.slack.send_message(
-            "ai-agent-logs",
+            SlackClient.CHANNEL_LOGS,
             f"🔨 *[작업 시작]* {step.description[:150]}",
         )
 
@@ -977,7 +978,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             report = summary or result_text[:500]
 
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"{'✅' if success_count == total else '⚠️'} *작업 완료* ({success_count}/{total})\n"
                 f"{step.description[:100]}\n```{report[:500]}```",
             )
@@ -986,14 +987,14 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
 
         if analysis:
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"📝 *분석 완료*\n{step.description[:100]}\n```{analysis[:500]}```",
             )
             self.memory.record_insight(analysis[:200], context=step.description[:50])
             return analysis[:800]
 
         await self.slack.send_message(
-            "ai-agent-logs",
+            SlackClient.CHANNEL_LOGS,
             f"⚠️ *작업 실패:* {step.description[:80]}",
         )
         return "작업 결과 생성 실패"
@@ -1015,7 +1016,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             user_prompt=f"목표: {goal.title}\n진행률: {goal.progress_pct()}%\n스텝: {step.description}",
         )
         if msg:
-            await self.slack.send_message("ai-agents-general", f"📋 *진행 보고*\n\n{msg}")
+            await self.slack.send_message(SlackClient.CHANNEL_GENERAL, f"📋 *진행 보고*\n\n{msg}")
             return "보고 전송 완료"
         return "보고 생성 실패"
 
@@ -1030,7 +1031,7 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             steps = await self.planner.generate_plan(goal)
             if steps:
                 await self.slack.send_message(
-                    "ai-agent-logs",
+                    SlackClient.CHANNEL_LOGS,
                     f"📋 *[계획 생성]* {goal.title}\n"
                     + "\n".join(f"  {i+1}. {s.description} ({s.method})" for i, s in enumerate(steps)),
                 )
@@ -1043,12 +1044,12 @@ JSON: {{"title": "제안 제목", "content": "내용 (3줄)", "action_needed": "
             logger.info(f"[proactive] Goal replanned: {goal.title}")
         elif goal.status == GoalStatus.COMPLETED:
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"✅ *목표 달성: {goal.title}* ({goal.progress_pct()}%)",
             )
         elif goal.status == GoalStatus.FAILED:
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"❌ *목표 실패: {goal.title}*\n{goal.feedback_history[-1].get('reason', '') if goal.feedback_history else ''}",
             )
 
@@ -1114,7 +1115,7 @@ JSON 응답:
                 plan_lines.append(f"  {h}:00 [{info.get('method', '?')}] {info.get('task', '?')}")
 
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"📅 *오늘의 계획* ({ctx['today']})\n\n" + "\n".join(plan_lines),
             )
             logger.info(f"[proactive] Daily plan generated: {len(hours)} hours")
@@ -1142,7 +1143,7 @@ JSON 응답:
             logger.info(f"[proactive] Fallback plan set: {len(fallback_hours)} hours")
 
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"⚠️ *[계획 생성 실패 → 기본 계획 적용]* {str(e)[:100]}",
             )
 
@@ -1207,7 +1208,7 @@ JSON 응답:
             grade = parsed.get("grade", "C")
             if grade in ("D", "F"):
                 await self.slack.send_message(
-                    "ai-agents-general",
+                    SlackClient.CHANNEL_GENERAL,
                     f"⚠️ *[{check_hour}시 미달성: {grade}]* "
                     f"계획: {planned_task[:60]}\n"
                     f"실제: {parsed.get('actual', '')[:60]}\n"
@@ -1321,7 +1322,7 @@ JSON 응답:
 
         if briefing:
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"☀️ *아침 종합 보고* ({ctx['today']} {ctx['weekday']})\n\n{briefing}",
             )
 
@@ -1374,7 +1375,7 @@ JSON 응답:
                 msg = f"🚨 *시장 알림*\n\n{parsed['alert_message']}"
                 if parsed.get("investment_insight"):
                     msg += f"\n\n💰 *투자 인사이트:* {parsed['investment_insight']}"
-                await self.slack.send_message("ai-agents-general", msg)
+                await self.slack.send_message(SlackClient.CHANNEL_GENERAL, msg)
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"[proactive] Trend check parse error: {e}")
 
@@ -1495,7 +1496,7 @@ JSON 응답:
 
         if report:
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"📡 *AI 전략실 진행보고* ({ctx['current_time']})\n{report}",
             )
 
@@ -1540,7 +1541,7 @@ JSON 응답:
             rate = achievement.get('rate', 0)
             rate_emoji = "🟢" if rate >= 70 else "🟡" if rate >= 40 else "🔴"
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"📦 *결과물 보고* ({ctx['current_time']})\n"
                 f"{rate_emoji} 계획 달성률: {rate:.0f}%\n\n{report}",
             )
@@ -1576,13 +1577,13 @@ share_with_partner는 실질적으로 가치 있는 발견일 때만 true.""",
             result = self._parse_json(analysis)
 
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"🔬 *[리서치]* {parsed.get('topic', '')}\n{result.get('summary', '')[:300]}",
             )
 
             if result.get("share_with_partner") and result.get("opportunity"):
                 await self.slack.send_message(
-                    "ai-agents-general",
+                    SlackClient.CHANNEL_GENERAL,
                     f"🔬 *리서치 발견*\n\n"
                     f"*{parsed.get('topic', '')}*\n\n"
                     f"{result.get('summary', '')}\n\n"
@@ -1611,7 +1612,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
             if parsed.get("method") == "search" and parsed.get("query"):
                 result = await _web_search(parsed["query"])
                 await self.slack.send_message(
-                    "ai-agent-logs",
+                    SlackClient.CHANNEL_LOGS,
                     f"🔍 *[자율 리서치]* {parsed.get('task', '')[:100]}\n{result[:300]}",
                 )
         except (json.JSONDecodeError, KeyError) as e:
@@ -1755,7 +1756,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
             if auto_count:
                 report_lines.append(f"_🤖 {auto_count}건 자동 수정 시작..._")
 
-        await self.slack.send_message("ai-agents-general", "\n".join(report_lines))
+        await self.slack.send_message(SlackClient.CHANNEL_GENERAL, "\n".join(report_lines))
 
         # 3.5단계: 깨달음/원칙을 self_memory에 저장
         for insight in parsed.get("daily_insights", []):
@@ -1793,7 +1794,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                     for i, s in enumerate(goal.plan)
                 )
                 await self.slack.send_message(
-                    "ai-agents-general",
+                    SlackClient.CHANNEL_GENERAL,
                     f"🔧 *[자동 개선 → Goal 생성]* {fix_title}\n\n{plan_text}\n\n_다음 슬롯에서 자동 실행됩니다._",
                 )
                 self.memory.record_insight(
@@ -1810,7 +1811,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                     )
                     if result:
                         await self.slack.send_message(
-                            "ai-agents-general",
+                            SlackClient.CHANNEL_GENERAL,
                             f"✅ *자동 개선 분석 완료:* {fix_title}\n```{result[:500]}```",
                         )
                         self.memory.record_insight(result[:200], context=f"자동개선: {fix_title}")
@@ -1827,7 +1828,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                     success_criteria=new_goal.get("success_criteria", ""),
                 )
                 await self.slack.send_message(
-                    "ai-agent-logs",
+                    SlackClient.CHANNEL_LOGS,
                     f"🎯 *새 목표 추가:* {new_goal['title']}",
                 )
 
@@ -2051,7 +2052,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
 
         await self.slack.send_message(
-            "ai-agents-general",
+            SlackClient.CHANNEL_GENERAL,
             f"🔧 *[자기수정 시작]* 패턴: {pattern.get('type', '?')} "
             f"(연속 실패 {pattern.get('count', 0)}회)\n"
             f"_코드 분석 → 수정 → 테스트 → 커밋 진행 중..._",
@@ -2068,7 +2069,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                 for c in result.get("changes", [])
             )
             await self.slack.send_message(
-                "ai-agents-general",
+                SlackClient.CHANNEL_GENERAL,
                 f"✅ *[자기수정 성공]* 커밋: `{result.get('commit_hash', '?')}`\n"
                 f"수정 파일:\n{changes_text}\n"
                 f"_자기 코드를 스스로 고쳤습니다._",
@@ -2082,7 +2083,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
             reason = result.get("reason", "알 수 없는 오류")
             rollback = " (롤백됨)" if result.get("rollback") else ""
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"❌ *[자기수정 실패]* {reason}{rollback}",
             )
             self.memory.record_evaluation(
@@ -2101,7 +2102,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         today = ctx.get("today", self.now_kst().strftime("%Y-%m-%d"))
 
         await self.slack.send_message(
-            "ai-agent-logs",
+            SlackClient.CHANNEL_LOGS,
             "📊 *[에이전트 조직 평가 시작]*\n_전체 에이전트 성과 분석 중..._",
         )
 
@@ -2136,7 +2137,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if recs:
             report += "\n\n*AI 추천:*\n" + "\n".join(f"  • {r}" for r in recs[:3])
 
-        await self.slack.send_message("ai-agents-general", report)
+        await self.slack.send_message(SlackClient.CHANNEL_GENERAL, report)
 
         self.memory.record_insight(
             f"조직 평가: {len(review.get('grades', {}))}개 에이전트, "
@@ -2154,7 +2155,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
         if timed_out:
             for dlg in timed_out:
                 await self.slack.send_message(
-                    "ai-agent-logs",
+                    SlackClient.CHANNEL_LOGS,
                     f"⏰ *[위임 타임아웃]* `{dlg['assigned_to']}` → {dlg['task_description'][:60]}",
                 )
                 # 재위임 시도
@@ -2180,7 +2181,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
             system_prompt="""현재 목표와 에이전트 현황을 분석하고,
 새로운 전문 에이전트가 필요한지 판단하라.
 
-필요하면 JSON: {"create": true, "spec": {"name": "이름", "purpose": "목적", "description": "설명", "observe_logic": "관찰 로직", "think_logic": "판단 로직", "act_logic": "실행 로직", "slack_channel": "ai-agent-logs", "loop_interval": 300}}
+필요하면 JSON: {"create": true, "spec": {"name": "이름", "purpose": "목적", "description": "설명", "observe_logic": "관찰 로직", "think_logic": "판단 로직", "act_logic": "실행 로직", "slack_channel": "C0AJJ464VJN", "loop_interval": 300}}
 불필요하면 JSON: {"create": false, "reason": "이유"}""",
             user_prompt=f"""활성 목표:
 {json.dumps([{"title": g.title, "progress": g.progress_pct()} for g in active_goals], ensure_ascii=False)}
@@ -2199,7 +2200,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
                 if result.get("success"):
                     await self.agent_factory.start_agent(result["agent_name"])
                     await self.slack.send_message(
-                        "ai-agents-general",
+                        SlackClient.CHANNEL_GENERAL,
                         f"🤖 *[새 에이전트 생성]*\n"
                         f"이름: `{result['agent_name']}`\n"
                         f"목적: {spec.get('purpose', '')}\n"
@@ -2233,7 +2234,7 @@ JSON: {"task": "할 일", "method": "search|analyze", "query": "검색어 (searc
 
         if result.get("assigned_to"):
             await self.slack.send_message(
-                "ai-agent-logs",
+                SlackClient.CHANNEL_LOGS,
                 f"📤 *[작업 위임]* → `{result['assigned_to']}`\n"
                 f"작업: {task_desc[:80]}\n"
                 f"데드라인: {deadline}분",
