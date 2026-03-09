@@ -114,6 +114,7 @@ class LSSecuritiesClient:
         self._http = httpx.AsyncClient(timeout=15.0, verify=False)
         self._last_balance: dict | None = None
         self._last_balance_time: datetime | None = None
+        self._price_cache: dict[str, dict] = {}  # {종목코드: {data, time}}
 
     @property
     def is_configured(self) -> bool:
@@ -165,35 +166,55 @@ class LSSecuritiesClient:
     # ── 시세 조회 ────────────────────────────────────────
 
     async def get_price(self, stock_code: str) -> dict:
-        """주식 현재가 호가 조회 (t1101)
+        """주식 현재가 호가 조회 (t1101). 실패 시 캐시 반환.
 
         Args:
             stock_code: 종목코드 (예: "005930" = 삼성전자)
 
         Returns:
-            dict with price info (hname, price, sign, change, diff, volume, etc.)
+            dict with price info
         """
-        await self._ensure_token()
-        url = f"{self.base_url}/stock/market-data"
-        resp = await self._http.post(
-            url,
-            headers=self._auth_header("t1101"),
-            json={"t1101InBlock": {"shcode": stock_code}},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        block = data.get("t1101OutBlock", {})
-        return {
-            "종목명": block.get("hname", ""),
-            "현재가": int(block.get("price", 0)),
-            "등락부호": block.get("sign", ""),
-            "전일대비": int(block.get("change", 0)),
-            "등락률": float(block.get("diff", 0)),
-            "거래량": int(block.get("volume", 0)),
-            "매도호가1": int(block.get("offerho1", 0)),
-            "매수호가1": int(block.get("bidho1", 0)),
-            "raw": block,
-        }
+        try:
+            await self._ensure_token()
+            url = f"{self.base_url}/stock/market-data"
+            resp = await self._http.post(
+                url,
+                headers=self._auth_header("t1101"),
+                json={"t1101InBlock": {"shcode": stock_code}},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            block = data.get("t1101OutBlock", {})
+            result = {
+                "종목명": block.get("hname", ""),
+                "현재가": int(block.get("price", 0)),
+                "등락부호": block.get("sign", ""),
+                "전일대비": int(block.get("change", 0)),
+                "등락률": float(block.get("diff", 0)),
+                "거래량": int(block.get("volume", 0)),
+                "매도호가1": int(block.get("offerho1", 0)),
+                "매수호가1": int(block.get("bidho1", 0)),
+                "raw": block,
+                "cached": False,
+            }
+            self._price_cache[stock_code] = {
+                "data": result,
+                "time": datetime.now(KST),
+            }
+            return result
+        except Exception as e:
+            logger.warning(f"[ls] 시세 조회 실패 ({stock_code}): {e}")
+            cached = self._price_cache.get(stock_code)
+            if cached:
+                result = dict(cached["data"])
+                result["cached"] = True
+                result["cached_time"] = cached["time"]
+                return result
+            return {
+                "unavailable": True,
+                "error": e,
+                "종목코드": stock_code,
+            }
 
     async def get_stock_info(self, stock_code: str) -> dict:
         """주식 종목 마스터 조회 (t1102)"""

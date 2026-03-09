@@ -465,10 +465,27 @@ async def main():
             return
         try:
             result = await ls_client.get_price(stock_code)
+
+            if result.get("unavailable"):
+                from integrations.ls_securities import is_market_open, market_hours_message
+                if not is_market_open():
+                    await _reply(channel, f"📋 {stock_code} 시세를 조회할 수 없습니다.\n{market_hours_message()}\n장중에 한 번 조회하면 이후 장외에서도 마지막 시세를 볼 수 있어요.", thread_ts)
+                else:
+                    err = result.get("error")
+                    await _reply(channel, f"❌ 시세 조회에 실패했어요.\n{friendly_error_message(err) if err else '알 수 없는 오류'}", thread_ts)
+                return
+
+            is_cached = result.get("cached", False)
             sign_map = {"1": "▲", "2": "▲", "3": "", "4": "▼", "5": "▼"}
             sign = sign_map.get(result.get("등락부호", ""), "")
+            if is_cached:
+                cached_time = result.get("cached_time")
+                time_str = cached_time.strftime("%H:%M") if cached_time else "?"
+                header = f"📊 *{result['종목명']}* ({stock_code}) _(📋 {time_str} 기준)_"
+            else:
+                header = f"📊 *{result['종목명']}* ({stock_code})"
             lines = [
-                f"📊 *{result['종목명']}* ({stock_code})",
+                header,
                 f"현재가: {result['현재가']:,}원 {sign}{abs(result['전일대비']):,}원 ({result['등락률']:+.2f}%)",
                 f"거래량: {result['거래량']:,}",
                 f"매수호가: {result['매수호가1']:,}원 | 매도호가: {result['매도호가1']:,}원",
