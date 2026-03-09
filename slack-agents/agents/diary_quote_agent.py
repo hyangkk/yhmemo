@@ -43,7 +43,7 @@ class DiaryQuoteAgent(BaseAgent):
         )
         self._diary_db_id = diary_db_id
         self._target_channel = target_channel
-        self._last_sent_hour: int | None = None
+        self._last_sent_slot: str | None = None  # "HH:00" or "HH:30"
         self._quote_history: list[dict] = self._load_history()
 
     def _load_history(self) -> list[dict]:
@@ -75,13 +75,16 @@ class DiaryQuoteAgent(BaseAgent):
         now = datetime.now(KST)
         current_hour = now.hour
 
-        # 이미 이번 시각에 보냈으면 스킵
-        if self._last_sent_hour == current_hour:
+        # 정각(0~5분) 또는 30분(30~35분)에 실행
+        if 0 <= now.minute <= 5:
+            current_slot = f"{current_hour}:00"
+        elif 30 <= now.minute <= 35:
+            current_slot = f"{current_hour}:30"
+        else:
             return None
 
-        # 정각 근처(0~5분)에만 실행 — 기존 QuoteAgent와 겹치지 않게 30분에 실행
-        # → 30~35분에 실행하여 기존 명언과 교대
-        if not (30 <= now.minute <= 35):
+        # 이미 이번 슬롯에 보냈으면 스킵
+        if self._last_sent_slot == current_slot:
             return None
 
         # 노션 DB ID 없으면 스킵
@@ -231,8 +234,12 @@ class DiaryQuoteAgent(BaseAgent):
         await self._reply(self._target_channel, message)
         logger.info(f"[diary_quote] Sent diary quote: {decision['quote'][:50]}...")
 
-        # 이번 시각 전송 완료 표시
-        self._last_sent_hour = decision.get("hour")
+        # 이번 슬롯 전송 완료 표시
+        now = datetime.now(KST)
+        if now.minute < 30:
+            self._last_sent_slot = f"{now.hour}:00"
+        else:
+            self._last_sent_slot = f"{now.hour}:30"
 
         # 이력 저장
         self._quote_history.append({
