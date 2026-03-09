@@ -26,11 +26,13 @@ function extractCaptionTracks(playerData: any): CaptionTrack[] {
   }
 }
 
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 async function getYouTubeSessionCookies(): Promise<string> {
   try {
     const resp = await fetch("https://www.youtube.com", {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": BROWSER_UA,
       },
       redirect: "manual",
     });
@@ -40,6 +42,7 @@ async function getYouTubeSessionCookies(): Promise<string> {
       const nameValue = sc.split(";")[0];
       if (nameValue) cookieParts.push(nameValue);
     }
+    // consent 쿠키 추가 (유럽 GDPR 동의 우회)
     cookieParts.push("SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB");
     cookieParts.push("CONSENT=YES+cb.20210328-17-p0.en+FX+987");
     return cookieParts.join("; ");
@@ -73,8 +76,6 @@ function parsePlayerResponseFromHTML(html: string): { data: unknown | null; erro
     return { data: null, error: "영상 데이터 파싱에 실패했습니다." };
   }
 }
-
-const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 async function getPlayerResponse(videoId: string): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -280,7 +281,6 @@ async function fetchTranscript(videoId: string): Promise<{
             };
           }
         } catch {
-          // json3 파싱 실패, XML로도 시도
           const segments = parseXmlTranscript(text);
           if (segments.length > 0) {
             return {
