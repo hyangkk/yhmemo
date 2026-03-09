@@ -220,8 +220,8 @@ async def test_ai_think_calls_anthropic(mock_message_bus, mock_slack, mock_notio
     assert result == "Hello from AI"
 
     agent.ai.messages.create.assert_called_once_with(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2048,
         system="system prompt",
         messages=[{"role": "user", "content": "user prompt"}],
     )

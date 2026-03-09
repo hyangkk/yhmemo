@@ -48,7 +48,7 @@ class ProactiveAgent(BaseAgent):
             description="완전 자율운영 에이전트. "
                         "목표 기반으로 기획, 개발, 런칭, 측정까지 자율 실행한다.",
             slack_channel="ai-agents-general",
-            loop_interval=90,  # 1.5분 간격 (빠르게 실행)
+            loop_interval=300,  # 5분 간격
             **kwargs,
         )
         self._state_file = os.path.join(DATA_DIR, "proactive_state.json")

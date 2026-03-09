@@ -64,7 +64,7 @@ class TaskBoardAgent(BaseAgent):
             name="task_board",
             description="노션 'AI 업무 지시 보드 DB'에서 업무를 읽어 자동 실행한다.",
             slack_channel="ai-agents-general",
-            loop_interval=60,  # 1분 간격으로 폴링
+            loop_interval=600,  # 10분 간격으로 폴링
             **kwargs,
         )
         self._db_id = task_board_db_id or os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
