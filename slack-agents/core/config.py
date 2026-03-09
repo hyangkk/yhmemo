@@ -26,13 +26,13 @@ class AgentIntervals:
 
 @dataclass
 class SlackChannels:
-    """Default Slack channel names used across the system."""
-    general: str = "ai-agents-general"
-    collector: str = "ai-collector"
-    curator: str = "ai-curator"
-    logs: str = "ai-agent-logs"
-    quote: str = "\uba85\uc5b8"       # "명언"
-    invest: str = "ai-invest"
+    """Default Slack channel IDs (채널명 변경에도 안전)."""
+    general: str = "C0AJJ469SV8"    # ai-agents-general
+    collector: str = "C0AJBN0PDQB"  # ai-collector
+    curator: str = "C0AJEM4J5KP"    # ai-curator
+    logs: str = "C0AJJ464VJN"       # ai-agent-logs
+    quote: str = "C0AJUJTHJGL"      # 명언-한마디
+    invest: str = "ai-invest"       # TODO: ID로 교체 필요
 
 
 @dataclass

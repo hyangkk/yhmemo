@@ -21,6 +21,7 @@ from typing import Any
 from core.base_agent import BaseAgent
 from core.message_bus import TaskMessage
 from integrations.notion_client import NotionClient
+from integrations.slack_client import SlackClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class CuratorAgent(BaseAgent):
             name="curator",
             description="수집된 정보를 분석하고 사용자에게 가치 있는 것을 선별하는 에이전트. "
                         "피드백을 학습하여 선별 기준을 지속 개선.",
-            slack_channel="ai-curator",
+            slack_channel=SlackClient.CHANNEL_CURATOR,
             loop_interval=900,  # 15분 간격
             **kwargs,
         )
@@ -176,7 +177,7 @@ class CuratorAgent(BaseAgent):
         # 유저 요청 컨텍스트 전달
         if query and self._request_thread_ts:
             decision["thread_ts"] = self._request_thread_ts
-            decision["channel"] = self._request_channel or "ai-agents-general"
+            decision["channel"] = self._request_channel or SlackClient.CHANNEL_GENERAL
         return decision
 
     # ── Act: 실행 ──────────────────────────────────────
@@ -196,7 +197,7 @@ class CuratorAgent(BaseAgent):
         query = decision.get("query", "")
         thread_ts = decision.get("thread_ts")
         # 유저 요청이면 지정 채널, 자율이면 ai-curator
-        target_channel = decision.get("channel", "ai-agents-general") if thread_ts else "ai-curator"
+        target_channel = decision.get("channel", SlackClient.CHANNEL_GENERAL) if thread_ts else SlackClient.CHANNEL_CURATOR
 
         articles = decision.get("articles", [])
         selected = decision.get("selected", [])

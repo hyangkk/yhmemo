@@ -33,7 +33,7 @@ DIARY_QUOTE_HISTORY_FILE = os.path.join(DATA_DIR, "diary_quote_history.json")
 class DiaryQuoteAgent(BaseAgent):
     """노션 생각일기에서 핵심 문장을 추출하여 매 시각마다 슬랙에 전송하는 에이전트"""
 
-    def __init__(self, diary_db_id: str = "", target_channel: str = "명언", **kwargs):
+    def __init__(self, diary_db_id: str = "", target_channel: str = "C0AJUJTHJGL", **kwargs):  # 명언-한마디
         super().__init__(
             name="diary_quote",
             description="노션 생각일기에서 각오, 방향, 목표, 사고방식 등의 핵심 문장을 매 시각 추출하여 슬랙에 전송",

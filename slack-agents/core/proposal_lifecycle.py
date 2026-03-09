@@ -16,6 +16,8 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Optional
 
+from integrations.slack_client import SlackClient
+
 logger = logging.getLogger("proposal_lifecycle")
 
 KST = timezone(timedelta(hours=9))
@@ -209,9 +211,9 @@ class ProposalLifecycle:
             )
 
             try:
-                result = await self._slack.send_message("ai-agents-general", msg)
+                result = await self._slack.send_message(SlackClient.CHANNEL_GENERAL, msg)
                 proposal.slack_ts = result.get("ts", "")
-                proposal.slack_channel = "ai-agents-general"
+                proposal.slack_channel = SlackClient.CHANNEL_GENERAL
                 logger.info(f"[proposal] Sent: '{title}' (auto_approve={self._auto_approve})")
             except Exception as e:
                 logger.error(f"[proposal] Failed to send: {e}")
@@ -274,7 +276,7 @@ class ProposalLifecycle:
                     for i, s in enumerate(goal.plan)
                 )
                 await self._slack.send_message(
-                    "ai-agents-general",
+                    SlackClient.CHANNEL_GENERAL,
                     f"🎯 *'{proposal.title}' 실행 계획*\n\n{plan_text}\n\n_자동으로 실행을 시작합니다._",
                 )
 

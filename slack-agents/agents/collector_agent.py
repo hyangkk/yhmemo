@@ -23,6 +23,7 @@ import httpx
 
 from core.base_agent import BaseAgent
 from core.message_bus import TaskMessage
+from integrations.slack_client import SlackClient
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class CollectorAgent(BaseAgent):
         super().__init__(
             name="collector",
             description="뉴스, 사업공고, 채용정보 등 다양한 소스에서 정보를 수집하는 에이전트",
-            slack_channel="ai-collector",
+            slack_channel=SlackClient.CHANNEL_COLLECTOR,
             loop_interval=600,  # 10분 간격
             **kwargs,
         )
@@ -128,7 +129,7 @@ class CollectorAgent(BaseAgent):
 
     async def _collect_from_rss(self, source_names: list[str]):
         """RSS 소스에서 정보 수집 (자율 작업 → 로그 채널)"""
-        log_channel = "ai-agent-logs"
+        log_channel = SlackClient.CHANNEL_LOGS
         all_items = []
 
         for name in source_names:
@@ -157,7 +158,7 @@ class CollectorAgent(BaseAgent):
 
     async def _collect_by_keyword(self, query: str, requester: str, thread_ts: str = None):
         """키워드 기반 맞춤 수집 — 과정 메시지 없이 결과만 전달"""
-        general = "ai-agents-general"
+        general = SlackClient.CHANNEL_GENERAL
 
         url = GOOGLE_NEWS_SEARCH.format(query=query)
         items = await self._fetch_rss(f"검색:{query}", url)

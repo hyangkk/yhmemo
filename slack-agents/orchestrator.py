@@ -958,7 +958,7 @@ async def main():
                         await _reply(channel, clean_response, thread_ts)
                         # 개선 요청을 실제 Goal로 변환하여 실행
                         for imp in improvements:
-                            await slack.send_message("ai-agents-general",
+                            await slack.send_message(SlackClient.CHANNEL_GENERAL,
                                 f"🔧 *[자기개선 요청]* {imp}\n요청자: <@{user}>\n원본: {text[:100]}")
                             logger.info(f"[NL] Self-improvement request: {imp}")
                             # proactive agent의 goal planner에 목표 추가
@@ -974,7 +974,7 @@ async def main():
                                     f"  {i+1}. {s.description} ({s.method})"
                                     for i, s in enumerate(goal.plan)
                                 )
-                                await slack.send_message("ai-agents-general",
+                                await slack.send_message(SlackClient.CHANNEL_GENERAL,
                                     f"🎯 *자기개선 실행 계획 생성*\n*{imp}*\n\n{plan_text}\n\n_자동으로 실행을 시작합니다._")
                                 logger.info(f"[NL] Self-improvement goal created: {goal.id}")
                             except Exception as goal_err:
@@ -1015,13 +1015,13 @@ async def main():
                 title = result["title"]
                 if state == "approved":
                     await _reply(
-                        item.get("channel", "ai-agents-general"),
+                        item.get("channel", SlackClient.CHANNEL_GENERAL),
                         f"✅ *'{title}' 승인됨!* 다음 사이클에서 실행을 시작합니다.",
                         message_ts,
                     )
                 elif state == "rejected":
                     await _reply(
-                        item.get("channel", "ai-agents-general"),
+                        item.get("channel", SlackClient.CHANNEL_GENERAL),
                         f"❌ *'{title}' 거절됨.* 피드백이 있으면 알려주세요.",
                         message_ts,
                     )
@@ -1208,7 +1208,7 @@ async def main():
             report_lines.append(f"• {line}")
 
         try:
-            await slack.send_message("ai-agents-general", "\n".join(report_lines))
+            await slack.send_message(SlackClient.CHANNEL_GENERAL, "\n".join(report_lines))
         except Exception as e:
             logger.error(f"[watchdog] Slack report failed: {e}")
 
@@ -1220,7 +1220,7 @@ async def main():
             for issue in issues:
                 log_lines.append(issue)
             try:
-                await slack.send_message("ai-agent-logs", "\n".join(log_lines))
+                await slack.send_message(SlackClient.CHANNEL_LOGS, "\n".join(log_lines))
             except Exception:
                 pass
 
@@ -1524,7 +1524,7 @@ async def main():
                 logger.info(f"[master] Executing command: {cmd_type}")
                 try:
                     if cmd_type == "send_message":
-                        channel = cmd.get("channel", "ai-agents-general")
+                        channel = cmd.get("channel", SlackClient.CHANNEL_GENERAL)
                         text = cmd.get("text", "")
                         thread_ts = cmd.get("thread_ts")
                         if thread_ts:
@@ -1535,7 +1535,7 @@ async def main():
                     elif cmd_type == "dev":
                         # dev 작업 직접 실행
                         task_desc = cmd.get("task", "")
-                        channel = cmd.get("channel", "ai-agents-general")
+                        channel = cmd.get("channel", SlackClient.CHANNEL_GENERAL)
                         thread_ts = cmd.get("thread_ts")
                         if task_desc:
                             start_msg = f"🎯 *[마스터]* dev 작업 지시\n> {task_desc[:200]}"
@@ -1573,10 +1573,10 @@ async def main():
                     elif cmd_type == "collect":
                         query = cmd.get("query", "")
                         if query:
-                            await cmd_collect(args=query, user="master", channel="ai-agents-general")
+                            await cmd_collect(args=query, user="master", channel=SlackClient.CHANNEL_GENERAL)
 
                     elif cmd_type == "briefing":
-                        await cmd_briefing(args="", user="master", channel="ai-agents-general")
+                        await cmd_briefing(args="", user="master", channel=SlackClient.CHANNEL_GENERAL)
 
                     elif cmd_type == "trigger_proactive":
                         action = cmd.get("action", "find_work")
@@ -1588,7 +1588,7 @@ async def main():
 
                     elif cmd_type == "slack_reply":
                         # 특정 스레드에 유저처럼 메시지 (봇이 아닌 명령으로)
-                        channel = cmd.get("channel", "ai-agents-general")
+                        channel = cmd.get("channel", SlackClient.CHANNEL_GENERAL)
                         thread_ts = cmd.get("thread_ts")
                         text = cmd.get("text", "")
                         if text and thread_ts:
