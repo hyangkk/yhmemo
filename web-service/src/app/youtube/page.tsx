@@ -448,14 +448,45 @@ export default function YouTubePage() {
 
         {/* Empty State */}
         {!result && !loading && !error && (
-          <section className="text-center py-16 text-gray-400 dark:text-gray-600">
+          <section className="text-center py-12 text-gray-400 dark:text-gray-600">
             <div className="text-6xl mb-4">
               <svg className="mx-auto w-16 h-16" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0C.488 3.45.029 5.804 0 12c.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0C23.512 20.55 23.971 18.196 24 12c-.029-6.185-.484-8.549-4.385-8.816zM9 16V8l8 4-8 4z"/>
               </svg>
             </div>
             <p className="text-lg font-medium mb-1">YouTube URL을 입력하세요</p>
-            <p className="text-sm">영상의 자막을 추출하고 AI가 분석합니다</p>
+            <p className="text-sm mb-8">영상의 자막을 추출하고 AI가 분석합니다</p>
+
+            <div className="max-w-lg mx-auto">
+              <p className="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-600 mb-3">샘플 영상으로 테스트</p>
+              <div className="grid gap-2">
+                {[
+                  { id: "dQw4w9WgXcQ", title: "Rick Astley - Never Gonna Give You Up", channel: "Rick Astley" },
+                  { id: "Ks-_Mh1QhMc", title: "The Future of AI (TED)", channel: "TED" },
+                  { id: "aircAruvnKk", title: "How to Learn Anything Fast", channel: "Ali Abdaal" },
+                ].map((sample) => (
+                  <button
+                    key={sample.id}
+                    onClick={() => {
+                      setUrl(`https://www.youtube.com/watch?v=${sample.id}`);
+                    }}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:border-red-300 dark:hover:border-red-700 hover:shadow-sm transition text-left group"
+                  >
+                    <img
+                      src={`https://img.youtube.com/vi/${sample.id}/mqdefault.jpg`}
+                      alt={sample.title}
+                      className="w-20 h-12 object-cover rounded-lg flex-shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-red-600 dark:group-hover:text-red-400 truncate transition">
+                        {sample.title}
+                      </p>
+                      <p className="text-xs text-gray-400 dark:text-gray-600">{sample.channel}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
         )}
       </main>
