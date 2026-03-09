@@ -199,12 +199,12 @@ async def main():
         "anthropic_api_key": config["ANTHROPIC_API_KEY"],
     }
 
-    # collector = CollectorAgent(**common_kwargs)    # ai-curator 알림 중지
+    collector = CollectorAgent(**common_kwargs)      # 인스턴스만 생성 (루프 미시작)
     proactive = ProactiveAgent(**common_kwargs)
-    # curator = CuratorAgent(                        # ai-curator 알림 중지
-    #     notion_db_id=config.get("NOTION_DATABASE_ID", ""),
-    #     **common_kwargs,
-    # )
+    curator = CuratorAgent(                          # 인스턴스만 생성 (루프 미시작)
+        notion_db_id=config.get("NOTION_DATABASE_ID", ""),
+        **common_kwargs,
+    )
     quote = QuoteAgent(**common_kwargs)
     diary_quote = DiaryQuoteAgent(
         diary_db_id=config.get("DIARY_NOTION_DATABASE_ID", ""),
