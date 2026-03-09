@@ -28,7 +28,6 @@ export async function GET(request: Request) {
     cookieParts.push("CONSENT=YES+cb.20210328-17-p0.en+FX+987");
     const cookieStr = cookieParts.join("; ");
     log.push(`  Cookies: ${cookieParts.length} items (${setCookies.length} from YouTube)`);
-    log.push(`  Cookie names: ${cookieParts.map(c => c.split("=")[0]).join(", ")}`);
 
     // Step 2: Fetch video page
     log.push("\nStep 2: Fetching video page...");
@@ -44,90 +43,99 @@ export async function GET(request: Request) {
     log.push(`  HTML length: ${html.length}`);
     log.push(`  Page status: ${pageResp.status}`);
 
-    // Step 3: Extract player response
-    let startIdx = html.indexOf("var ytInitialPlayerResponse");
-    if (startIdx === -1) startIdx = html.indexOf("ytInitialPlayerResponse");
-    log.push(`  ytInitialPlayerResponse found at: ${startIdx}`);
+    // Extract visitorData
+    const vdMatch = html.match(/"visitorData":"([^"]+)"/);
+    const visitorData = vdMatch ? vdMatch[1] : null;
+    log.push(`  visitorData: ${visitorData ? visitorData.substring(0, 40) + "..." : "NOT FOUND"}`);
 
-    if (startIdx === -1) {
-      log.push("  FAILED: No ytInitialPlayerResponse in page");
-      return NextResponse.json({ log, error: "no player response" });
+    // Extract getTranscriptEndpoint params
+    const paramsMatch = html.match(/getTranscriptEndpoint.*?"params"\s*:\s*"([^"]+)"/);
+    const transcriptParams = paramsMatch ? paramsMatch[1] : null;
+    log.push(`  getTranscriptEndpoint params: ${transcriptParams ? transcriptParams.substring(0, 40) + "..." : "NOT FOUND"}`);
+
+    // Caption tracks check
+    const captionTracks = JSON.parse(html.split('"captions":')[1]?.split(',"videoDetails')[0] || "{}");
+    const tracks = captionTracks?.playerCaptionsTracklistRenderer?.captionTracks || [];
+    log.push(`  Caption tracks: ${tracks.length}`);
+    for (const t of tracks.slice(0, 3)) {
+      log.push(`    - ${t.languageCode} (${t.kind || "manual"})`);
     }
 
-    const braceStart = html.indexOf("{", startIdx);
-    let depth = 0;
-    let jsonEnd = braceStart;
-    for (let i = braceStart; i < html.length; i++) {
-      if (html[i] === "{") depth++;
-      else if (html[i] === "}") {
-        depth--;
-        if (depth === 0) { jsonEnd = i + 1; break; }
+    // Step 3: Try get_transcript API
+    if (transcriptParams) {
+      log.push("\nStep 3: Testing get_transcript API...");
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ctx: any = {
+        client: {
+          hl: "ko",
+          gl: "KR",
+          clientName: "WEB",
+          clientVersion: "2.20260301.00.00",
+        },
+      };
+      if (visitorData) ctx.client.visitorData = visitorData;
+
+      const gtResp = await fetch(
+        "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": BROWSER_UA,
+            "Cookie": cookieStr,
+          },
+          body: JSON.stringify({ context: ctx, params: transcriptParams }),
+          cache: "no-store",
+        }
+      );
+      log.push(`  Status: ${gtResp.status}`);
+      const gtText = await gtResp.text();
+      log.push(`  Response length: ${gtText.length}`);
+      const segCount = (gtText.match(/transcriptSegmentRenderer/g) || []).length;
+      log.push(`  Segments found: ${segCount}`);
+      if (segCount > 0) {
+        log.push(`  SUCCESS!`);
+        // Parse first segment
+        try {
+          const gtData = JSON.parse(gtText);
+          for (const action of gtData.actions || []) {
+            const segs = action?.updateEngagementPanelAction?.content?.transcriptRenderer?.content
+              ?.transcriptSearchPanelRenderer?.body?.transcriptSegmentListRenderer?.initialSegments;
+            if (segs && segs.length > 0) {
+              const first = segs[0]?.transcriptSegmentRenderer;
+              if (first) {
+                const text = first.snippet?.runs?.map((r: { text?: string }) => r.text || "").join("") || "";
+                log.push(`  First segment: "${text}"`);
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      } else if (gtText.length < 1000) {
+        log.push(`  Response: ${gtText}`);
+      } else {
+        log.push(`  Response preview: ${gtText.substring(0, 500)}`);
+      }
+    } else {
+      log.push("\nStep 3: SKIPPED (no getTranscriptEndpoint params)");
+
+      // Fallback: Try caption URL download
+      if (tracks.length > 0) {
+        const track = tracks[0];
+        log.push(`\nStep 3b: Trying caption URL for ${track.languageCode}...`);
+        const xmlResp = await fetch(track.baseUrl, {
+          headers: { "User-Agent": BROWSER_UA, "Cookie": cookieStr },
+          cache: "no-store",
+        });
+        const xml = await xmlResp.text();
+        log.push(`  Status: ${xmlResp.status}, Length: ${xml.length}`);
+        if (xml.length > 0) {
+          log.push(`  Preview: ${xml.substring(0, 200)}`);
+        }
       }
     }
-    const playerData = JSON.parse(html.slice(braceStart, jsonEnd));
-    const playStatus = playerData?.playabilityStatus?.status;
-    log.push(`  Playability status: ${playStatus}`);
 
-    const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
-    log.push(`  Caption tracks: ${captionTracks.length}`);
-
-    if (captionTracks.length === 0) {
-      log.push("  FAILED: No caption tracks found");
-      return NextResponse.json({ log, error: "no captions", playStatus });
-    }
-
-    // List tracks
-    for (const t of captionTracks.slice(0, 5)) {
-      log.push(`    - ${t.languageCode} (${t.kind || "manual"}): url_len=${t.baseUrl?.length || 0}`);
-    }
-
-    // Step 4: Try fetching subtitle XML
-    const track = captionTracks[0];
-    log.push(`\nStep 3: Fetching subtitle XML for ${track.languageCode}...`);
-    log.push(`  URL: ${track.baseUrl.substring(0, 100)}...`);
-
-    // Attempt A: without cookies
-    const xmlRespA = await fetch(track.baseUrl, {
-      headers: { "User-Agent": BROWSER_UA },
-      cache: "no-store",
-    });
-    const xmlA = await xmlRespA.text();
-    log.push(`  Attempt A (no cookies): status=${xmlRespA.status}, length=${xmlA.length}`);
-
-    // Attempt B: with cookies
-    const xmlRespB = await fetch(track.baseUrl, {
-      headers: {
-        "User-Agent": BROWSER_UA,
-        "Cookie": cookieStr,
-        "Referer": `https://www.youtube.com/watch?v=${videoId}`,
-      },
-      cache: "no-store",
-    });
-    const xmlB = await xmlRespB.text();
-    log.push(`  Attempt B (with cookies): status=${xmlRespB.status}, length=${xmlB.length}`);
-
-    // Attempt C: json3 format
-    const xmlRespC = await fetch(track.baseUrl + "&fmt=json3", {
-      headers: {
-        "User-Agent": BROWSER_UA,
-        "Cookie": cookieStr,
-      },
-      cache: "no-store",
-    });
-    const xmlC = await xmlRespC.text();
-    log.push(`  Attempt C (json3): status=${xmlRespC.status}, length=${xmlC.length}`);
-
-    if (xmlA.length > 0) {
-      log.push(`  XML preview (A): ${xmlA.substring(0, 200)}`);
-    }
-    if (xmlB.length > 0) {
-      log.push(`  XML preview (B): ${xmlB.substring(0, 200)}`);
-    }
-    if (xmlC.length > 0) {
-      log.push(`  JSON3 preview (C): ${xmlC.substring(0, 200)}`);
-    }
-
-    return NextResponse.json({ log, success: xmlA.length > 0 || xmlB.length > 0 || xmlC.length > 0 });
+    return NextResponse.json({ log, success: true });
   } catch (error) {
     log.push(`\nERROR: ${error}`);
     return NextResponse.json({ log, error: String(error) });
