@@ -29,3 +29,6 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase
+supabase/.temp/
