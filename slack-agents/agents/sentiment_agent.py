@@ -350,32 +350,60 @@ class SentimentAgent(BaseAgent):
         return unique[:30]
 
     async def _fetch_subreddit(self, client: httpx.AsyncClient, subreddit: str) -> list[dict]:
-        """단일 서브레딧에서 핫 게시물 가져오기"""
+        """단일 서브레딧에서 핫 게시물 가져오기 (Reddit JSON → Pullpush 백업)"""
+        # 1차: Reddit 공식 JSON API
         url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=15"
         try:
             resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+            if resp.status_code == 200:
+                data = resp.json()
+                posts = []
+                for child in data.get("data", {}).get("children", []):
+                    post = child.get("data", {})
+                    if post.get("stickied"):
+                        continue
+                    posts.append({
+                        "source": f"r/{subreddit}",
+                        "title": post.get("title", ""),
+                        "selftext": (post.get("selftext", "") or "")[:300],
+                        "score": post.get("score", 0),
+                        "num_comments": post.get("num_comments", 0),
+                        "upvote_ratio": post.get("upvote_ratio", 0),
+                        "created_utc": post.get("created_utc", 0),
+                        "url": f"https://reddit.com{post.get('permalink', '')}",
+                    })
+                if posts:
+                    return posts
+                logger.debug(f"[sentiment] Reddit r/{subreddit}: empty response, trying Pullpush")
+            else:
+                logger.debug(f"[sentiment] Reddit r/{subreddit}: HTTP {resp.status_code}, trying Pullpush")
         except Exception as e:
-            logger.debug(f"[sentiment] Reddit r/{subreddit} error: {e}")
-            return []
+            logger.debug(f"[sentiment] Reddit r/{subreddit} error: {e}, trying Pullpush")
 
-        posts = []
-        for child in data.get("data", {}).get("children", []):
-            post = child.get("data", {})
-            if post.get("stickied"):
-                continue
-            posts.append({
-                "source": f"r/{subreddit}",
-                "title": post.get("title", ""),
-                "selftext": (post.get("selftext", "") or "")[:300],
-                "score": post.get("score", 0),
-                "num_comments": post.get("num_comments", 0),
-                "upvote_ratio": post.get("upvote_ratio", 0),
-                "created_utc": post.get("created_utc", 0),
-                "url": f"https://reddit.com{post.get('permalink', '')}",
-            })
-        return posts
+        # 2차: Pullpush API (Reddit 아카이브, 403 차단 시 백업)
+        try:
+            pp_url = f"https://api.pullpush.io/reddit/search/submission/?subreddit={subreddit}&sort=score&sort_type=desc&size=15&after=24h"
+            resp = await client.get(pp_url, timeout=httpx.Timeout(20.0))
+            if resp.status_code == 200:
+                data = resp.json()
+                posts = []
+                for post in data.get("data", []):
+                    posts.append({
+                        "source": f"r/{subreddit}",
+                        "title": post.get("title", ""),
+                        "selftext": (post.get("selftext", "") or "")[:300],
+                        "score": post.get("score", 0),
+                        "num_comments": post.get("num_comments", 0),
+                        "upvote_ratio": post.get("upvote_ratio", 0),
+                        "created_utc": post.get("created_utc", 0),
+                        "url": f"https://reddit.com/r/{subreddit}/comments/{post.get('id', '')}",
+                    })
+                logger.info(f"[sentiment] Pullpush r/{subreddit}: {len(posts)} posts")
+                return posts
+        except Exception as e:
+            logger.debug(f"[sentiment] Pullpush r/{subreddit} error: {e}")
+
+        return []
 
     async def _fetch_crypto_news(self) -> list[dict]:
         """CryptoPanic 무료 API로 뉴스 수집"""
@@ -450,7 +478,11 @@ class SentimentAgent(BaseAgent):
   "bullish_signals": ["<강세 시그널 3개>"],
   "bearish_signals": ["<약세 시그널 3개>"],
   "summary": "<3-4문장으로 현재 소셜 센티멘트 요약. 한국어로 작성.>",
-  "risk_alert": "<있으면 위험 경고 1줄, 없으면 빈 문자열>"
+  "risk_alert": "<있으면 위험 경고 1줄, 없으면 빈 문자열>",
+  "platform_summaries": {{
+    "reddit": "<Reddit 커뮤니티의 총체적 분위기를 2-3문장으로 요약. 주요 논의 주제, 감성 경향 등. 한국어.>",
+    "news": "<뉴스 매체의 총체적 분위기를 2-3문장으로 요약. 주요 헤드라인 트렌드 등. 한국어.>"
+  }}
 }}
 
 중요:
@@ -462,7 +494,7 @@ class SentimentAgent(BaseAgent):
         try:
             response = await self.ai.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=1500,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
                 system="당신은 금융 소셜 미디어 감성 분석 전문가입니다. 커뮤니티 데이터를 정량적으로 분석합니다. 반드시 JSON만 출력하세요.",
             )
@@ -511,6 +543,11 @@ class SentimentAgent(BaseAgent):
                 "votes": n.get("votes", {}),
                 "sentiment": n.get("sentiment", ""),
             })
+
+        # 플랫폼별 요약을 source_feeds에 포함
+        platform_summaries = analysis.get("platform_summaries", {})
+        if platform_summaries:
+            source_feeds["_platform_summaries"] = platform_summaries
 
         entry = {
             "timestamp": now.isoformat(),

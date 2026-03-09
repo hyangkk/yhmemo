@@ -23,6 +23,7 @@ interface SentimentData {
     summary: string;
     riskAlert: string;
     sourceFeeds: Record<string, SourcePost[]>;
+    platformSummaries: Record<string, string>;
     bullishSignals: string[];
     bearishSignals: string[];
     analyzedAt: string;
@@ -38,21 +39,20 @@ interface PlatformGroup {
   name: string;
   icon: string;
   color: string;
+  headerBg: string;
   borderColor: string;
   bgColor: string;
-  channels: string[]; // sourceFeeds의 key들
+  summaryKey: string;
+  channels: string[];
   posts: SourcePost[];
 }
 
 function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGroup[] {
   const platforms: PlatformGroup[] = [];
 
-  // Reddit: r/* 으로 시작하는 모든 채널
   const redditPosts: SourcePost[] = [];
   const redditSubs: string[] = [];
-  // CryptoPanic
   const cryptoPanicPosts: SourcePost[] = [];
-  // Google News
   const newsPosts: SourcePost[] = [];
 
   for (const [channel, posts] of Object.entries(sourceFeeds)) {
@@ -67,15 +67,16 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
   }
 
   if (redditPosts.length > 0) {
-    // Reddit 글은 score 기준 정렬
     redditPosts.sort((a, b) => (b.score || 0) - (a.score || 0));
     platforms.push({
       id: "reddit",
       name: "Reddit",
       icon: "🔴",
       color: "text-orange-600 dark:text-orange-400",
+      headerBg: "bg-gradient-to-r from-orange-500 to-red-500",
       borderColor: "border-orange-200 dark:border-orange-800/50",
-      bgColor: "bg-orange-50/50 dark:bg-orange-950/20",
+      bgColor: "bg-white dark:bg-gray-900",
+      summaryKey: "reddit",
       channels: redditSubs,
       posts: redditPosts,
     });
@@ -87,8 +88,10 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
       name: "CryptoPanic",
       icon: "⚡",
       color: "text-blue-600 dark:text-blue-400",
+      headerBg: "bg-gradient-to-r from-blue-500 to-cyan-500",
       borderColor: "border-blue-200 dark:border-blue-800/50",
-      bgColor: "bg-blue-50/50 dark:bg-blue-950/20",
+      bgColor: "bg-white dark:bg-gray-900",
+      summaryKey: "news",
       channels: ["CryptoPanic"],
       posts: cryptoPanicPosts,
     });
@@ -100,8 +103,10 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
       name: "Google News",
       icon: "📰",
       color: "text-green-600 dark:text-green-400",
+      headerBg: "bg-gradient-to-r from-green-500 to-emerald-500",
       borderColor: "border-green-200 dark:border-green-800/50",
-      bgColor: "bg-green-50/50 dark:bg-green-950/20",
+      bgColor: "bg-white dark:bg-gray-900",
+      summaryKey: "news",
       channels: ["GoogleNews"],
       posts: newsPosts,
     });
@@ -180,96 +185,107 @@ function MiniTrendChart({ history }: { history: SentimentData["history"] }) {
   );
 }
 
-/* ── 플랫폼별 카드 ───────────────────────────── */
+/* ── 플랫폼별 카드 (총체적 상태 + 최근 글) ──── */
 
-function PlatformCard({ platform }: { platform: PlatformGroup }) {
+function PlatformCard({ platform, platformSummary }: { platform: PlatformGroup; platformSummary?: string }) {
   const [showAll, setShowAll] = useState(false);
-  const visible = showAll ? platform.posts : platform.posts.slice(0, 5);
+  const visible = showAll ? platform.posts : platform.posts.slice(0, 4);
 
-  // Reddit은 서브레딧 목록 표시
   const subLabel = platform.id === "reddit"
     ? platform.channels.slice(0, 4).join(", ") + (platform.channels.length > 4 ? ` 외 ${platform.channels.length - 4}개` : "")
     : "";
 
   return (
-    <div className={`rounded-2xl border ${platform.borderColor} ${platform.bgColor} overflow-hidden`}>
-      {/* 플랫폼 헤더 */}
-      <div className="px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{platform.icon}</span>
+    <div className={`rounded-2xl border ${platform.borderColor} ${platform.bgColor} overflow-hidden shadow-sm`}>
+      {/* 플랫폼 헤더 (컬러 바) */}
+      <div className={`${platform.headerBg} px-5 py-3.5 flex items-center justify-between`}>
+        <div className="flex items-center gap-2.5">
+          <span className="text-xl">{platform.icon}</span>
           <div>
-            <h3 className={`font-bold text-base ${platform.color}`}>{platform.name}</h3>
+            <h3 className="font-bold text-sm text-white">{platform.name}</h3>
             {subLabel && (
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subLabel}</p>
+              <p className="text-[11px] text-white/70 mt-0.5">{subLabel}</p>
             )}
           </div>
         </div>
-        <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-white/60 dark:bg-gray-800/60 px-2.5 py-1 rounded-full">
+        <span className="text-xs font-medium text-white/80 bg-white/20 px-2.5 py-1 rounded-full">
           {platform.posts.length}개 글
         </span>
       </div>
 
-      {/* 글 목록 */}
-      <div className="px-2 pb-2">
-        <div className="rounded-xl bg-white/70 dark:bg-gray-900/70 divide-y divide-gray-100 dark:divide-gray-800/50">
-          {visible.map((post, i) => (
-            <div key={i} className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  {post.url ? (
-                    <a
-                      href={post.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors line-clamp-2 leading-snug"
-                    >
-                      {post.title}
-                    </a>
-                  ) : (
-                    <p className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2 leading-snug">
-                      {post.title}
-                    </p>
-                  )}
-                  {post.snippet && (
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 line-clamp-1">{post.snippet}</p>
-                  )}
-                </div>
-
-                {/* Reddit 메타: upvotes + comments */}
-                {post.score !== undefined && (
-                  <div className="flex-shrink-0 flex items-center gap-2.5 text-xs text-gray-400">
-                    <span className="inline-flex items-center gap-0.5 text-orange-500" title="Upvotes">
-                      ▲ {post.score >= 1000 ? `${(post.score / 1000).toFixed(1)}k` : post.score}
-                    </span>
-                    {post.comments !== undefined && (
-                      <span className="inline-flex items-center gap-0.5" title="Comments">
-                        💬 {post.comments}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* CryptoPanic 메타: votes */}
-                {post.votes && (
-                  <div className="flex-shrink-0 text-xs">
-                    <span className="text-green-500">👍{post.votes.positive || 0}</span>
-                    {" "}
-                    <span className="text-red-500">👎{post.votes.negative || 0}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+      {/* 총체적 상태 */}
+      <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+        <div className="flex items-start gap-2">
+          <span className="text-sm mt-0.5">📊</span>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1.5">총체적 상태</p>
+            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+              {platformSummary || "분석 데이터가 수집되면 플랫폼별 분위기 요약이 표시됩니다."}
+            </p>
+          </div>
         </div>
       </div>
 
+      {/* 최근 관련 글 */}
+      <div className="px-5 pt-3 pb-1">
+        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+          <span>📝</span> 최근 관련 글
+        </p>
+      </div>
+      <div className="divide-y divide-gray-100 dark:divide-gray-800/50">
+        {visible.map((post, i) => (
+          <div key={i} className="px-5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                {post.url ? (
+                  <a
+                    href={post.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors line-clamp-2 leading-snug"
+                  >
+                    {post.title}
+                  </a>
+                ) : (
+                  <p className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2 leading-snug">
+                    {post.title}
+                  </p>
+                )}
+                {post.snippet && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 line-clamp-1">{post.snippet}</p>
+                )}
+              </div>
+
+              {/* Reddit: upvotes + comments */}
+              {post.score !== undefined && (
+                <div className="flex-shrink-0 flex items-center gap-2 text-xs text-gray-400">
+                  <span className="text-orange-500">▲{post.score >= 1000 ? `${(post.score / 1000).toFixed(1)}k` : post.score}</span>
+                  {post.comments !== undefined && (
+                    <span>💬{post.comments}</span>
+                  )}
+                </div>
+              )}
+
+              {/* CryptoPanic / News: votes */}
+              {post.votes && (
+                <div className="flex-shrink-0 text-xs">
+                  <span className="text-green-500">👍{post.votes.positive || 0}</span>
+                  {" "}
+                  <span className="text-red-500">👎{post.votes.negative || 0}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* 더보기 */}
-      {platform.posts.length > 5 && (
+      {platform.posts.length > 4 && (
         <button
           onClick={() => setShowAll(!showAll)}
-          className="w-full px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors text-center border-t border-gray-200/30 dark:border-gray-700/30"
+          className="w-full px-4 py-2.5 text-xs font-medium text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors text-center border-t border-gray-100 dark:border-gray-800/50"
         >
-          {showAll ? "접기 ▲" : `+${platform.posts.length - 5}개 더보기 ▼`}
+          {showAll ? "접기 ▲" : `+${platform.posts.length - 4}개 더보기 ▼`}
         </button>
       )}
     </div>
@@ -299,8 +315,6 @@ export default function SocialSentiment() {
     const interval = setInterval(fetchData, REFRESH_INTERVAL * 1000);
     return () => clearInterval(interval);
   }, [fetchData]);
-
-  /* ── 로딩/에러/빈 상태 ── */
 
   if (loading) {
     return (
@@ -340,12 +354,14 @@ export default function SocialSentiment() {
   const { latest, history } = data;
   const {
     overallScore, overallLabel, assetScores, trendingTopics,
-    summary, riskAlert, sourceFeeds, bullishSignals, bearishSignals, analyzedAt,
+    summary, riskAlert, sourceFeeds, platformSummaries,
+    bullishSignals, bearishSignals, analyzedAt,
   } = latest;
 
   const sortedAssets = Object.entries(assetScores).sort(([, a], [, b]) => b - a);
   const platforms = groupByPlatform(sourceFeeds || {});
   const totalPosts = platforms.reduce((sum, p) => sum + p.posts.length, 0);
+  const summaries = platformSummaries || {};
 
   return (
     <section className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -407,11 +423,15 @@ export default function SocialSentiment() {
         </div>
       </div>
 
-      {/* ── 소셜 미디어별 카드 ── */}
+      {/* ── 소셜 미디어별 카드 (총체적 상태 + 최근 글) ── */}
       {platforms.length > 0 ? (
         <div className="space-y-5">
           {platforms.map((platform) => (
-            <PlatformCard key={platform.id} platform={platform} />
+            <PlatformCard
+              key={platform.id}
+              platform={platform}
+              platformSummary={summaries[platform.summaryKey]}
+            />
           ))}
         </div>
       ) : (
@@ -422,19 +442,17 @@ export default function SocialSentiment() {
 
       {/* ── AI 종합 분석 ── */}
       {(summary || (bullishSignals && bullishSignals.length > 0) || (bearishSignals && bearishSignals.length > 0)) && (
-        <div className="rounded-2xl border border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-950/20 overflow-hidden">
-          <div className="px-5 py-4 flex items-center gap-2">
+        <div className="rounded-2xl border border-purple-200 dark:border-purple-800/50 bg-white dark:bg-gray-900 overflow-hidden shadow-sm">
+          <div className="bg-gradient-to-r from-purple-500 to-indigo-500 px-5 py-3.5 flex items-center gap-2">
             <span className="text-lg">🧠</span>
-            <h3 className="font-bold text-sm text-purple-700 dark:text-purple-300">AI 종합 분석</h3>
+            <h3 className="font-bold text-sm text-white">AI 종합 분석</h3>
           </div>
 
-          <div className="px-5 pb-5 space-y-4">
-            {/* 요약 */}
+          <div className="px-5 py-4 space-y-4">
             {summary && (
               <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-line">{summary}</p>
             )}
 
-            {/* 강세/약세 */}
             {((bullishSignals && bullishSignals.length > 0) || (bearishSignals && bearishSignals.length > 0)) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {bullishSignals && bullishSignals.length > 0 && (
@@ -460,7 +478,6 @@ export default function SocialSentiment() {
               </div>
             )}
 
-            {/* 핫토픽 */}
             {trendingTopics.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {trendingTopics.map((topic: string, i: number) => (

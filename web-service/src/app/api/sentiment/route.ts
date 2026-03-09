@@ -43,6 +43,13 @@ export async function GET() {
       return (val as Record<string, unknown>) || {};
     }
 
+    const rawFeeds = parseJsonb(latest.source_feeds) as Record<string, unknown>;
+    // _platform_summaries는 별도 필드로 분리
+    const platformSummaries = (rawFeeds["_platform_summaries"] || {}) as Record<string, string>;
+    const sourceFeeds = Object.fromEntries(
+      Object.entries(rawFeeds).filter(([k]) => k !== "_platform_summaries")
+    );
+
     return NextResponse.json({
       latest: {
         overallScore: latest.overall_score,
@@ -51,7 +58,8 @@ export async function GET() {
         trendingTopics: latest.trending_topics || [],
         summary: latest.summary || "",
         riskAlert: latest.risk_alert || "",
-        sourceFeeds: parseJsonb(latest.source_feeds),
+        sourceFeeds,
+        platformSummaries,
         bullishSignals: latest.bullish_signals || [],
         bearishSignals: latest.bearish_signals || [],
         analyzedAt: latest.analyzed_at,
