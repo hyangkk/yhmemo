@@ -19,8 +19,8 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 PRICE_INPUT = 3.0 / 1_000_000   # $3 per 1M input tokens
 PRICE_OUTPUT = 15.0 / 1_000_000  # $15 per 1M output tokens
 
-# 일일 예산 (기본 $5 — 약 1.6M input tokens 또는 333K output tokens)
-DAILY_BUDGET_USD = float(os.environ.get("DAILY_AI_BUDGET_USD", "5.0"))
+# 일일 예산 (기본 $10 — 약 3.3M input tokens 또는 666K output tokens)
+DAILY_BUDGET_USD = float(os.environ.get("DAILY_AI_BUDGET_USD", "10.0"))
 
 
 class CostTracker:
