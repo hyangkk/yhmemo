@@ -73,6 +73,9 @@ export default function YouTubePage() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualTranscript, setManualTranscript] = useState("");
+  const [manualLoading, setManualLoading] = useState(false);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -109,6 +112,7 @@ export default function YouTubePage() {
           });
         }
         setError(data.error || "분석에 실패했습니다.");
+        setShowManualInput(true);
         return;
       }
 
@@ -151,6 +155,38 @@ export default function YouTubePage() {
       setChatLoading(false);
     }
   }, [chatInput, result]);
+
+  const handleManualAnalyze = useCallback(async () => {
+    if (!manualTranscript.trim()) return;
+
+    setManualLoading(true);
+    setError("");
+
+    try {
+      const videoId = extractVideoId(url.trim());
+      const resp = await fetch("/api/youtube/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId: videoId || "manual00000",
+          mode,
+          manualTranscript: manualTranscript.trim(),
+        }),
+      });
+
+      const data = await resp.json();
+      if (resp.ok) {
+        setResult(data);
+        setShowManualInput(false);
+      } else {
+        setError(data.error || "분석에 실패했습니다.");
+      }
+    } catch {
+      setError("서버에 연결할 수 없습니다.");
+    } finally {
+      setManualLoading(false);
+    }
+  }, [manualTranscript, url, mode]);
 
   const modeLabels = {
     summary: "요약",
@@ -240,6 +276,47 @@ export default function YouTubePage() {
           <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl">
             {error}
           </div>
+        )}
+
+        {/* Manual Transcript Input */}
+        {showManualInput && (
+          <section className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-800 p-6">
+            <h3 className="font-semibold text-gray-900 dark:text-white mb-2">
+              자막 직접 입력
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+              YouTube에서 자막을 복사해서 붙여넣으세요.
+              영상 하단 <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">...</code> 버튼
+              → <strong>스크립트 보기</strong>에서 복사할 수 있습니다.
+            </p>
+            <textarea
+              value={manualTranscript}
+              onChange={(e) => setManualTranscript(e.target.value)}
+              placeholder="자막 텍스트를 여기에 붙여넣으세요..."
+              rows={8}
+              className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition text-sm resize-y"
+            />
+            <div className="flex items-center justify-between mt-3">
+              <span className="text-xs text-gray-400">
+                {manualTranscript.length > 0 ? `${manualTranscript.length.toLocaleString()}자` : ""}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowManualInput(false)}
+                  className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition"
+                >
+                  닫기
+                </button>
+                <button
+                  onClick={handleManualAnalyze}
+                  disabled={manualLoading || !manualTranscript.trim()}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-xl font-medium transition text-sm"
+                >
+                  {manualLoading ? "분석 중..." : "분석하기"}
+                </button>
+              </div>
+            </div>
+          </section>
         )}
 
         {/* Result */}
