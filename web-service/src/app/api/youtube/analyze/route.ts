@@ -31,9 +31,7 @@ const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 async function getYouTubeSessionCookies(): Promise<string> {
   try {
     const resp = await fetch("https://www.youtube.com", {
-      headers: {
-        "User-Agent": BROWSER_UA,
-      },
+      headers: { "User-Agent": BROWSER_UA },
       redirect: "manual",
       cache: "no-store",
     });
@@ -148,6 +146,7 @@ async function getPlayerResponse(videoId: string): Promise<{
           },
           videoId,
         }),
+        cache: "no-store",
       }
     );
     if (innertubeResp.ok) {
@@ -334,7 +333,8 @@ async function fetchTranscript(videoId: string): Promise<{
 async function fetchVideoInfo(videoId: string): Promise<{ title: string; author: string; thumbnail: string }> {
   try {
     const resp = await fetch(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+      { cache: "no-store" }
     );
     if (resp.ok) {
       const data = await resp.json();
