@@ -447,3 +447,20 @@ class LSSecuritiesClient:
 
     async def close(self):
         await self._http.aclose()
+
+
+async def fetch_naver_volume(stock_code: str) -> int | None:
+    """네이버 증권에서 거래량 조회 (비교 검증용)"""
+    url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{stock_code}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            data = resp.json()
+            # datas[0].tradeVolume or accumulatedTradingVolume
+            item = data.get("datas", [{}])[0]
+            vol = item.get("accumulatedTradingVolume") or item.get("tradeVolume")
+            return int(vol) if vol else None
+    except Exception as e:
+        logger.warning(f"[naver] 거래량 조회 실패 ({stock_code}): {e}")
+        return None
