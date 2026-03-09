@@ -11,6 +11,12 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from core import agent_tracker
+from core.youtube_transcript import (
+    extract_video_id,
+    fetch_transcript,
+    fetch_video_info,
+    summarize_transcript,
+)
 
 logger = logging.getLogger("orchestrator.command_handler")
 
@@ -28,7 +34,7 @@ async def _reply(slack, channel: str, text: str, thread_ts: str = None, broadcas
 class CommandHandler:
     """슬랙 ! 명령어 등록 및 처리"""
 
-    def __init__(self, slack, collector, curator, quote, investment):
+    def __init__(self, slack, collector, curator, quote, investment, anthropic_api_key: str = ""):
         """
         Args:
             slack: SlackClient 인스턴스
@@ -36,12 +42,14 @@ class CommandHandler:
             curator: CuratorAgent 인스턴스
             quote: QuoteAgent 인스턴스
             investment: InvestmentAgent 인스턴스
+            anthropic_api_key: Claude API 키 (영상 요약용)
         """
         self.slack = slack
         self.collector = collector
         self.curator = curator
         self.quote = quote
         self.investment = investment
+        self._anthropic_api_key = anthropic_api_key
 
     def register(self):
         """모든 명령어를 슬랙 클라이언트에 등록"""
@@ -52,6 +60,7 @@ class CommandHandler:
         self.slack.on_command("로그", self.cmd_log)
         self.slack.on_command("현황", self.cmd_dashboard)
         self.slack.on_command("시세", self.cmd_market)
+        self.slack.on_command("영상요약", self.cmd_video_summary)
 
     async def cmd_collect(self, args: str, user: str, channel: str, thread_ts: str = None):
         if args.strip():
@@ -134,3 +143,82 @@ class CommandHandler:
             })
         except Exception as e:
             await _reply(self.slack, channel, f"시세 조회 실패: {e}", thread_ts)
+
+    async def cmd_video_summary(self, args: str, user: str, channel: str, thread_ts: str = None):
+        """!영상요약 <YouTube URL> [모드] - YouTube 영상 자막 추출 및 요약
+
+        모드:
+            요약 (기본) - 핵심 내용 요약
+            전체 - 전체 스크립트 정리
+            포인트 - 핵심 포인트만 추출
+        """
+        if not args.strip():
+            await _reply(self.slack, channel,
+                "사용법: `!영상요약 <YouTube URL>` [요약|전체|포인트]\n"
+                "예: `!영상요약 https://youtube.com/watch?v=xxx`\n"
+                "예: `!영상요약 https://youtu.be/xxx 전체`",
+                thread_ts)
+            return
+
+        # URL과 모드 파싱
+        parts = args.strip().split()
+        url_part = parts[0]
+        mode_map = {"요약": "summary", "전체": "full", "포인트": "key_points"}
+        mode = "summary"
+        for p in parts[1:]:
+            if p in mode_map:
+                mode = mode_map[p]
+
+        video_id = extract_video_id(url_part)
+        if not video_id:
+            # 전체 args에서 URL 찾기 시도
+            video_id = extract_video_id(args)
+
+        if not video_id:
+            await _reply(self.slack, channel,
+                "YouTube URL을 인식할 수 없습니다. 올바른 YouTube 링크를 입력해주세요.",
+                thread_ts)
+            return
+
+        await _reply(self.slack, channel, "영상 자막을 가져오는 중...", thread_ts)
+
+        # 영상 정보 + 자막 추출
+        video_info = await fetch_video_info(video_id)
+        transcript_result = await fetch_transcript(video_id)
+
+        if not transcript_result["ok"]:
+            await _reply(self.slack, channel,
+                f"자막 추출 실패: {transcript_result['error']}",
+                thread_ts)
+            return
+
+        transcript_text = transcript_result["text"]
+        lang = transcript_result.get("language", "")
+        auto = " (자동 생성)" if transcript_result.get("auto_generated") else ""
+        title = video_info.get("title", "")
+        author = video_info.get("author", "")
+
+        header = f"*{title}*" if title else f"영상 `{video_id}`"
+        if author:
+            header += f" — {author}"
+        header += f"\n자막 언어: {lang}{auto} | 길이: {len(transcript_text):,}자"
+
+        await _reply(self.slack, channel, f"{header}\n\nClaude로 요약 중...", thread_ts)
+
+        # Claude 요약
+        try:
+            import anthropic
+            ai_client = anthropic.AsyncAnthropic(api_key=self._anthropic_api_key)
+            summary = await summarize_transcript(
+                ai_client, transcript_text, video_title=title, mode=mode
+            )
+
+            mode_label = {"summary": "요약", "full": "전체 정리", "key_points": "핵심 포인트"}
+            await _reply(self.slack, channel,
+                f"{header}\n\n📝 *[{mode_label.get(mode, '요약')}]*\n\n{summary}",
+                thread_ts)
+        except Exception as e:
+            logger.error(f"Video summary error: {e}")
+            await _reply(self.slack, channel,
+                f"{header}\n\n요약 생성 실패: {str(e)[:200]}",
+                thread_ts)
