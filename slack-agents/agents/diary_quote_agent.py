@@ -131,8 +131,10 @@ class DiaryQuoteAgent(BaseAgent):
         page_id = selected.get("id", "")
         content = await self.notion.get_page_text(page_id)
 
-        if not content.strip():
-            logger.info(f"[diary_quote] Selected page has no content: {title}")
+        # 제목 + 본문 합치기 (본문 없이 제목만 있는 페이지도 활용)
+        full_text = f"{title}\n{content}" if content.strip() else title
+        if len(full_text.strip()) < 10:
+            logger.info(f"[diary_quote] Selected page too short: {title}")
             return None
 
         created_time = selected.get("created_time", "")
@@ -144,7 +146,7 @@ class DiaryQuoteAgent(BaseAgent):
             "page_id": page_id,
             "page_url": page_url,
             "title": title,
-            "content": content[:3000],  # 토큰 절약
+            "content": full_text[:3000],  # 토큰 절약
             "created_time": created_time,
             "recent_quotes": [h.get("quote", "") for h in self._quote_history[-20:]],
         }

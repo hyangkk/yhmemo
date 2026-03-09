@@ -130,6 +130,27 @@ def load_config() -> dict:
     config["NOTION_API_KEY"] = os.environ.get("NOTION_API_KEY", "")
     config["NOTION_DATABASE_ID"] = os.environ.get("NOTION_DATABASE_ID", "")
     config["NOTION_TASK_BOARD_DB_ID"] = os.environ.get("NOTION_TASK_BOARD_DB_ID", "")
+    config["DIARY_NOTION_DATABASE_ID"] = os.environ.get("DIARY_NOTION_DATABASE_ID", "")
+
+    # Supabase agent_settings에서 설정 로드 (env var 미설정 시 폴백)
+    try:
+        sb_url = config.get("SUPABASE_URL", "")
+        sb_key = config.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        if sb_url and sb_key:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{sb_url}/rest/v1/agent_settings?select=diary_notion_database_id,task_board_notion_database_id",
+                headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                settings = json.loads(resp.read())
+                if settings:
+                    s = settings[0]
+                    if not config["DIARY_NOTION_DATABASE_ID"] and s.get("diary_notion_database_id"):
+                        config["DIARY_NOTION_DATABASE_ID"] = s["diary_notion_database_id"]
+                        logger.info(f"Loaded diary DB ID from agent_settings")
+    except Exception as e:
+        logger.warning(f"Failed to load agent_settings from Supabase: {e}")
 
     return config
 
@@ -186,7 +207,7 @@ async def main():
     # )
     quote = QuoteAgent(**common_kwargs)
     diary_quote = DiaryQuoteAgent(
-        diary_db_id=config.get("NOTION_DATABASE_ID", ""),
+        diary_db_id=config.get("DIARY_NOTION_DATABASE_ID", ""),
         **common_kwargs,
     )
     fortune = FortuneAgent(**common_kwargs)
