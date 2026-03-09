@@ -106,3 +106,9 @@ cd slack-agents && FLY_API_TOKEN="$FLY_API_TOKEN" flyctl deploy
 # 테스트 스크립트 예시 (slack-agents/test_price.py 참고)
 SLACK_BOT_TOKEN=... python3 test_price.py
 ```
+
+### 기능 개발 완료 보고 원칙 (필수)
+- **슬랙 관련 기능은 반드시 슬랙에서 직접 테스트 후 보고**: 해당 채널에 메시지를 보내고 봇 응답을 확인해야 함
+- 코드 배포만으로 "완료"로 보고하지 말 것 → 실제 동작 확인 필수
+- 테스트 시 봇 토큰으로 `!명령어` 또는 `[마스터]` 접두사를 사용하여 메시지 전송
+- 봇 응답을 받아서 기대 결과와 일치하는지 확인한 후에만 사용자에게 보고

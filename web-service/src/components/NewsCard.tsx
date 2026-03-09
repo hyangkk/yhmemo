@@ -23,7 +23,7 @@ export default function NewsCard({
     : "";
 
   return (
-    <article className="group relative rounded-xl border border-gray-200 bg-white p-5 transition-all hover:shadow-lg hover:border-blue-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:border-blue-600">
+    <article className="group relative rounded-xl border border-gray-200 bg-white p-4 sm:p-5 transition-all hover:shadow-lg hover:border-blue-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:border-blue-600 overflow-hidden w-full">
       {curated && (
         <span className="absolute -top-2 -right-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">
           AI Pick
@@ -64,12 +64,16 @@ export default function NewsCard({
       )}
 
       {item.content && !item.ai_summary && (
-        <p className="mt-3 text-sm text-gray-600 dark:text-gray-300 line-clamp-2 leading-relaxed">
-          {item.content}
+        <p className="mt-3 text-sm text-gray-600 dark:text-gray-300 line-clamp-2 leading-relaxed break-words">
+          {stripHtml(item.content)}
         </p>
       )}
     </article>
   );
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, "").replace(/&[^;]+;/g, " ").trim();
 }
 
 function getTimeAgo(date: Date): string {
