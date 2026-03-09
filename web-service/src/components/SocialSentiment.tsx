@@ -52,6 +52,8 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
   const redditSubs: string[] = [];
   // CryptoPanic
   const cryptoPanicPosts: SourcePost[] = [];
+  // Google News
+  const newsPosts: SourcePost[] = [];
 
   for (const [channel, posts] of Object.entries(sourceFeeds)) {
     if (channel.startsWith("r/")) {
@@ -59,8 +61,9 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
       redditSubs.push(channel);
     } else if (channel === "CryptoPanic") {
       cryptoPanicPosts.push(...posts);
+    } else if (channel === "GoogleNews") {
+      newsPosts.push(...posts);
     }
-    // GoogleNews 등 소셜이 아닌 건 제외
   }
 
   if (redditPosts.length > 0) {
@@ -88,6 +91,19 @@ function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGro
       bgColor: "bg-blue-50/50 dark:bg-blue-950/20",
       channels: ["CryptoPanic"],
       posts: cryptoPanicPosts,
+    });
+  }
+
+  if (newsPosts.length > 0) {
+    platforms.push({
+      id: "googlenews",
+      name: "Google News",
+      icon: "📰",
+      color: "text-green-600 dark:text-green-400",
+      borderColor: "border-green-200 dark:border-green-800/50",
+      bgColor: "bg-green-50/50 dark:bg-green-950/20",
+      channels: ["GoogleNews"],
+      posts: newsPosts,
     });
   }
 
@@ -353,7 +369,7 @@ export default function SocialSentiment() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <span className="text-sm font-medium text-gray-500 dark:text-gray-400">시장 소셜 감성 지수</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Reddit · CryptoPanic 종합</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Reddit · CryptoPanic · News 종합</p>
           </div>
           <div className="text-right">
             <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
@@ -468,7 +484,7 @@ export default function SocialSentiment() {
       )}
 
       <p className="text-center text-xs text-gray-300 dark:text-gray-600">
-        Reddit · CryptoPanic 기반 AI 분석이며, 투자 조언이 아닙니다.
+        Reddit · CryptoPanic · Google News 기반 AI 분석이며, 투자 조언이 아닙니다.
       </p>
     </section>
   );
