@@ -1089,10 +1089,16 @@ async def main():
     socket_mode = await slack._try_socket_mode()
 
     if socket_mode:
-        logger.info("✓ Socket Mode 연결 성공! 실시간 이벤트 수신 중 (폴링 불필요)")
-        # Socket Mode에서도 채널 캐시와 기본 설정은 필요
+        logger.info("✓ Socket Mode 연결 성공! 실시간 이벤트 수신 중 (+ 30초 폴링 병행)")
+        # Socket Mode에서도 채널/폴링 설정 필요 (봇 자신의 메시지 수신용)
         await slack.ensure_channels_exist()
         await slack._init_channel_cache()
+        # 폴링 채널 초기화 (봇 자신의 !명령어/[마스터] 메시지 수신용)
+        import time as _time
+        slack._poll_channels = [slack.CHANNEL_GENERAL, slack.CHANNEL_INVEST]
+        for ch_id in slack._poll_channels:
+            slack._last_ts[ch_id] = str(_time.time())
+        slack._running = True
     else:
         logger.info("Socket Mode 불가 → 폴링 모드로 운영")
         await slack.start_background()
