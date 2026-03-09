@@ -158,7 +158,7 @@ def load_config() -> dict:
         if sb_url and sb_key:
             import urllib.request
             req = urllib.request.Request(
-                f"{sb_url}/rest/v1/agent_settings?select=diary_notion_database_id,task_board_notion_database_id",
+                f"{sb_url}/rest/v1/agent_settings?select=diary_notion_database_id,board_notion_db_id",
                 headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -168,6 +168,9 @@ def load_config() -> dict:
                     if not config["DIARY_NOTION_DATABASE_ID"] and s.get("diary_notion_database_id"):
                         config["DIARY_NOTION_DATABASE_ID"] = s["diary_notion_database_id"]
                         logger.info(f"Loaded diary DB ID from agent_settings")
+                    if not config["NOTION_TASK_BOARD_DB_ID"] and s.get("board_notion_db_id"):
+                        config["NOTION_TASK_BOARD_DB_ID"] = s["board_notion_db_id"]
+                        logger.info(f"Loaded task board DB ID from agent_settings")
     except Exception as e:
         logger.warning(f"Failed to load agent_settings from Supabase: {e}")
 
