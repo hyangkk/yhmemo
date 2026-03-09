@@ -1,11 +1,11 @@
 {
-  "name": "AI 뉴스 브리핑",
-  "short_name": "뉴스브리핑",
-  "description": "AI가 매일 핵심 뉴스 5개만 골라드립니다",
+  "name": "AI 전략실",
+  "short_name": "AI전략실",
+  "description": "각 분야 전문 AI 에이전트가 24시간 데이터 기반 전략 인사이트를 제공합니다",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#f59e0b",
+  "theme_color": "#7c3aed",
   "orientation": "portrait",
   "icons": [
     {

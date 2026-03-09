@@ -42,7 +42,6 @@ export default function BookmarksPage() {
       return;
     }
 
-    // 브리핑 API에서 스토리 가져와서 북마크된 것만 필터링
     fetch("/api/morning-briefing")
       .then((res) => res.json())
       .then((data) => {
@@ -68,10 +67,10 @@ export default function BookmarksPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <Link
-              href="/"
+              href="/invest"
               className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition mb-2 inline-block"
             >
-              &larr; 홈으로
+              &larr; 투자전략실
             </Link>
             <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white flex items-center gap-3">
               <svg
@@ -108,7 +107,7 @@ export default function BookmarksPage() {
               뉴스 카드에서 저장 버튼을 눌러 관심 뉴스를 모아보세요
             </p>
             <Link
-              href="/"
+              href="/invest"
               className="inline-flex px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold hover:shadow-lg transition-all hover:scale-105"
             >
               브리핑 보러 가기

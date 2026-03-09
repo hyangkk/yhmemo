@@ -2,8 +2,8 @@ import Link from "next/link";
 import DataSources from "@/components/DataSources";
 
 export const metadata = {
-  title: "정보 수집 현황 — AI 리딩룸",
-  description: "AI 리딩룸이 수집 중인 데이터 소스와 수집 예정 소스를 확인하세요.",
+  title: "정보 수집 현황 — AI 투자전략실",
+  description: "AI 투자전략실이 수집 중인 데이터 소스와 수집 예정 소스를 확인하세요.",
 };
 
 export default function SourcesPage() {
@@ -14,7 +14,7 @@ export default function SourcesPage() {
         <div className="absolute inset-0 bg-gradient-to-r from-violet-600/10 to-purple-600/10 dark:from-violet-600/5 dark:to-purple-600/5" />
         <div className="relative max-w-5xl mx-auto px-4 py-10 sm:py-14">
           <Link
-            href="/"
+            href="/invest"
             className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors mb-6"
           >
             <svg
@@ -30,7 +30,7 @@ export default function SourcesPage() {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            홈으로
+            투자전략실
           </Link>
 
           <div className="text-center">
@@ -47,7 +47,7 @@ export default function SourcesPage() {
             </h1>
 
             <p className="mt-3 text-base text-gray-600 dark:text-gray-300 max-w-xl mx-auto">
-              AI 리딩룸이 어떤 데이터를 수집하고 분석하는지, 그리고 앞으로 어떤
+              AI 투자전략실이 어떤 데이터를 수집하고 분석하는지, 그리고 앞으로 어떤
               소스를 추가할 예정인지 한눈에 확인하세요.
             </p>
           </div>
