@@ -65,8 +65,20 @@ export async function GET(request: Request) {
     if (transcriptParams) {
       log.push("\nStep 3: Testing get_transcript API...");
 
+      // 페이지에서 전체 INNERTUBE_CONTEXT 추출
+      const ctxMatch = html.match(/"INNERTUBE_CONTEXT"\s*:\s*(\{[\s\S]*?\})\s*,\s*"INNERTUBE/);
+      let fullContext = null;
+      if (ctxMatch) {
+        try {
+          fullContext = JSON.parse(ctxMatch[1]);
+          log.push(`  INNERTUBE_CONTEXT: found (clientName=${fullContext?.client?.clientName})`);
+        } catch { log.push("  INNERTUBE_CONTEXT: parse error"); }
+      } else {
+        log.push("  INNERTUBE_CONTEXT: NOT FOUND");
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ctx: any = {
+      const ctx: any = fullContext || {
         client: {
           hl: "ko",
           gl: "KR",
@@ -74,17 +86,16 @@ export async function GET(request: Request) {
           clientVersion: "2.20260301.00.00",
         },
       };
-      if (visitorData) ctx.client.visitorData = visitorData;
+      if (visitorData && ctx.client) ctx.client.visitorData = visitorData;
 
       // API 키 추출
       const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
       const apiKey = apiKeyMatch ? apiKeyMatch[1] : "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
       log.push(`  API key: ${apiKey}`);
 
-      // URL 디코딩 (HTML에서 추출 시 %3D 등이 포함될 수 있음)
       const decodedParams = decodeURIComponent(transcriptParams);
-      log.push(`  Decoded params: ${decodedParams.substring(0, 40)}...`);
 
+      // Test A: 전체 context + decoded params
       const gtResp = await fetch(
         `https://www.youtube.com/youtubei/v1/get_transcript?key=${apiKey}&prettyPrint=false`,
         {
@@ -93,8 +104,10 @@ export async function GET(request: Request) {
             "Content-Type": "application/json",
             "User-Agent": BROWSER_UA,
             "Cookie": cookieStr,
+            "Origin": "https://www.youtube.com",
+            "Referer": `https://www.youtube.com/watch?v=${videoId}`,
             "X-YouTube-Client-Name": "1",
-            "X-YouTube-Client-Version": "2.20260301.00.00",
+            "X-YouTube-Client-Version": ctx.client?.clientVersion || "2.20260301.00.00",
             ...(visitorData ? { "X-Goog-Visitor-Id": visitorData } : {}),
           },
           body: JSON.stringify({ context: ctx, params: decodedParams }),
