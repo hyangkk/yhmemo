@@ -61,7 +61,7 @@ export default function CollectionSummary() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
-      <Link href="/sources" className="block group">
+      <Link href="/invest/sources" className="block group">
         <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur p-5 sm:p-6 transition-all hover:border-violet-300 dark:hover:border-violet-700 hover:shadow-lg hover:shadow-violet-500/5">
           {/* 헤더 */}
           <div className="flex items-center justify-between mb-4">

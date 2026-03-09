@@ -346,13 +346,13 @@ export default function MarketPage() {
       {/* 네비게이션 */}
       <nav className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
         <Link
-          href="/"
+          href="/invest"
           className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition flex items-center gap-1"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          뉴스 브리핑
+          투자전략실
         </Link>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
