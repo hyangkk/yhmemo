@@ -1,7 +1,5 @@
 """
 YouTube 트랜스크립트(자막) 추출 및 요약 모듈
-
-YouTube 영상 URL에서 자막을 추출하고 Claude로 요약하는 기능.
 """
 
 import logging
@@ -26,10 +24,8 @@ _SLACK_URL_PATTERN = re.compile(r'<(https?://[^|>]+)(?:\|[^>]*)?>')
 
 def extract_video_id(text: str) -> Optional[str]:
     """텍스트에서 YouTube 비디오 ID 추출"""
-    # Slack 형식 URL 먼저 추출
     slack_urls = _SLACK_URL_PATTERN.findall(text)
     candidates = slack_urls + [text]
-
     for candidate in candidates:
         for pattern in _YT_PATTERNS:
             match = pattern.search(candidate)
@@ -38,31 +34,16 @@ def extract_video_id(text: str) -> Optional[str]:
     return None
 
 
-def extract_all_video_ids(text: str) -> list[str]:
-    """텍스트에서 모든 YouTube 비디오 ID 추출"""
-    ids = []
-    slack_urls = _SLACK_URL_PATTERN.findall(text)
-    candidates = slack_urls + [text]
-
-    for candidate in candidates:
-        for pattern in _YT_PATTERNS:
-            for match in pattern.finditer(candidate):
-                vid = match.group(1)
-                if vid not in ids:
-                    ids.append(vid)
-    return ids
-
-
 def has_youtube_url(text: str) -> bool:
     """텍스트에 YouTube URL이 포함되어 있는지 확인"""
     return extract_video_id(text) is not None
 
 
 async def fetch_transcript(video_id: str, languages: list[str] = None) -> dict:
-    """YouTube 자막 추출 (youtube-transcript-api 사용)
+    """YouTube 자막 추출
 
     Returns:
-        {"ok": True, "text": "전체 자막 텍스트", "segments": [...], "language": "ko"}
+        {"ok": True, "text": "...", "segments": [...], "language": "ko"}
         or {"ok": False, "error": "에러 메시지"}
     """
     if languages is None:
@@ -106,10 +87,8 @@ async def fetch_transcript(video_id: str, languages: list[str] = None) -> dict:
     except TranscriptsDisabled:
         return {"ok": False, "error": "이 영상은 자막이 비활성화되어 있습니다."}
     except NoTranscriptFound:
-        # 자동 생성 자막 시도
         try:
             transcript_list = ytt_api.list(video_id)
-            # 자동 생성 자막 찾기
             for t in transcript_list:
                 if t.is_generated:
                     transcript = ytt_api.fetch(video_id, languages=[t.language_code])
@@ -141,7 +120,7 @@ async def fetch_transcript(video_id: str, languages: list[str] = None) -> dict:
 
 
 async def fetch_video_info(video_id: str) -> dict:
-    """YouTube 영상 기본 정보 (제목 등) 가져오기 (oembed API)"""
+    """YouTube 영상 기본 정보 (제목 등) - oembed API"""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -166,12 +145,8 @@ async def summarize_transcript(ai_client, transcript_text: str, video_title: str
         ai_client: anthropic.AsyncAnthropic 인스턴스
         transcript_text: 전체 자막 텍스트
         video_title: 영상 제목
-        mode: "summary" (요약) | "full" (전체 스크립트 정리) | "key_points" (핵심 포인트)
-
-    Returns:
-        요약된 텍스트
+        mode: "summary" | "full" | "key_points" | "qna"
     """
-    # 토큰 제한을 위해 텍스트 길이 제한 (약 100K 토큰)
     max_chars = 300_000
     if len(transcript_text) > max_chars:
         transcript_text = transcript_text[:max_chars] + "\n\n... (자막이 너무 길어 일부만 포함)"
@@ -220,5 +195,23 @@ async def summarize_transcript(ai_client, transcript_text: str, video_title: str
         max_tokens=4000,
         system="당신은 영상 내용을 정확하고 깊이있게 요약하는 전문가입니다. 슬랙 메시지에 적합한 포맷으로 작성하세요.",
         messages=[{"role": "user", "content": user_prompt}],
+    )
+    return response.content[0].text
+
+
+async def answer_about_video(ai_client, transcript_text: str, question: str,
+                              video_title: str = "") -> str:
+    """영상 내용에 대한 질문에 답변"""
+    max_chars = 300_000
+    if len(transcript_text) > max_chars:
+        transcript_text = transcript_text[:max_chars]
+
+    title_hint = f" ({video_title})" if video_title else ""
+
+    response = await ai_client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        system=f"당신은 YouTube 영상{title_hint}의 내용을 완벽히 이해한 전문가입니다. 자막 내용을 바탕으로 질문에 정확하게 답변하세요. 자막에 없는 내용은 '영상에서 다루지 않은 내용'이라고 명시하세요.",
+        messages=[{"role": "user", "content": f"[영상 자막]\n{transcript_text}\n\n[질문]\n{question}"}],
     )
     return response.content[0].text
