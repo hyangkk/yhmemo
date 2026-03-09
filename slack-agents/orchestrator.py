@@ -1620,11 +1620,19 @@ async def main():
             logger.error(f"[master] Queue processing error: {e}")
 
     if socket_mode:
-        # Socket Mode: 이벤트는 WebSocket으로 자동 수신, 폴링 불필요
-        # 하지만 헬스체크는 여전히 1시간마다 실행
-        logger.info("All agents running. Socket Mode active + watchdog enabled (1시간 정각 리포트)")
+        # Socket Mode: 이벤트는 WebSocket으로 자동 수신
+        # 단, 봇 자신의 메시지(마스터 명령)는 Socket으로 안 오므로 폴링 병행
+        logger.info("All agents running. Socket Mode active + polling(30s) + watchdog (1시간 정각 리포트)")
+        poll_tick = 0
         while not shutdown_event.is_set():
             agent_tracker.heartbeat("orchestrator")
+            poll_tick += 1
+            # 30초마다 폴링 (봇 자신의 !명령어/[마스터] 메시지 수신용)
+            try:
+                await slack.poll_once()
+                await process_command_queue()
+            except Exception as e:
+                logger.error(f"Poll error: {e}")
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:00"
             if now_kst.minute == 0 and current_slot != last_report_slot:
