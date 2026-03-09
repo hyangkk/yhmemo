@@ -40,7 +40,6 @@ async function getYouTubeSessionCookies(): Promise<string> {
       const nameValue = sc.split(";")[0];
       if (nameValue) cookieParts.push(nameValue);
     }
-    // consent 쿠키 추가 (유럽 GDPR 동의 우회)
     cookieParts.push("SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB");
     cookieParts.push("CONSENT=YES+cb.20210328-17-p0.en+FX+987");
     return cookieParts.join("; ");
@@ -75,9 +74,12 @@ function parsePlayerResponseFromHTML(html: string): { data: unknown | null; erro
   }
 }
 
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 async function getPlayerResponse(videoId: string): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any | null;
+  cookies?: string;
   error?: string;
 }> {
   // Method 1: HTML scraping (세션 쿠키로 봇 감지 우회)
@@ -86,7 +88,7 @@ async function getPlayerResponse(videoId: string): Promise<{
     const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
       headers: {
         "Accept-Language": "ko,en;q=0.9",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": BROWSER_UA,
         "Cookie": cookies,
       },
     });
@@ -97,7 +99,7 @@ async function getPlayerResponse(videoId: string): Promise<{
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const status = (result.data as any)?.playabilityStatus?.status;
       if (tracks.length > 0 || status === "OK") {
-        return result;
+        return { ...result, cookies };
       }
       console.log(`HTML scraping: status=${status}, tracks=${tracks.length}`);
     }
@@ -106,18 +108,19 @@ async function getPlayerResponse(videoId: string): Promise<{
   }
 
   // Method 2: Fallback - consent 쿠키만으로 재시도
+  const fallbackCookies = "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB; CONSENT=YES+cb.20210328-17-p0.en+FX+987";
   try {
     const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
       headers: {
         "Accept-Language": "ko,en;q=0.9",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Cookie": "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTE0LjA3X3AxGgJlbiACGgYIgJnsBxQB; CONSENT=YES+cb.20210328-17-p0.en+FX+987",
+        "Cookie": fallbackCookies,
       },
     });
     const html = await pageResp.text();
     const result = parsePlayerResponseFromHTML(html);
     if (result.data) {
-      return result;
+      return { ...result, cookies: fallbackCookies };
     }
   } catch (e) {
     console.error("HTML scraping fallback error:", e);
@@ -157,6 +160,50 @@ async function getPlayerResponse(videoId: string): Promise<{
   return { data: null, error: "영상 데이터를 가져올 수 없습니다. YouTube가 요청을 차단했을 수 있습니다." };
 }
 
+function parseXmlTranscript(xml: string): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = [];
+  const entryRegex = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+  let match;
+
+  while ((match = entryRegex.exec(xml)) !== null) {
+    const text = match[3]
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/<[^>]+>/g, "")
+      .trim();
+
+    if (text) {
+      segments.push({
+        start: parseFloat(match[1]),
+        duration: parseFloat(match[2]),
+        text,
+      });
+    }
+  }
+  return segments;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseJson3Transcript(json3: any): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = [];
+  const events = json3?.events || [];
+  for (const event of events) {
+    const segs = event.segs || [];
+    const text = segs.map((s: { utf8?: string }) => s.utf8 || "").join("").trim();
+    if (text && event.tStartMs !== undefined) {
+      segments.push({
+        start: (event.tStartMs || 0) / 1000,
+        duration: (event.dDurationMs || 0) / 1000,
+        text,
+      });
+    }
+  }
+  return segments;
+}
+
 async function fetchTranscript(videoId: string): Promise<{
   ok: boolean;
   text?: string;
@@ -167,7 +214,7 @@ async function fetchTranscript(videoId: string): Promise<{
 }> {
   const preferredLanguages = ["ko", "en", "ja"];
 
-  const { data: playerData, error: fetchError } = await getPlayerResponse(videoId);
+  const { data: playerData, cookies, error: fetchError } = await getPlayerResponse(videoId);
   if (!playerData) {
     return { ok: false, error: fetchError || "영상 데이터를 가져올 수 없습니다." };
   }
@@ -186,58 +233,95 @@ async function fetchTranscript(videoId: string): Promise<{
   if (!selectedTrack) selectedTrack = captionTracks[0];
 
   const autoGenerated = selectedTrack.kind === "asr";
+  const fetchHeaders: Record<string, string> = {
+    "User-Agent": BROWSER_UA,
+    "Accept-Language": "ko,en;q=0.9",
+    "Referer": `https://www.youtube.com/watch?v=${videoId}`,
+  };
+  if (cookies) {
+    fetchHeaders["Cookie"] = cookies;
+  }
 
   try {
-    // Fetch the transcript XML
-    const trackResp = await fetch(selectedTrack.baseUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept-Language": "ko,en;q=0.9",
-      },
-    });
-    if (!trackResp.ok) {
-      console.error(`Transcript XML fetch failed: ${trackResp.status}`);
-      return { ok: false, error: "자막 데이터를 다운로드할 수 없습니다." };
-    }
-    const xml = await trackResp.text();
-
-    // Parse XML transcript
-    const segments: TranscriptSegment[] = [];
-    const textParts: string[] = [];
-    const entryRegex = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
-    let match;
-
-    while ((match = entryRegex.exec(xml)) !== null) {
-      const text = match[3]
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/<[^>]+>/g, "")
-        .trim();
-
-      if (text) {
-        segments.push({
-          start: parseFloat(match[1]),
-          duration: parseFloat(match[2]),
-          text,
-        });
-        textParts.push(text);
+    // Attempt 1: XML 형식 (기본)
+    const trackResp = await fetch(selectedTrack.baseUrl, { headers: fetchHeaders });
+    if (trackResp.ok) {
+      const xml = await trackResp.text();
+      if (xml.length > 0) {
+        const segments = parseXmlTranscript(xml);
+        if (segments.length > 0) {
+          return {
+            ok: true,
+            text: segments.map(s => s.text).join(" "),
+            segments,
+            language: selectedTrack.languageCode,
+            autoGenerated,
+          };
+        }
       }
     }
 
-    if (segments.length > 0) {
-      return {
-        ok: true,
-        text: textParts.join(" "),
-        segments,
-        language: selectedTrack.languageCode,
-        autoGenerated,
-      };
+    // Attempt 2: json3 형식
+    const json3Url = selectedTrack.baseUrl + "&fmt=json3";
+    const json3Resp = await fetch(json3Url, { headers: fetchHeaders });
+    if (json3Resp.ok) {
+      const text = await json3Resp.text();
+      if (text.length > 0) {
+        try {
+          const json3Data = JSON.parse(text);
+          const segments = parseJson3Transcript(json3Data);
+          if (segments.length > 0) {
+            return {
+              ok: true,
+              text: segments.map(s => s.text).join(" "),
+              segments,
+              language: selectedTrack.languageCode,
+              autoGenerated,
+            };
+          }
+        } catch {
+          // json3 파싱 실패, XML로도 시도
+          const segments = parseXmlTranscript(text);
+          if (segments.length > 0) {
+            return {
+              ok: true,
+              text: segments.map(s => s.text).join(" "),
+              segments,
+              language: selectedTrack.languageCode,
+              autoGenerated,
+            };
+          }
+        }
+      }
     }
 
-    return { ok: false, error: "자막 데이터를 파싱할 수 없습니다." };
+    // Attempt 3: 다른 자막 트랙으로 시도
+    for (const altTrack of captionTracks) {
+      if (altTrack === selectedTrack) continue;
+      try {
+        const altResp = await fetch(altTrack.baseUrl, { headers: fetchHeaders });
+        if (altResp.ok) {
+          const altXml = await altResp.text();
+          if (altXml.length > 0) {
+            const segments = parseXmlTranscript(altXml);
+            if (segments.length > 0) {
+              return {
+                ok: true,
+                text: segments.map(s => s.text).join(" "),
+                segments,
+                language: altTrack.languageCode,
+                autoGenerated: altTrack.kind === "asr",
+              };
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    console.error(`All transcript fetch attempts failed for ${videoId}`);
+    return { ok: false, error: "자막 데이터를 가져올 수 없습니다. YouTube 서버에서 차단되었을 수 있습니다." };
   } catch (err) {
     console.error("Transcript fetch error:", err);
     return { ok: false, error: "자막을 가져오는 중 오류가 발생했습니다." };
