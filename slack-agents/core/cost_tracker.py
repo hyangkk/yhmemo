@@ -76,9 +76,14 @@ class CostTracker:
             }
         return self._data["daily"][today]
 
-    def can_call(self) -> bool:
-        """일일 예산 내인지 확인"""
+    # 예산 초과해도 AI 호출이 허용되는 필수 에이전트 (비용이 낮은 단순 호출)
+    ESSENTIAL_AGENTS = {"quote", "diary_quote", "fortune"}
+
+    def can_call(self, caller: str = "") -> bool:
+        """일일 예산 내인지 확인. 필수 에이전트는 예산의 150%까지 허용."""
         today_data = self._get_today()
+        if caller in self.ESSENTIAL_AGENTS:
+            return today_data["cost_usd"] < DAILY_BUDGET_USD * 1.5
         return today_data["cost_usd"] < DAILY_BUDGET_USD
 
     def budget_remaining(self) -> float:

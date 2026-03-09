@@ -160,7 +160,8 @@ async def main():
 
     # ── 외부 서비스 클라이언트 초기화 ───────────────────
 
-    logger.info("Initializing services...")
+    budget = os.environ.get("DAILY_AI_BUDGET_USD", "10.0")
+    logger.info(f"Initializing services... (AI budget: ${budget}/day)")
 
     # Supabase
     supabase = create_client(config["SUPABASE_URL"], config["SUPABASE_SERVICE_ROLE_KEY"])

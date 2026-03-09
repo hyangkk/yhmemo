@@ -139,7 +139,7 @@ class BaseAgent(ABC):
             cache_system: True이면 시스템 프롬프트를 캐싱하여 반복 호출 비용 90% 절감
         """
         tracker = get_cost_tracker()
-        if not tracker.can_call():
+        if not tracker.can_call(caller=self.name):
             msg = f"일일 AI 예산 소진 (${tracker.get_today_stats()['budget_usd']}). 내일까지 AI 호출 중단."
             logger.warning(f"[{self.name}] {msg}")
             raise RuntimeError(msg)
