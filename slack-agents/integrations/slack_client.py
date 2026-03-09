@@ -29,6 +29,7 @@ class SlackClient:
     CHANNEL_CURATOR = "C0AJEM4J5KP"    # ai-curator
     CHANNEL_LOGS = "C0AJJ464VJN"       # ai-agent-logs
     CHANNEL_QUOTE = "C0AJUJTHJGL"      # 명언-한마디
+    CHANNEL_INVEST = "C0AKRJZ395W"    # ai-invest
 
     def __init__(self, bot_token: str, app_token: str = "", poll_interval: float = 30.0):
         self.client = AsyncWebClient(token=bot_token)
@@ -328,9 +329,10 @@ class SlackClient:
 
                 # 오래된 것부터 처리 (역순)
                 for msg in reversed(messages):
-                    # 봇 자신의 메시지 무시 (단, !명령어는 허용 → 셀프 테스트용)
+                    # 봇 자신의 메시지 무시 (단, !명령어 또는 [마스터] 접두사는 허용)
                     text_peek = msg.get("text", "")
-                    if (msg.get("bot_id") or msg.get("user") == bot_id) and not text_peek.startswith("!"):
+                    is_master = text_peek.startswith("!") or text_peek.startswith("[마스터]")
+                    if (msg.get("bot_id") or msg.get("user") == bot_id) and not is_master:
                         continue
 
                     text = msg.get("text", "")
@@ -429,8 +431,8 @@ class SlackClient:
         # 채널 캐시 초기화
         await self._init_channel_cache()
 
-        # 명령어는 GENERAL 채널에서만 수신 (rate limit 방지)
-        channels = [self.CHANNEL_GENERAL]
+        # 명령어 수신 채널 (GENERAL + INVEST)
+        channels = [self.CHANNEL_GENERAL, self.CHANNEL_INVEST]
 
         for ch_id in channels:
             self._last_ts[ch_id] = str(time.time())
@@ -499,7 +501,9 @@ class SlackClient:
 
         @self._app.event("message")
         async def handle_message(event):
-            if event.get("bot_id") or event.get("subtype"):
+            text_peek = event.get("text", "")
+            is_master = text_peek.startswith("!") or text_peek.startswith("[마스터]")
+            if (event.get("bot_id") or event.get("subtype")) and not is_master:
                 return
             text = event.get("text", "")
             user = event.get("user", "")
@@ -544,7 +548,7 @@ class SlackClient:
                 pass
 
         # 메시지 수신 채널 (명령어 + 자연어) — 채널 ID 직접 사용
-        poll_channels = [self.CHANNEL_GENERAL, self.CHANNEL_QUOTE]
+        poll_channels = [self.CHANNEL_GENERAL, self.CHANNEL_QUOTE, self.CHANNEL_INVEST]
         saved_ts = self._load_last_ts()
         for ch_id in poll_channels:
             if ch_id in saved_ts:
