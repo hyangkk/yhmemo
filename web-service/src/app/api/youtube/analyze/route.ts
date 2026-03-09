@@ -80,6 +80,7 @@ async function getPlayerResponse(videoId: string): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any | null;
   cookies?: string;
+  html?: string;
   error?: string;
 }> {
   // Method 1: HTML scraping (세션 쿠키로 봇 감지 우회)
@@ -100,7 +101,7 @@ async function getPlayerResponse(videoId: string): Promise<{
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const status = (result.data as any)?.playabilityStatus?.status;
       if (tracks.length > 0 || status === "OK") {
-        return { ...result, cookies };
+        return { ...result, cookies, html };
       }
       console.log(`HTML scraping: status=${status}, tracks=${tracks.length}`);
     }
@@ -122,42 +123,10 @@ async function getPlayerResponse(videoId: string): Promise<{
     const html = await pageResp.text();
     const result = parsePlayerResponseFromHTML(html);
     if (result.data) {
-      return { ...result, cookies: fallbackCookies };
+      return { ...result, cookies: fallbackCookies, html };
     }
   } catch (e) {
     console.error("HTML scraping fallback error:", e);
-  }
-
-  // Method 3: Innertube API (일부 환경에서 작동)
-  try {
-    const innertubeResp = await fetch(
-      "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          context: {
-            client: {
-              hl: "ko",
-              gl: "KR",
-              clientName: "WEB",
-              clientVersion: "2.20260301.00.00",
-            },
-          },
-          videoId,
-        }),
-        cache: "no-store",
-      }
-    );
-    if (innertubeResp.ok) {
-      const data = await innertubeResp.json();
-      const tracks = extractCaptionTracks(data);
-      if (tracks.length > 0 || data.playabilityStatus?.status === "OK") {
-        return { data };
-      }
-    }
-  } catch (e) {
-    console.error("Innertube API error:", e);
   }
 
   return { data: null, error: "영상 데이터를 가져올 수 없습니다. YouTube가 요청을 차단했을 수 있습니다." };
@@ -207,16 +176,6 @@ function parseJson3Transcript(json3: any): TranscriptSegment[] {
   return segments;
 }
 
-function encodeTranscriptParams(videoId: string): string {
-  // Protobuf 인코딩: { 1: videoId }
-  const videoIdBytes = new TextEncoder().encode(videoId);
-  const bytes = new Uint8Array(2 + videoIdBytes.length);
-  bytes[0] = 0x0a; // field 1, wire type 2 (length-delimited)
-  bytes[1] = videoIdBytes.length;
-  bytes.set(videoIdBytes, 2);
-  return btoa(String.fromCharCode(...bytes));
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function parseInnertubeTranscript(data: any): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
@@ -251,14 +210,55 @@ function parseInnertubeTranscript(data: any): TranscriptSegment[] {
   return segments;
 }
 
-async function fetchTranscriptViaInnertube(videoId: string): Promise<{
+// YouTube 페이지에서 getTranscriptEndpoint params와 visitorData 추출
+function extractTranscriptParams(html: string): { params: string | null; visitorData: string | null } {
+  let params: string | null = null;
+  let visitorData: string | null = null;
+
+  // visitorData 추출
+  const vdMatch = html.match(/"visitorData":"([^"]+)"/);
+  if (vdMatch) visitorData = vdMatch[1];
+
+  // getTranscriptEndpoint params 추출
+  const paramsMatch = html.match(/getTranscriptEndpoint.*?"params"\s*:\s*"([^"]+)"/);
+  if (paramsMatch) params = paramsMatch[1];
+
+  return { params, visitorData };
+}
+
+async function fetchTranscriptViaGetTranscript(
+  videoId: string,
+  html: string,
+  cookies: string
+): Promise<{
   ok: boolean;
   text?: string;
   segments?: TranscriptSegment[];
   error?: string;
 }> {
+  const { params, visitorData } = extractTranscriptParams(html);
+
+  if (!params) {
+    console.log("getTranscriptEndpoint params not found in page");
+    return { ok: false, error: "자막 패널 정보를 찾을 수 없습니다." };
+  }
+
+  console.log(`get_transcript: params=${params.substring(0, 30)}..., visitorData=${visitorData ? "found" : "missing"}`);
+
   try {
-    const params = encodeTranscriptParams(videoId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const context: any = {
+      client: {
+        hl: "ko",
+        gl: "KR",
+        clientName: "WEB",
+        clientVersion: "2.20260301.00.00",
+      },
+    };
+    if (visitorData) {
+      context.client.visitorData = visitorData;
+    }
+
     const resp = await fetch(
       "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false",
       {
@@ -266,24 +266,15 @@ async function fetchTranscriptViaInnertube(videoId: string): Promise<{
         headers: {
           "Content-Type": "application/json",
           "User-Agent": BROWSER_UA,
+          ...(cookies ? { Cookie: cookies } : {}),
         },
-        body: JSON.stringify({
-          context: {
-            client: {
-              hl: "ko",
-              gl: "KR",
-              clientName: "WEB",
-              clientVersion: "2.20260301.00.00",
-            },
-          },
-          params,
-        }),
+        body: JSON.stringify({ context, params }),
         cache: "no-store",
       }
     );
 
     if (!resp.ok) {
-      console.error("Innertube get_transcript failed:", resp.status);
+      console.error("get_transcript failed:", resp.status);
       return { ok: false, error: `get_transcript API 실패 (${resp.status})` };
     }
 
@@ -297,9 +288,10 @@ async function fetchTranscriptViaInnertube(videoId: string): Promise<{
       };
     }
 
+    console.log("get_transcript returned no segments, keys:", Object.keys(data));
     return { ok: false, error: "get_transcript 응답에서 자막을 찾을 수 없습니다." };
   } catch (e) {
-    console.error("fetchTranscriptViaInnertube error:", e);
+    console.error("fetchTranscriptViaGetTranscript error:", e);
     return { ok: false, error: "get_transcript API 호출 중 오류" };
   }
 }
@@ -314,18 +306,7 @@ async function fetchTranscript(videoId: string): Promise<{
 }> {
   const preferredLanguages = ["ko", "en", "ja"];
 
-  // Method 0: Innertube get_transcript API (클라우드 서버에서 가장 안정적)
-  const innertubeResult = await fetchTranscriptViaInnertube(videoId);
-  if (innertubeResult.ok) {
-    return {
-      ...innertubeResult,
-      language: "auto",
-      autoGenerated: false,
-    };
-  }
-  console.log("Innertube get_transcript failed, trying HTML scraping...");
-
-  const { data: playerData, cookies, error: fetchError } = await getPlayerResponse(videoId);
+  const { data: playerData, cookies, html, error: fetchError } = await getPlayerResponse(videoId);
   if (!playerData) {
     return { ok: false, error: fetchError || "영상 데이터를 가져올 수 없습니다." };
   }
@@ -333,6 +314,19 @@ async function fetchTranscript(videoId: string): Promise<{
   const captionTracks = extractCaptionTracks(playerData);
   if (captionTracks.length === 0) {
     return { ok: false, error: "이 영상에는 자막이 없습니다." };
+  }
+
+  // Method 0: get_transcript API (페이지에서 추출한 params 사용 - 캡션 URL 차단 우회)
+  if (html) {
+    const gtResult = await fetchTranscriptViaGetTranscript(videoId, html, cookies || "");
+    if (gtResult.ok) {
+      return {
+        ...gtResult,
+        language: "auto",
+        autoGenerated: false,
+      };
+    }
+    console.log("get_transcript failed, falling back to caption URL download...");
   }
 
   // Find preferred language track
