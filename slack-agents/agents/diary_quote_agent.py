@@ -136,11 +136,13 @@ class DiaryQuoteAgent(BaseAgent):
             return None
 
         created_time = selected.get("created_time", "")
+        page_url = selected.get("url", "")
 
         return {
             "current_time": now.strftime("%Y-%m-%d %H:%M"),
             "current_hour": current_hour,
             "page_id": page_id,
+            "page_url": page_url,
             "title": title,
             "content": content[:3000],  # 토큰 절약
             "created_time": created_time,
@@ -213,6 +215,7 @@ class DiaryQuoteAgent(BaseAgent):
             "title": title,
             "created_time": context.get("created_time", ""),
             "page_id": context.get("page_id", ""),
+            "page_url": context.get("page_url", ""),
             "hour": context["current_hour"],
         }
 
@@ -246,6 +249,7 @@ class DiaryQuoteAgent(BaseAgent):
         context_note = decision.get("context_note", "")
         title = decision.get("title", "")
         created_time = decision.get("created_time", "")
+        page_url = decision.get("page_url", "")
 
         # 작성일 포맷
         date_str = ""
@@ -267,12 +271,15 @@ class DiaryQuoteAgent(BaseAgent):
         }
         emoji = emoji_map.get(category, "📝")
 
+        # 제목에 노션 링크 연결
+        title_display = f"<{page_url}|{title}>" if page_url else title
+
         message = f"{emoji} *나의 생각일기에서*\n\n"
         message += f"> _{quote}_\n"
         if date_str:
-            message += f"> — {date_str} 〈{title}〉"
+            message += f"> — {date_str} 〈{title_display}〉"
         elif title:
-            message += f"> — 〈{title}〉"
+            message += f"> — 〈{title_display}〉"
         if context_note:
             message += f"\n\n💭 _{context_note}_"
         return message
