@@ -177,7 +177,8 @@ class SlackClient:
     async def ensure_channels_exist(self):
         """필요한 채널에 봇을 join (채널 ID 기반)"""
         required = [self.CHANNEL_GENERAL, self.CHANNEL_COLLECTOR,
-                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS, self.CHANNEL_QUOTE]
+                    self.CHANNEL_CURATOR, self.CHANNEL_LOGS, self.CHANNEL_QUOTE,
+                    self.CHANNEL_INVEST]
         for ch_id in required:
             try:
                 await self.client.conversations_join(channel=ch_id)
@@ -542,7 +543,7 @@ class SlackClient:
         await self._init_channel_cache()
 
         # 봇이 참여할 채널 (필수 채널만)
-        for ch_id in [self.CHANNEL_GENERAL, self.CHANNEL_LOGS]:
+        for ch_id in [self.CHANNEL_GENERAL, self.CHANNEL_LOGS, self.CHANNEL_INVEST]:
             try:
                 await self.client.conversations_join(channel=ch_id)
             except Exception:

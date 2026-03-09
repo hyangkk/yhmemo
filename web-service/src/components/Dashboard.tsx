@@ -111,7 +111,7 @@ export default function Dashboard() {
       : collected.filter((item) => item.source === filter);
 
   return (
-    <section className="max-w-5xl mx-auto px-4 py-8">
+    <section className="max-w-4xl mx-auto px-4 py-8 w-full">
       {/* AI Pick 섹션 */}
       {curated.length > 0 && (
         <div className="mb-12">
