@@ -399,34 +399,6 @@ class SentimentAgent(BaseAgent):
         except Exception as e:
             logger.debug(f"[sentiment] CryptoPanic error: {e}")
 
-        # 대안: Google News RSS (암호화폐/투자 관련)
-        if not articles:
-            articles = await self._fetch_news_rss()
-
-        return articles
-
-    async def _fetch_news_rss(self) -> list[dict]:
-        """Google News RSS로 투자 뉴스 수집 (대안)"""
-        import feedparser
-
-        articles = []
-        queries = ["cryptocurrency+market", "bitcoin+sentiment", "stock+market+today"]
-        for query in queries:
-            try:
-                url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        feed = feedparser.parse(resp.text)
-                        for entry in feed.entries[:5]:
-                            articles.append({
-                                "source": "GoogleNews",
-                                "title": entry.get("title", ""),
-                                "url": entry.get("link", ""),
-                                "published_at": entry.get("published", ""),
-                            })
-            except Exception as e:
-                logger.debug(f"[sentiment] Google News RSS error: {e}")
         return articles
 
     # ── AI 분석 ────────────────────────────────────────

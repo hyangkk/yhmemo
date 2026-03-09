@@ -31,6 +31,69 @@ interface SentimentData {
   hasData: boolean;
 }
 
+/* ── 플랫폼 정의 ─────────────────────────────── */
+
+interface PlatformGroup {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  borderColor: string;
+  bgColor: string;
+  channels: string[]; // sourceFeeds의 key들
+  posts: SourcePost[];
+}
+
+function groupByPlatform(sourceFeeds: Record<string, SourcePost[]>): PlatformGroup[] {
+  const platforms: PlatformGroup[] = [];
+
+  // Reddit: r/* 으로 시작하는 모든 채널
+  const redditPosts: SourcePost[] = [];
+  const redditSubs: string[] = [];
+  // CryptoPanic
+  const cryptoPanicPosts: SourcePost[] = [];
+
+  for (const [channel, posts] of Object.entries(sourceFeeds)) {
+    if (channel.startsWith("r/")) {
+      redditPosts.push(...posts);
+      redditSubs.push(channel);
+    } else if (channel === "CryptoPanic") {
+      cryptoPanicPosts.push(...posts);
+    }
+    // GoogleNews 등 소셜이 아닌 건 제외
+  }
+
+  if (redditPosts.length > 0) {
+    // Reddit 글은 score 기준 정렬
+    redditPosts.sort((a, b) => (b.score || 0) - (a.score || 0));
+    platforms.push({
+      id: "reddit",
+      name: "Reddit",
+      icon: "🔴",
+      color: "text-orange-600 dark:text-orange-400",
+      borderColor: "border-orange-200 dark:border-orange-800/50",
+      bgColor: "bg-orange-50/50 dark:bg-orange-950/20",
+      channels: redditSubs,
+      posts: redditPosts,
+    });
+  }
+
+  if (cryptoPanicPosts.length > 0) {
+    platforms.push({
+      id: "cryptopanic",
+      name: "CryptoPanic",
+      icon: "⚡",
+      color: "text-blue-600 dark:text-blue-400",
+      borderColor: "border-blue-200 dark:border-blue-800/50",
+      bgColor: "bg-blue-50/50 dark:bg-blue-950/20",
+      channels: ["CryptoPanic"],
+      posts: cryptoPanicPosts,
+    });
+  }
+
+  return platforms;
+}
+
 /* ── 유틸 ─────────────────────────────────────── */
 
 function getScoreColor(score: number): string {
@@ -67,35 +130,6 @@ function getAssetEmoji(asset: string): string {
   return map[asset] || "📊";
 }
 
-function getChannelMeta(channel: string): { icon: string; color: string; label: string } {
-  if (channel.startsWith("r/")) {
-    return {
-      icon: "🔴",
-      color: "border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30",
-      label: `Reddit ${channel}`,
-    };
-  }
-  if (channel === "CryptoPanic") {
-    return {
-      icon: "📰",
-      color: "border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30",
-      label: "CryptoPanic News",
-    };
-  }
-  if (channel === "GoogleNews") {
-    return {
-      icon: "🗞️",
-      color: "border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30",
-      label: "Google News",
-    };
-  }
-  return {
-    icon: "📡",
-    color: "border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-950/30",
-    label: channel,
-  };
-}
-
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -130,92 +164,96 @@ function MiniTrendChart({ history }: { history: SentimentData["history"] }) {
   );
 }
 
-/* ── 채널 피드 카드 ──────────────────────────── */
+/* ── 플랫폼별 카드 ───────────────────────────── */
 
-function ChannelFeed({ channel, posts }: { channel: string; posts: SourcePost[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const meta = getChannelMeta(channel);
-  const visiblePosts = expanded ? posts : posts.slice(0, 3);
+function PlatformCard({ platform }: { platform: PlatformGroup }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? platform.posts : platform.posts.slice(0, 5);
+
+  // Reddit은 서브레딧 목록 표시
+  const subLabel = platform.id === "reddit"
+    ? platform.channels.slice(0, 4).join(", ") + (platform.channels.length > 4 ? ` 외 ${platform.channels.length - 4}개` : "")
+    : "";
 
   return (
-    <div className={`rounded-xl border ${meta.color} overflow-hidden`}>
-      {/* 채널 헤더 */}
-      <div className="px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{meta.icon}</span>
-          <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-            {meta.label}
-          </span>
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {posts.length}개 글
-          </span>
+    <div className={`rounded-2xl border ${platform.borderColor} ${platform.bgColor} overflow-hidden`}>
+      {/* 플랫폼 헤더 */}
+      <div className="px-5 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">{platform.icon}</span>
+          <div>
+            <h3 className={`font-bold text-base ${platform.color}`}>{platform.name}</h3>
+            {subLabel && (
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{subLabel}</p>
+            )}
+          </div>
         </div>
+        <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-white/60 dark:bg-gray-800/60 px-2.5 py-1 rounded-full">
+          {platform.posts.length}개 글
+        </span>
       </div>
 
       {/* 글 목록 */}
-      <div className="divide-y divide-gray-200/50 dark:divide-gray-700/50">
-        {visiblePosts.map((post, i) => (
-          <div key={i} className="px-4 py-3 hover:bg-white/50 dark:hover:bg-gray-900/50 transition-colors">
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                {post.url ? (
-                  <a
-                    href={post.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm font-medium text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors line-clamp-2"
-                  >
-                    {post.title}
-                  </a>
-                ) : (
-                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200 line-clamp-2">
-                    {post.title}
-                  </p>
-                )}
-                {post.snippet && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-1">
-                    {post.snippet}
-                  </p>
-                )}
-              </div>
+      <div className="px-2 pb-2">
+        <div className="rounded-xl bg-white/70 dark:bg-gray-900/70 divide-y divide-gray-100 dark:divide-gray-800/50">
+          {visible.map((post, i) => (
+            <div key={i} className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  {post.url ? (
+                    <a
+                      href={post.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-gray-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors line-clamp-2 leading-snug"
+                    >
+                      {post.title}
+                    </a>
+                  ) : (
+                    <p className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2 leading-snug">
+                      {post.title}
+                    </p>
+                  )}
+                  {post.snippet && (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 line-clamp-1">{post.snippet}</p>
+                  )}
+                </div>
 
-              {/* 메타 (Reddit: upvote/comments, News: votes) */}
-              <div className="flex-shrink-0 flex items-center gap-2 text-xs text-gray-400">
+                {/* Reddit 메타: upvotes + comments */}
                 {post.score !== undefined && (
-                  <span className="inline-flex items-center gap-0.5" title="Upvotes">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                    </svg>
-                    {post.score >= 1000 ? `${(post.score / 1000).toFixed(1)}k` : post.score}
-                  </span>
+                  <div className="flex-shrink-0 flex items-center gap-2.5 text-xs text-gray-400">
+                    <span className="inline-flex items-center gap-0.5 text-orange-500" title="Upvotes">
+                      ▲ {post.score >= 1000 ? `${(post.score / 1000).toFixed(1)}k` : post.score}
+                    </span>
+                    {post.comments !== undefined && (
+                      <span className="inline-flex items-center gap-0.5" title="Comments">
+                        💬 {post.comments}
+                      </span>
+                    )}
+                  </div>
                 )}
-                {post.comments !== undefined && (
-                  <span className="inline-flex items-center gap-0.5" title="Comments">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                    {post.comments}
-                  </span>
-                )}
+
+                {/* CryptoPanic 메타: votes */}
                 {post.votes && (
-                  <span className="inline-flex items-center gap-1">
-                    <span className="text-green-500">+{post.votes.positive || 0}</span>
-                    <span className="text-red-500">-{post.votes.negative || 0}</span>
-                  </span>
+                  <div className="flex-shrink-0 text-xs">
+                    <span className="text-green-500">👍{post.votes.positive || 0}</span>
+                    {" "}
+                    <span className="text-red-500">👎{post.votes.negative || 0}</span>
+                  </div>
                 )}
               </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* 더보기 */}
-      {posts.length > 3 && (
+      {platform.posts.length > 5 && (
         <button
-          onClick={() => setExpanded(!expanded)}
-          className="w-full px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-white/30 dark:hover:bg-gray-800/30 transition-colors text-center"
+          onClick={() => setShowAll(!showAll)}
+          className="w-full px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors text-center border-t border-gray-200/30 dark:border-gray-700/30"
         >
-          {expanded ? "접기" : `+${posts.length - 3}개 더보기`}
+          {showAll ? "접기 ▲" : `+${platform.posts.length - 5}개 더보기 ▼`}
         </button>
       )}
     </div>
@@ -230,7 +268,6 @@ export default function SocialSentiment() {
   const [data, setData] = useState<SentimentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [activeTab, setActiveTab] = useState<"feeds" | "analysis">("feeds");
 
   const fetchData = useCallback(async () => {
     try {
@@ -253,12 +290,9 @@ export default function SocialSentiment() {
     return (
       <section className="max-w-5xl mx-auto px-4 py-8">
         <div className="space-y-4">
-          <div className="h-24 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-48 rounded-xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
-            ))}
-          </div>
+          <div className="h-32 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
+          <div className="h-64 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
+          <div className="h-64 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
         </div>
       </section>
     );
@@ -281,7 +315,7 @@ export default function SocialSentiment() {
         <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-8 text-center">
           <p className="text-3xl mb-3">🔍</p>
           <p className="font-semibold text-gray-700 dark:text-gray-200 mb-1">소셜 센티멘트 분석 준비 중</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">에이전트가 Reddit, CryptoPanic 등에서 데이터를 수집하고 있습니다. 첫 분석 결과가 곧 표시됩니다.</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">에이전트가 Reddit, CryptoPanic에서 데이터를 수집하고 있습니다.</p>
         </div>
       </section>
     );
@@ -294,13 +328,13 @@ export default function SocialSentiment() {
   } = latest;
 
   const sortedAssets = Object.entries(assetScores).sort(([, a], [, b]) => b - a);
-  const channels = Object.entries(sourceFeeds || {}).filter(([, posts]) => posts.length > 0);
-  const totalPosts = channels.reduce((sum, [, posts]) => sum + posts.length, 0);
+  const platforms = groupByPlatform(sourceFeeds || {});
+  const totalPosts = platforms.reduce((sum, p) => sum + p.posts.length, 0);
 
   return (
-    <section className="max-w-5xl mx-auto px-4 py-8">
+    <section className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* ── 헤더 ── */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
           <span className="w-8 h-8 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm">💬</span>
           소셜 센티멘트
@@ -308,18 +342,18 @@ export default function SocialSentiment() {
         <div className="flex items-center gap-3">
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs font-medium">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-            {totalPosts}개 소스 분석
+            {totalPosts}개 소스
           </span>
           <span className="text-xs text-gray-400">{timeAgo(analyzedAt)} 분석</span>
         </div>
       </div>
 
-      {/* ── 종합 게이지 + 자산별 ── */}
-      <div className="mb-6 p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+      {/* ── 종합 센티멘트 카드 ── */}
+      <div className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
         <div className="flex items-center justify-between mb-3">
           <div>
             <span className="text-sm font-medium text-gray-500 dark:text-gray-400">시장 소셜 감성 지수</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Reddit · CryptoPanic · 뉴스 종합</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Reddit · CryptoPanic 종합</p>
           </div>
           <div className="text-right">
             <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
@@ -328,7 +362,7 @@ export default function SocialSentiment() {
             <p className={`text-sm font-medium ${getScoreColor(overallScore)}`}>{overallLabel}</p>
           </div>
         </div>
-        <div className="w-full h-4 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden mb-2">
+        <div className="w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden mb-2">
           <div className={`h-full rounded-full transition-all duration-1000 ${getScoreBg(overallScore)}`} style={{ width: `${overallScore}%` }} />
         </div>
         <div className="flex justify-between text-xs text-gray-400">
@@ -357,109 +391,84 @@ export default function SocialSentiment() {
         </div>
       </div>
 
-      {/* ── 탭: 원본 피드 / AI 분석 ── */}
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => setActiveTab("feeds")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            activeTab === "feeds"
-              ? "bg-blue-600 text-white shadow-md"
-              : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-          }`}
-        >
-          📡 채널별 원본 글 ({totalPosts})
-        </button>
-        <button
-          onClick={() => setActiveTab("analysis")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            activeTab === "analysis"
-              ? "bg-purple-600 text-white shadow-md"
-              : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-          }`}
-        >
-          🧠 AI 종합 분석
-        </button>
-      </div>
-
-      {/* ── 탭 콘텐츠: 채널별 원본 글 ── */}
-      {activeTab === "feeds" && (
-        <div className="space-y-4">
-          {channels.length > 0 ? (
-            channels.map(([channel, posts]) => (
-              <ChannelFeed key={channel} channel={channel} posts={posts as SourcePost[]} />
-            ))
-          ) : (
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 text-center">
-              <p className="text-sm text-gray-500 dark:text-gray-400">수집된 원본 글이 없습니다. 다음 분석 사이클에서 수집됩니다.</p>
-            </div>
-          )}
+      {/* ── 소셜 미디어별 카드 ── */}
+      {platforms.length > 0 ? (
+        <div className="space-y-5">
+          {platforms.map((platform) => (
+            <PlatformCard key={platform.id} platform={platform} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 text-center">
+          <p className="text-sm text-gray-500 dark:text-gray-400">수집된 소셜 데이터가 없습니다. 다음 분석 사이클에서 수집됩니다.</p>
         </div>
       )}
 
-      {/* ── 탭 콘텐츠: AI 종합 분석 ── */}
-      {activeTab === "analysis" && (
-        <div className="space-y-4">
-          {/* AI 요약 */}
-          {summary && (
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">💡 AI 종합 분석</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{summary}</p>
-            </div>
-          )}
+      {/* ── AI 종합 분석 ── */}
+      {(summary || (bullishSignals && bullishSignals.length > 0) || (bearishSignals && bearishSignals.length > 0)) && (
+        <div className="rounded-2xl border border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-950/20 overflow-hidden">
+          <div className="px-5 py-4 flex items-center gap-2">
+            <span className="text-lg">🧠</span>
+            <h3 className="font-bold text-sm text-purple-700 dark:text-purple-300">AI 종합 분석</h3>
+          </div>
 
-          {/* 강세/약세 시그널 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {bullishSignals && bullishSignals.length > 0 && (
-              <div className="rounded-2xl border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-950/20 p-5">
-                <h3 className="text-sm font-semibold text-green-700 dark:text-green-400 mb-3">📈 강세 시그널</h3>
-                <ul className="space-y-2">
-                  {bullishSignals.map((s: string, i: number) => (
-                    <li key={i} className="text-sm text-green-700 dark:text-green-300 flex items-start gap-2">
-                      <span className="mt-0.5">•</span>{s}
-                    </li>
-                  ))}
-                </ul>
+          <div className="px-5 pb-5 space-y-4">
+            {/* 요약 */}
+            {summary && (
+              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-line">{summary}</p>
+            )}
+
+            {/* 강세/약세 */}
+            {((bullishSignals && bullishSignals.length > 0) || (bearishSignals && bearishSignals.length > 0)) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {bullishSignals && bullishSignals.length > 0 && (
+                  <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800/40 p-3.5">
+                    <p className="text-xs font-semibold text-green-700 dark:text-green-400 mb-2">📈 강세 시그널</p>
+                    <ul className="space-y-1.5">
+                      {bullishSignals.map((s: string, i: number) => (
+                        <li key={i} className="text-xs text-green-700 dark:text-green-300">• {s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {bearishSignals && bearishSignals.length > 0 && (
+                  <div className="rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/40 p-3.5">
+                    <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-2">📉 약세 시그널</p>
+                    <ul className="space-y-1.5">
+                      {bearishSignals.map((s: string, i: number) => (
+                        <li key={i} className="text-xs text-red-700 dark:text-red-300">• {s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
-            {bearishSignals && bearishSignals.length > 0 && (
-              <div className="rounded-2xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-950/20 p-5">
-                <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-3">📉 약세 시그널</h3>
-                <ul className="space-y-2">
-                  {bearishSignals.map((s: string, i: number) => (
-                    <li key={i} className="text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
-                      <span className="mt-0.5">•</span>{s}
-                    </li>
-                  ))}
-                </ul>
+
+            {/* 핫토픽 */}
+            {trendingTopics.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {trendingTopics.map((topic: string, i: number) => (
+                  <span key={i} className="px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-900/40 text-xs text-purple-700 dark:text-purple-300 font-medium">
+                    #{topic}
+                  </span>
+                ))}
               </div>
             )}
           </div>
-
-          {/* 핫토픽 */}
-          {trendingTopics.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">🔥 핫토픽</h3>
-              <div className="flex flex-wrap gap-2">
-                {trendingTopics.map((topic: string, i: number) => (
-                  <span key={i} className="px-3 py-1.5 rounded-full bg-gray-100 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-300 font-medium">#{topic}</span>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
       {/* 위험 경고 */}
       {riskAlert && (
-        <div className="mt-4 p-4 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/10">
+        <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/10">
           <p className="text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
             <span className="text-base">⚠️</span>{riskAlert}
           </p>
         </div>
       )}
 
-      <p className="text-center text-xs text-gray-300 dark:text-gray-600 mt-6">
-        소셜 센티멘트는 Reddit · CryptoPanic · 뉴스 기반 AI 분석이며, 투자 조언이 아닙니다.
+      <p className="text-center text-xs text-gray-300 dark:text-gray-600">
+        Reddit · CryptoPanic 기반 AI 분석이며, 투자 조언이 아닙니다.
       </p>
     </section>
   );
