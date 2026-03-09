@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
+import { getSecret } from "@/lib/secrets";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const dynamic = "force-dynamic";
@@ -80,7 +81,11 @@ export async function GET() {
       .join("\n");
 
     // 3. AI 투자 시그널 분석
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const apiKey = await getSecret("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+    }
+    const anthropic = new Anthropic({ apiKey });
 
     const fgContext = fearGreedHistory.length > 0
       ? `\n\nFear & Greed Index 7일 추이:\n${fearGreedHistory.map((f) => `${f.date}: ${f.value}/100 (${f.classification})`).join("\n")}`
