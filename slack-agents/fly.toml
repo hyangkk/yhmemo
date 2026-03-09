@@ -14,7 +14,7 @@ primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
   destination = "/app/data"
 
 [env]
-  DAILY_AI_BUDGET_USD = "10"
+  DAILY_AI_BUDGET_USD = "20"
 
 [vm]
   memory = '512mb'

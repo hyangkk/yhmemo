@@ -89,7 +89,7 @@ class DiaryQuoteAgent(BaseAgent):
 
         # 노션 DB ID 없으면 스킵
         if not self._diary_db_id or not self.notion:
-            logger.debug("[diary_quote] No diary DB ID or Notion client")
+            logger.warning("[diary_quote] Skipping: diary_db_id=%s, notion=%s", bool(self._diary_db_id), bool(self.notion))
             return None
 
         # 최근 3개월간의 글 조회
@@ -107,8 +107,10 @@ class DiaryQuoteAgent(BaseAgent):
         )
 
         if not pages:
-            logger.info("[diary_quote] No diary entries found in last 3 months")
+            logger.warning("[diary_quote] No diary entries found in last 3 months (db=%s)", self._diary_db_id)
             return None
+
+        logger.info("[diary_quote] Found %d diary entries, slot=%s", len(pages), current_slot)
 
         # 최근 7일간 이미 사용한 페이지 제외
         used_ids = self._recently_used_page_ids()
