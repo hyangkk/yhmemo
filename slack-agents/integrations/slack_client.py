@@ -500,17 +500,11 @@ class SlackClient:
                 except Exception as e:
                     logger.error(f"Reaction handler error: {e}")
 
-        @self._app.event("message")
-        async def handle_message(event):
-            # 봇/subtype 메시지 무시 (단, !명령어 또는 [마스터] 접두사는 허용)
-            text_peek = event.get("text", "")
-            is_master = text_peek.startswith("!") or text_peek.startswith("[마스터]")
-            if (event.get("bot_id") or event.get("subtype")) and not is_master:
-                return
+        async def _process_message(event):
+            """Socket Mode 메시지 공통 처리"""
             text = event.get("text", "")
             user = event.get("user", "")
             channel = event.get("channel", "")
-            # 스레드 답글이면 thread_ts가 부모 메시지 ts, 아니면 자기 ts
             thread_ts = event.get("thread_ts") or event.get("ts")
 
             if not text.strip():
@@ -522,16 +516,39 @@ class SlackClient:
                 args = parts[1] if len(parts) > 1 else ""
                 handler = self._command_handlers.get(cmd)
                 if handler:
+                    logger.info(f"[socket] Executing command: !{cmd}")
                     await handler(args=args, user=user, channel=channel, thread_ts=thread_ts)
-            elif self._natural_language_handler:
-                logger.info(f"[socket] Natural language: '{text[:50]}'")
-                try:
+            elif text.startswith("[마스터]"):
+                if self._natural_language_handler:
+                    logger.info(f"[socket] Master command: '{text[:50]}'")
                     await self._natural_language_handler(
-                        text=text, user=user, channel=channel,
-                        thread_ts=thread_ts,
+                        text=text, user=user, channel=channel, thread_ts=thread_ts,
                     )
-                except Exception as e:
-                    logger.error(f"[socket] Natural language handler error: {e}")
+            elif not event.get("bot_id"):
+                # 일반 유저 메시지만 자연어 처리
+                if self._natural_language_handler:
+                    logger.info(f"[socket] Natural language: '{text[:50]}'")
+                    try:
+                        await self._natural_language_handler(
+                            text=text, user=user, channel=channel,
+                            thread_ts=thread_ts,
+                        )
+                    except Exception as e:
+                        logger.error(f"[socket] Natural language handler error: {e}")
+
+        @self._app.event("message")
+        async def handle_message(event):
+            if event.get("bot_id") or event.get("subtype"):
+                return
+            await _process_message(event)
+
+        # 봇 자신의 메시지 (bot_message subtype) → !명령어/[마스터] 셀프 테스트용
+        @self._app.event({"type": "message", "subtype": "bot_message"})
+        async def handle_bot_message(event):
+            text = event.get("text", "")
+            if text.startswith("!") or text.startswith("[마스터]"):
+                logger.info(f"[socket] Bot self-command: '{text[:50]}'")
+                await _process_message(event)
 
     # ── 시작/종료 ──────────────────────────────────────
 
