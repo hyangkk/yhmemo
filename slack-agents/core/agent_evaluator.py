@@ -2,18 +2,17 @@
 에이전트 평가 시스템 (Agent Evaluator) — Level 5 성과 평가 + 해고 + 재생성
 
 마스터(ProactiveAgent)가 매일/주기적으로:
-  1. 모든 에이전트의 성과를 측정
+  1. 모든 에이전트의 성과를 측정 (agent_tracker 실제 데이터 기반)
   2. 등급(A~F) 부여
   3. 부진 에이전트 → 코드 수정 or 폐기 후 재생성
   4. 우수 에이전트 → 역할 확대/복제
   5. 전체 조직 구조 최적화
 
 평가 기준:
-  - 사이클 성공률
+  - 가동률 (agent_tracker heartbeat 기반)
+  - 사이클 성공률 (에러 비율)
   - 위임 완수율
-  - 슬랙 전송 빈도/품질
   - 목표 기여도
-  - 에러 발생률
 """
 
 import json
@@ -21,6 +20,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
+from core import agent_tracker
 from integrations.slack_client import SlackClient
 
 logger = logging.getLogger("agent_evaluator")
@@ -85,35 +85,62 @@ class AgentEvaluator:
         return evaluation
 
     def _collect_metrics(self, agent_name: str) -> dict:
-        """에이전트 메트릭 수집"""
+        """에이전트 메트릭 수집 — agent_tracker 실제 데이터 기반"""
         metrics = {
+            "uptime_pct": 0.0,
+            "cycle_count": 0,
+            "error_count": 0,
+            "error_rate": 0.0,
             "cycle_success_rate": 0.5,
             "delegation_reliability": 0.5,
-            "error_rate": 0.0,
             "composite_score": 0.5,
+            "is_dynamic": False,
         }
 
-        # 팩토리에서 사이클 성과
-        if self._factory:
-            info = self._factory._registry.get("agents", {}).get(agent_name, {})
-            perf = info.get("performance", {})
-            cycles = perf.get("cycles", 0)
+        # 1. agent_tracker에서 실제 가동 데이터 가져오기 (정적+동적 모두)
+        tracker_data = agent_tracker.get_summary_for_report()
+        agent_info = tracker_data.get("agents", {}).get(agent_name, {})
+        if agent_info:
+            metrics["uptime_pct"] = agent_info.get("uptime_pct", 0.0)
+            metrics["cycle_count"] = agent_info.get("cycles", 0)
+            metrics["error_count"] = agent_info.get("errors", 0)
+            cycles = metrics["cycle_count"]
+            errors = metrics["error_count"]
             if cycles > 0:
-                metrics["cycle_success_rate"] = perf.get("successes", 0) / cycles
-                metrics["error_rate"] = perf.get("failures", 0) / cycles
-            metrics["factory_score"] = perf.get("score", 0.5)
-            metrics["total_cycles"] = cycles
+                metrics["error_rate"] = errors / cycles
+                metrics["cycle_success_rate"] = max(0, 1.0 - metrics["error_rate"])
+            else:
+                # 사이클 0 = 아직 제대로 가동 안 됨
+                metrics["cycle_success_rate"] = 0.0
 
-        # 위임 성과
+        # 2. 동적 에이전트: 팩토리 EMA 스코어 반영
+        if self._factory:
+            factory_info = self._factory._registry.get("agents", {}).get(agent_name, {})
+            if factory_info:
+                metrics["is_dynamic"] = True
+                perf = factory_info.get("performance", {})
+                metrics["factory_score"] = perf.get("score", 0.5)
+                # 팩토리 사이클도 합산
+                factory_cycles = perf.get("cycles", 0)
+                if factory_cycles > 0:
+                    factory_success = perf.get("successes", 0) / factory_cycles
+                    # tracker 데이터와 팩토리 데이터를 혼합
+                    metrics["cycle_success_rate"] = (
+                        metrics["cycle_success_rate"] * 0.5 + factory_success * 0.5
+                    )
+
+        # 3. 위임 성과
         if self._delegation:
             reliability = self._delegation.get_agent_reliability(agent_name)
             metrics["delegation_reliability"] = reliability
 
-        # 종합 점수 (가중 평균)
+        # 4. 종합 점수 (가중 평균 — 가동률 포함)
+        uptime_score = metrics["uptime_pct"] / 100.0  # 0~1 스케일
         metrics["composite_score"] = (
-            metrics["cycle_success_rate"] * 0.4 +
-            metrics["delegation_reliability"] * 0.3 +
-            (1.0 - metrics["error_rate"]) * 0.3
+            uptime_score * 0.25 +
+            metrics["cycle_success_rate"] * 0.35 +
+            metrics["delegation_reliability"] * 0.2 +
+            (1.0 - min(1.0, metrics["error_rate"] * 5)) * 0.2  # 에러 20%이상이면 0점
         )
 
         return metrics
@@ -135,15 +162,18 @@ class AgentEvaluator:
     # ── 전체 에이전트 평가 ────────────────────────────
 
     async def evaluate_all(self) -> dict:
-        """모든 에이전트 평가 → 조직 리뷰"""
+        """모든 에이전트 평가 → 조직 리뷰
+
+        agent_tracker에 등록된 모든 에이전트(정적+동적)를 평가한다.
+        """
         evaluations = {}
 
-        # 정적 에이전트 (message bus에 등록된)
-        if self._delegation and self._delegation._bus:
-            for name in self._delegation._bus._handlers:
-                evaluations[name] = self.evaluate_agent(name)
+        # 1. agent_tracker에 등록된 모든 에이전트 (정적+동적 포함)
+        tracker_data = agent_tracker.get_summary_for_report()
+        for name in tracker_data.get("agents", {}):
+            evaluations[name] = self.evaluate_agent(name)
 
-        # 동적 에이전트
+        # 2. 동적 에이전트 중 tracker에 아직 없는 것도 평가
         if self._factory:
             for name in self._factory.get_active_agents():
                 if name not in evaluations:
@@ -288,7 +318,8 @@ JSON: {"recommendations": ["추천1", ...], "should_retire": ["에이전트명",
         """전체 조직 건강도"""
         recent = self._evals["evaluations"][-50:]
         if not recent:
-            return {"health": "unknown", "avg_score": 0, "agent_count": 0}
+            return {"health": "unknown", "avg_score": 0, "agent_count": 0,
+                    "grade_distribution": {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}}
 
         scores = [e.get("metrics", {}).get("composite_score", 0.5) for e in recent]
         avg = sum(scores) / len(scores)
