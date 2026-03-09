@@ -75,11 +75,9 @@ class DiaryQuoteAgent(BaseAgent):
         now = datetime.now(KST)
         current_hour = now.hour
 
-        # 정각(0~5분) 또는 30분(30~35분)에 실행
+        # 매시간 정각(0~5분)에 실행
         if 0 <= now.minute <= 5:
             current_slot = f"{current_hour}:00"
-        elif 30 <= now.minute <= 35:
-            current_slot = f"{current_hour}:30"
         else:
             return None
 
@@ -237,10 +235,7 @@ class DiaryQuoteAgent(BaseAgent):
 
         # 이번 슬롯 전송 완료 표시
         now = datetime.now(KST)
-        if now.minute < 30:
-            self._last_sent_slot = f"{now.hour}:00"
-        else:
-            self._last_sent_slot = f"{now.hour}:30"
+        self._last_sent_slot = f"{now.hour}:00"
 
         # 이력 저장
         self._quote_history.append({

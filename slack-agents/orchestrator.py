@@ -1114,7 +1114,7 @@ async def main():
         # "collector": lambda: asyncio.create_task(collector.start(), name="collector"),  # ai-curator 알림 중지
         # "curator": lambda: asyncio.create_task(curator.start(), name="curator"),      # ai-curator 알림 중지
         # "quote": lambda: asyncio.create_task(quote.start(), name="quote"),          # 명언 비활성화
-        # "diary_quote": lambda: asyncio.create_task(diary_quote.start(), name="diary_quote"),  # 명언 비활성화
+        "diary_quote": lambda: asyncio.create_task(diary_quote.start(), name="diary_quote"),
         # "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),  # 운영 중단
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨
