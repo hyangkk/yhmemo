@@ -89,3 +89,20 @@ cd slack-agents && FLY_API_TOKEN="$FLY_API_TOKEN" flyctl deploy
 - 토큰 갱신: Supabase Dashboard → `secrets_vault` 테이블에서 직접 편집
 - `source fetch-secrets.sh`가 안 되면 curl로 직접 토큰 조회 (방법 1)
 - main 직접 push 불가 → 항상 PR 통해 머지
+
+## 슬랙 봇 테스트 가이드
+
+### 테스트 채널
+- **투자/시세 관련 기능**: `ai-invest` 채널 (C0AKRJZ395W)에서 테스트
+- **일반 기능**: `ai-agents-general` 채널 (C0AJJ469SV8)에서 테스트
+- 테스트는 반드시 해당 기능의 전용 채널에서 수행할 것
+
+### 봇 토큰으로 테스트 메시지 보내기
+봇은 자신의 메시지를 기본적으로 무시하지만, 다음 접두사는 허용:
+- `!` 명령어 (예: `!시세조회 005930`)
+- `[마스터]` 접두사 (예: `[마스터] 삼성전자 주가 조회`)
+
+```python
+# 테스트 스크립트 예시 (slack-agents/test_price.py 참고)
+SLACK_BOT_TOKEN=... python3 test_price.py
+```

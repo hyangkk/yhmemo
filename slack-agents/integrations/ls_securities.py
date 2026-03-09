@@ -208,8 +208,6 @@ class LSSecuritiesClient:
         )
         resp.raise_for_status()
         block = resp.json().get("t1101OutBlock", {})
-        logger.info(f"[ls] t1101 raw keys: {list(block.keys())[:20]}")
-        logger.info(f"[ls] t1101 volume={block.get('volume')}, price={block.get('price')}, change={block.get('change')}")
         return {
             "종목명": block.get("hname", ""),
             "현재가": int(block.get("price", 0)),
