@@ -99,11 +99,10 @@ class DiaryQuoteAgent(BaseAgent):
             "created_time": {"after": three_months_ago},
         }
 
-        pages = await self.notion.query_database(
+        pages = await self.notion.query_database_all(
             self._diary_db_id,
             filter_dict=filter_dict,
             sorts=[{"timestamp": "created_time", "direction": "descending"}],
-            page_size=100,
         )
 
         if not pages:
@@ -261,11 +260,10 @@ class DiaryQuoteAgent(BaseAgent):
         now = datetime.now(KST)
         three_months_ago = (now - timedelta(days=90)).strftime("%Y-%m-%dT00:00:00+09:00")
 
-        pages = await self.notion.query_database(
+        pages = await self.notion.query_database_all(
             self._diary_db_id,
             filter_dict={"timestamp": "created_time", "created_time": {"after": three_months_ago}},
             sorts=[{"timestamp": "created_time", "direction": "descending"}],
-            page_size=100,
         )
         if not pages:
             return "최근 3개월간 생각일기가 없어요."
