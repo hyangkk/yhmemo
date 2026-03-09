@@ -132,27 +132,41 @@ class BaseAgent(ABC):
 
     # ── AI 판단 (Claude) ────────────────────────────────
 
-    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-haiku-4-5-20251001", max_tokens: int = 2048) -> str:
-        """Claude AI에게 판단 요청 (비용 추적 + 예산 제한 포함)"""
+    async def ai_think(self, system_prompt: str, user_prompt: str, model: str = "claude-haiku-4-5-20251001", max_tokens: int = 2048, cache_system: bool = True) -> str:
+        """Claude AI에게 판단 요청 (비용 추적 + 예산 제한 + 프롬프트 캐싱 포함)
+
+        Args:
+            cache_system: True이면 시스템 프롬프트를 캐싱하여 반복 호출 비용 90% 절감
+        """
         tracker = get_cost_tracker()
         if not tracker.can_call():
             msg = f"일일 AI 예산 소진 (${tracker.get_today_stats()['budget_usd']}). 내일까지 AI 호출 중단."
             logger.warning(f"[{self.name}] {msg}")
             raise RuntimeError(msg)
         try:
+            # 프롬프트 캐싱: 반복되는 시스템 프롬프트 캐싱으로 입력 비용 90% 절감
+            if cache_system and len(system_prompt) >= 1024:
+                system_arg = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+            else:
+                system_arg = system_prompt
+
             response = await self.ai.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                system=system_prompt,
+                system=system_arg,
                 messages=[{"role": "user", "content": user_prompt}],
             )
-            # 토큰 사용량 추적
+            # 토큰 사용량 추적 (캐시 히트 시 cache_read_input_tokens 포함)
             if hasattr(response, "usage"):
+                cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+                cache_create = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
                 tracker.record_usage(
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
                     caller=self.name,
                     model=model,
+                    cache_read_tokens=cache_read,
+                    cache_create_tokens=cache_create,
                 )
             return response.content[0].text
         except RuntimeError:
