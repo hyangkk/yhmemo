@@ -47,17 +47,26 @@ def market_hours_message() -> str:
 
 def friendly_error_message(error: Exception) -> str:
     """LS증권 API 에러를 사용자 친화적 메시지로 변환"""
-    err_str = str(error)
+    err_str = str(error) or repr(error)
+    err_type = type(error).__name__
+
+    # httpx 타임아웃/연결 에러 (str()이 빈 문자열일 수 있으므로 타입 체크 우선)
+    is_timeout = isinstance(error, httpx.TimeoutException) or "timeout" in err_type.lower()
+    is_connect = isinstance(error, httpx.ConnectError) or "connect" in err_type.lower()
+    if is_timeout or is_connect:
+        if not is_market_open():
+            return f"{market_hours_message()}\n(모의투자 서버는 장 시간에만 안정적으로 운영됩니다)"
+        if is_timeout:
+            return "⚠️ LS증권 서버 응답 시간이 초과됐어요. 잠시 후 다시 시도해주세요."
+        return "⚠️ LS증권 서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요."
 
     # httpx HTTP 에러에서 상태코드/본문 추출
     if hasattr(error, 'response') and error.response is not None:
         try:
             body = error.response.json()
             rsp_msg = body.get("rsp_msg", "") or body.get("msg1", "") or body.get("message", "")
-            rsp_cd = body.get("rsp_cd", "")
         except Exception:
             rsp_msg = error.response.text[:300] if error.response.text else ""
-            rsp_cd = ""
 
         status = error.response.status_code
 
@@ -85,7 +94,7 @@ def friendly_error_message(error: Exception) -> str:
             return f"{market_hours_message()}\n(HTTP {status})"
         return f"⚠️ 요청 오류 (HTTP {status})"
 
-    # 네트워크 에러 (연결 실패, 타임아웃 등)
+    # 네트워크 에러 (문자열 기반 fallback)
     if "connect" in err_str.lower() or "timeout" in err_str.lower():
         if not is_market_open():
             return f"{market_hours_message()}\n(모의투자 서버는 장 시간에만 안정적으로 운영됩니다)"
@@ -410,7 +419,13 @@ class LSSecuritiesClient:
         bns_tp: str,
     ) -> dict:
         """주문 공통 처리 (CSPAT00601)"""
-        await self._ensure_token()
+        action = "매수" if bns_tp == "2" else "매도"
+        try:
+            await self._ensure_token()
+        except Exception as e:
+            logger.error(f"[ls] 토큰 발급 실패 ({type(e).__name__}): {e or repr(e)}")
+            raise
+        logger.info(f"[ls] {action} 주문 요청: {stock_code} {qty}주, base_url={self.base_url}")
         url = f"{self.base_url}/stock/order"
         resp = await self._http.post(
             url,
@@ -430,7 +445,6 @@ class LSSecuritiesClient:
                 }
             },
         )
-        action = "매수" if bns_tp == "2" else "매도"
         # HTTP 에러 시에도 응답 본문의 에러 메시지를 보존
         try:
             data = resp.json()
