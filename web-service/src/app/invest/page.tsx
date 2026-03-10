@@ -6,6 +6,7 @@ import TrendingTopics from "@/components/TrendingTopics";
 import InvestSignal from "@/components/InvestSignal";
 import Dashboard from "@/components/Dashboard";
 import CollectionSummary from "@/components/CollectionSummary";
+import TrendingPosts from "@/components/TrendingPosts";
 
 export const metadata = {
   title: "AI 투자전략실 — 실시간 투자 시그널 + 시장 분석",
@@ -124,6 +125,22 @@ export default function InvestPage() {
       </div>
 
       <SocialSentiment />
+
+      {/* 구분선 - SNS 인기 글 */}
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200 dark:border-gray-800" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="px-4 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 text-sm text-gray-400">
+              SNS 인기 글
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <TrendingPosts />
 
       {/* 구분선 - 투자 시그널 */}
       <div className="max-w-5xl mx-auto px-4 py-8">
