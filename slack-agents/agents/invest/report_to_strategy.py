@@ -157,7 +157,7 @@ class StrategyPlan:
 async def extract_strategies(
     report_text: str,
     api_key: str,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-haiku-4-5-20251001",
 ) -> StrategyPlan:
     """리포트 텍스트에서 매매전략을 추출한다.
 

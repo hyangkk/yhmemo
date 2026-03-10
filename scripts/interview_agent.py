@@ -302,7 +302,7 @@ def generate_organized_content(topic, all_qa):
 각 섹션을 명확히 구분해서 작성해주세요."""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )

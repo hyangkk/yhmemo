@@ -1,9 +1,9 @@
 name: AI BI 시장 인텔리전스 에이전트
 
 on:
-  schedule:
-    # 매일 오전 8시 KST (UTC 23:00 전날)
-    - cron: "0 23 * * *"
+  # schedule:
+  #   # 매일 오전 8시 KST (UTC 23:00 전날) — 비용 절감 위해 비활성화
+  #   - cron: "0 23 * * *"
   workflow_dispatch:
     inputs:
       user_context:
