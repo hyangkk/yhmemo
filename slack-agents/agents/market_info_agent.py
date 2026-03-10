@@ -71,6 +71,15 @@ class MarketInfoAgent(BaseAgent):
         )
         self._seen_hashes: set[str] = set()
         self._dart_api_key = os.environ.get("DART_API_KEY", "")
+        # secrets_vault에서 DART_API_KEY 로드 (환경변수 미설정 시)
+        if not self._dart_api_key and self.supabase:
+            try:
+                resp = self.supabase.table("secrets_vault").select("value").eq("key", "DART_API_KEY").execute()
+                if resp.data and resp.data[0].get("value"):
+                    self._dart_api_key = resp.data[0]["value"]
+                    logger.info("[market_info] DART_API_KEY loaded from secrets_vault")
+            except Exception as e:
+                logger.warning(f"[market_info] DART_API_KEY 로드 실패: {e}")
         self._http = httpx.AsyncClient(timeout=15.0)
         self._cycle = 0
         self._enabled = os.environ.get("MARKET_INFO_ENABLED", "true").lower() == "true"
