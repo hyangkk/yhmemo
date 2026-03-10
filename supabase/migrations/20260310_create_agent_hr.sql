@@ -6,7 +6,7 @@ create table if not exists agent_hr (
   id uuid primary key default gen_random_uuid(),
   agent_name text unique not null,
   display_name text not null default '',
-  position text not null default '사원',          -- 사원/주임/대리/과장/차장/부장/이사/상무
+  position text not null default '팀원',          -- 인턴/팀원/팀장/본부장/이사
   salary int not null default 3000,               -- 만원 단위 (3000 = 3천만원)
   grade text not null default 'C',                -- S/A/B/C/D/F
   hire_date date not null default current_date,

@@ -26,7 +26,7 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 HR_FILE = os.path.join(DATA_DIR, "agent_hr.json")
 
 # 직급 체계 (순서대로 승진)
-POSITIONS = ["인턴", "사원", "주임", "대리", "과장", "차장", "부장", "이사", "상무"]
+POSITIONS = ["인턴", "팀원", "팀장", "본부장", "이사"]
 
 # 등급별 연봉 조정률 (만원)
 SALARY_ADJUSTMENTS = {
@@ -40,7 +40,7 @@ SALARY_ADJUSTMENTS = {
 
 # 기본 에이전트 목록 (정적 에이전트)
 CORE_AGENTS = {
-    "orchestrator": {"display_name": "오케스트레이터", "role": "총괄 관리자"},
+    "orchestrator": {"display_name": "오케스트레이터", "role": "CEO", "position": "CEO"},
     "proactive": {"display_name": "프로액티브", "role": "자율운영 마스터"},
     "collector": {"display_name": "콜렉터", "role": "정보 수집"},
     "curator": {"display_name": "큐레이터", "role": "정보 선별"},
@@ -96,10 +96,11 @@ class AgentHR:
         agents = self._hr_data.setdefault("agents", {})
         if agent_name not in agents:
             info = CORE_AGENTS.get(agent_name, {})
+            default_position = info.get("position", "팀원")
             agents[agent_name] = {
                 "display_name": display_name or info.get("display_name", agent_name),
                 "role": role or info.get("role", "일반"),
-                "position": "사원",
+                "position": default_position,
                 "salary": 3000,       # 3천만원
                 "grade": "C",         # 초기 등급
                 "hire_date": _now().strftime("%Y-%m-%d"),
@@ -476,6 +477,8 @@ JSON 응답:
                 continue
             profile = agents[name]
             old_pos = profile["position"]
+            if old_pos == "CEO":
+                continue  # CEO는 승진 대상 아님
             pos_idx = POSITIONS.index(old_pos) if old_pos in POSITIONS else 1
             if pos_idx < len(POSITIONS) - 1:
                 new_pos = POSITIONS[pos_idx + 1]
@@ -497,6 +500,8 @@ JSON 응답:
                 continue
             profile = agents[name]
             old_pos = profile["position"]
+            if old_pos == "CEO":
+                continue  # CEO는 강등 대상 아님
             pos_idx = POSITIONS.index(old_pos) if old_pos in POSITIONS else 1
             if pos_idx > 0:
                 new_pos = POSITIONS[pos_idx - 1]
@@ -618,7 +623,8 @@ JSON 응답:
         # 정렬: 직급 → 연봉 내림차순
         def sort_key(item):
             name, info = item
-            pos_idx = POSITIONS.index(info.get("position", "사원")) if info.get("position") in POSITIONS else 0
+            pos = info.get("position", "팀원")
+            pos_idx = POSITIONS.index(pos) if pos in POSITIONS else (99 if pos == "CEO" else 0)
             return (-pos_idx, -info.get("salary", 0))
 
         for name, info in sorted(agents.items(), key=sort_key):
