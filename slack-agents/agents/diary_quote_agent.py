@@ -318,12 +318,24 @@ class DiaryQuoteAgent(BaseAgent):
         created_time = decision.get("created_time", "")
         page_url = decision.get("page_url", "")
 
-        # 작성일 포맷
+        # 작성일 포맷 (상대 날짜 포함)
         date_str = ""
         if created_time:
             try:
                 dt = datetime.fromisoformat(created_time.replace("Z", "+00:00")).astimezone(KST)
+                now = datetime.now(KST)
+                days_ago = (now.date() - dt.date()).days
+                if days_ago == 0:
+                    relative = "오늘"
+                elif days_ago == 1:
+                    relative = "어제"
+                elif days_ago > 1:
+                    relative = f"{days_ago}일 전"
+                else:
+                    relative = ""
                 date_str = dt.strftime("%Y.%m.%d")
+                if relative:
+                    date_str += f" ({relative})"
             except (ValueError, TypeError):
                 pass
 
