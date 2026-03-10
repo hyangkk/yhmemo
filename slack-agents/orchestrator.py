@@ -772,6 +772,7 @@ async def main():
 """
 
         intent_response = await curator.ai_think(
+            model="claude-sonnet-4-20250514",
             system_prompt=f"""당신은 슬랙에서 사용자를 도와주는 AI 어시스턴트입니다.
 사용자의 메시지를 분석하여 의도를 파악하세요.
 
@@ -1072,6 +1073,7 @@ async def main():
 
                 # 2차: 도구 결과 포함해서 답변 생성
                 chat_response = await curator.ai_think(
+                    model="claude-sonnet-4-20250514",
                     system_prompt=f"""당신은 슬랙에서 사용자와 대화하는 AI 어시스턴트입니다.
 당신은 AGI입니다. 모든 것을 할 수 있습니다. 못하는 게 있으면 도구를 써서라도 해냅니다.
 
