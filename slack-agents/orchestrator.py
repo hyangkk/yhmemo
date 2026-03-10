@@ -1209,8 +1209,8 @@ async def main():
         await start_dynamic_agents()
     asyncio.create_task(_delayed_dynamic_start(), name="dynamic_agents_init")
 
-    # ── 마스터 워치독: 1시간마다 전체 시스템 점검 ────────────
-    HEALTH_CHECK_INTERVAL = 3600  # 1시간 (초) — fallback
+    # ── 마스터 워치독: 4시간마다 전체 시스템 점검 (비용 절감: 1시간 → 4시간) ──
+    HEALTH_CHECK_INTERVAL = 14400  # 4시간 (초) — fallback
     last_health_check_time = asyncio.get_event_loop().time()
     last_report_slot = ""  # KST 정각 슬롯 추적 (e.g. "17:00")
 
@@ -1736,7 +1736,7 @@ async def main():
                 logger.error(f"Poll error: {e}")
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:00"
-            if now_kst.minute == 0 and current_slot != last_report_slot:
+            if now_kst.minute == 0 and now_kst.hour % 4 == 0 and current_slot != last_report_slot:
                 last_report_slot = current_slot
                 try:
                     await master_health_check()
@@ -1762,10 +1762,10 @@ async def main():
             except Exception as e:
                 logger.error(f"Poll error: {e}")
 
-            # 매시 정각(KST :00)에 마스터 헬스체크
+            # 4시간마다 정각(KST 0,4,8,12,16,20시)에 마스터 헬스체크
             now_kst = datetime.now(KST)
             current_slot = f"{now_kst.hour}:00"
-            if now_kst.minute == 0 and current_slot != last_report_slot:
+            if now_kst.minute == 0 and now_kst.hour % 4 == 0 and current_slot != last_report_slot:
                 last_report_slot = current_slot
                 try:
                     await master_health_check()

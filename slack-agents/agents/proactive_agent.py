@@ -296,8 +296,8 @@ class ProactiveAgent(BaseAgent):
             context["slot_key"] = slot_key
             return context
 
-        # 2.5단계: AI 전략실 진행보고 (1시간마다, 슬롯 실행 다음으로 우선)
-        if self._hours_since(self._state.get("last_reading_room_report", "")) >= 1.0:
+        # 2.5단계: AI 전략실 진행보고 (4시간마다, 비용 절감: 1시간 → 4시간)
+        if self._hours_since(self._state.get("last_reading_room_report", "")) >= 4.0:
             context["action"] = "reading_room_report"
             return context
 
