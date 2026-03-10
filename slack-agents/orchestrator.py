@@ -598,6 +598,57 @@ async def main():
     slack.on_command("잔고", cmd_balance)
     slack.on_command("시세조회", cmd_price)
 
+    # "!진단" → LS증권 서버 연결 진단
+    async def cmd_diagnose(args: str, user: str, channel: str, thread_ts: str = None):
+        """LS증권 서버 연결 상태 진단"""
+        import time as _time
+        import httpx as _httpx
+        lines = ["🔍 *LS증권 서버 연결 진단*\n"]
+
+        # 모의투자 서버 (29080)
+        try:
+            start = _time.time()
+            test_http = _httpx.AsyncClient(timeout=10.0, verify=False)
+            resp = await test_http.post(
+                "https://openapi.ls-sec.co.kr:29080/oauth2/token",
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials", "appkey": "test", "appsecretkey": "test", "scope": "oob"},
+            )
+            elapsed = _time.time() - start
+            lines.append(f"✅ 모의투자 서버 (29080): 응답 {resp.status_code} ({elapsed:.1f}초)")
+            await test_http.aclose()
+        except Exception as e:
+            elapsed = _time.time() - start
+            lines.append(f"❌ 모의투자 서버 (29080): {type(e).__name__} ({elapsed:.1f}초)")
+
+        # 실전 서버 (8080)
+        try:
+            start = _time.time()
+            test_http = _httpx.AsyncClient(timeout=10.0, verify=False)
+            resp = await test_http.post(
+                "https://openapi.ls-sec.co.kr:8080/oauth2/token",
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials", "appkey": "test", "appsecretkey": "test", "scope": "oob"},
+            )
+            elapsed = _time.time() - start
+            lines.append(f"✅ 실전 서버 (8080): 응답 {resp.status_code} ({elapsed:.1f}초)")
+            await test_http.aclose()
+        except Exception as e:
+            elapsed = _time.time() - start
+            lines.append(f"❌ 실전 서버 (8080): {type(e).__name__} ({elapsed:.1f}초)")
+
+        # 설정 정보
+        lines.append(f"\n📋 *설정 정보*")
+        lines.append(f"• 모드: {'모의투자' if ls_client.paper_trading else '실전투자'}")
+        lines.append(f"• base_url: {ls_client.base_url}")
+        lines.append(f"• app_key 설정: {'✅' if ls_client.app_key else '❌'}")
+        lines.append(f"• account_no 설정: {'✅' if ls_client.account_no else '❌'}")
+        lines.append(f"• 장 운영시간: {'✅ 장중' if is_market_open() else '❌ 장외'}")
+
+        await _reply(channel, "\n".join(lines), thread_ts)
+
+    slack.on_command("진단", cmd_diagnose)
+
     # "!운세" → 운세 에이전트 즉시 실행
     async def cmd_fortune(args: str, user: str, channel: str, thread_ts: str = None):
         now = datetime.now(KST)
