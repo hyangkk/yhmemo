@@ -642,7 +642,8 @@ async def main():
         lines.append(f"• app_key: `{app_key[:4]}...{app_key[-4:]}` ({len(app_key)}자)" if app_key else "• app_key: ❌ 미설정")
         lines.append(f"• app_secret: `{app_secret[:4]}...{app_secret[-4:]}` ({len(app_secret)}자)" if app_secret else "• app_secret: ❌ 미설정")
         lines.append(f"• account_no: `{ls_client.account_no}`" if ls_client.account_no else "• account_no: ❌ 미설정")
-        lines.append(f"• 장 운영시간: {'✅ 장중' if is_market_open() else '❌ 장외'}")
+        from integrations.ls_securities import is_market_open as _is_mkt_open
+        lines.append(f"• 장 운영시간: {'✅ 장중' if _is_mkt_open() else '❌ 장외'}")
 
         await _reply(channel, "\n".join(lines), thread_ts)
 
