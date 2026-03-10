@@ -57,6 +57,7 @@ from integrations.ls_securities import LSSecuritiesClient, friendly_error_messag
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
+from core.agent_hr import AgentHR
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -243,6 +244,17 @@ async def main():
         **common_kwargs,
     )
 
+    # ── 인사관리 (HR) 시스템 ─────────────────────────────
+    agent_hr = AgentHR(
+        ai_think_fn=curator.ai_think,
+        supabase_client=supabase,
+    )
+    # 기존 에이전트들 HR 등록
+    for _agent_name in ["orchestrator", "proactive", "collector", "curator",
+                        "sentiment", "task_board", "diary_quote", "quote",
+                        "fortune", "message_bus"]:
+        agent_hr.ensure_registered(_agent_name)
+
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
     # ProactiveAgent의 agent_factory가 초기화된 후, 기존 동적 에이전트를 로드+시작
     async def start_dynamic_agents():
@@ -359,6 +371,46 @@ async def main():
         except Exception as e:
             await _reply(channel, f"시세 조회 실패: {e}", thread_ts)
 
+    # "!인사평가" → 전체 에이전트 일일 인사평가 실행
+    async def cmd_hr_eval(args: str, user: str, channel: str, thread_ts: str = None):
+        await _reply(channel, "📋 인사평가를 시작합니다...", thread_ts)
+        try:
+            result = await agent_hr.run_daily_evaluation()
+            report = agent_hr.format_evaluation_result(result)
+            await _reply(channel, report, thread_ts)
+        except Exception as e:
+            await _reply(channel, f"인사평가 실패: {e}", thread_ts)
+
+    # "!인사현황" → 전체 에이전트 HR 현황
+    async def cmd_hr_status(args: str, user: str, channel: str, thread_ts: str = None):
+        if args.strip():
+            # 개별 에이전트 인사카드
+            report = agent_hr.get_agent_card(args.strip())
+        else:
+            report = agent_hr.get_hr_report()
+        await _reply(channel, report, thread_ts)
+
+    # "!연봉" → 연봉 랭킹 또는 연봉 조정
+    async def cmd_salary(args: str, user: str, channel: str, thread_ts: str = None):
+        parts = args.strip().split()
+        if len(parts) >= 2:
+            # !연봉 에이전트명 +200 → 연봉 수동 조정
+            agent_name = parts[0]
+            try:
+                amount = int(parts[1].replace("+", "").replace(",", ""))
+                reason = " ".join(parts[2:]) if len(parts) > 2 else "수동 조정"
+                result = agent_hr.adjust_salary(agent_name, amount, reason)
+                profile = agent_hr.get_profile(agent_name) or {}
+                display = profile.get("display_name", agent_name)
+                await _reply(channel,
+                    f"💰 {display} 연봉 조정: {result['old_salary']:,}만원 → {result['new_salary']:,}만원",
+                    thread_ts)
+            except ValueError:
+                await _reply(channel, "사용법: `!연봉 에이전트명 +200 [사유]`", thread_ts)
+        else:
+            report = agent_hr.get_salary_ranking()
+            await _reply(channel, report, thread_ts)
+
     slack.on_command("수집", cmd_collect)
     slack.on_command("브리핑", cmd_briefing)
     slack.on_command("상태", cmd_status)
@@ -367,6 +419,9 @@ async def main():
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
+    slack.on_command("인사평가", cmd_hr_eval)
+    slack.on_command("인사현황", cmd_hr_status)
+    slack.on_command("연봉", cmd_salary)
 
     # ── 주식 매매 명령어 ──────────────────────────────────
     async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
@@ -672,6 +727,9 @@ async def main():
 - quote: 명언 보내기
 - diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
 - fortune: 운세 보기, 오늘의 운세
+- hr_eval: 인사평가 실행, 에이전트 평가, 성과 평가, "인사평가 해줘", "에이전트들 평가해봐"
+- hr_status: 인사현황, 연봉 조회, 에이전트 인사카드, "연봉 랭킹", "인사 현황 보여줘", "에이전트 연봉", "누가 제일 많이 받아?" hr_target 필드에 특정 에이전트명 (없으면 전체)
+- hr_salary: 연봉 조정, "연봉 올려줘", "연봉 깎아", hr_target(에이전트명), hr_amount(조정액, 만원), hr_reason(사유)
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
@@ -689,7 +747,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|stock_trade|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -697,6 +755,9 @@ async def main():
   "stock_code": "종목코드 6자리 (stock_trade일 때만, 예: 005930)",
   "stock_qty": 1,
   "stock_price": 0,
+  "hr_target": "에이전트명 (hr_status/hr_salary일 때만)",
+  "hr_amount": 0,
+  "hr_reason": "사유 (hr_salary일 때만)",
   "clarify_question": "의도 확인용 질문 (clarify일 때만)",
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
@@ -764,6 +825,24 @@ async def main():
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
+            elif action == "hr_eval":
+                await cmd_hr_eval(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "인사평가 완료"
+            elif action == "hr_status":
+                target = parsed.get("hr_target", "").strip()
+                await cmd_hr_status(args=target, user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "인사현황 조회 완료"
+            elif action == "hr_salary":
+                target = parsed.get("hr_target", "").strip()
+                amount = int(parsed.get("hr_amount", 0) or 0)
+                reason = parsed.get("hr_reason", "").strip()
+                if target and amount:
+                    args_str = f"{target} {amount} {reason}".strip()
+                    await cmd_salary(args=args_str, user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = f"{target} 연봉 조정 완료"
+                else:
+                    await cmd_salary(args="", user=user, channel=channel, thread_ts=thread_ts)
+                    result_text = "연봉 랭킹 조회 완료"
             elif action == "stock_trade":
                 stock_action = parsed.get("stock_action", "").strip()
                 stock_code = parsed.get("stock_code", "").strip()
@@ -1234,6 +1313,17 @@ async def main():
             await slack.send_message(SlackClient.CHANNEL_GENERAL, "\n".join(report_lines))
         except Exception as e:
             logger.error(f"[watchdog] Slack report failed: {e}")
+
+        # 6. 매일 09:00 KST 자동 인사평가
+        if now.strftime("%H:%M") == "09:00":
+            try:
+                hr_result = await agent_hr.run_daily_evaluation()
+                if not hr_result.get("already_done"):
+                    hr_report = agent_hr.format_evaluation_result(hr_result)
+                    await slack.send_message(SlackClient.CHANNEL_GENERAL, hr_report)
+                    logger.info("[HR] 일일 자동 인사평가 완료")
+            except Exception as e:
+                logger.error(f"[HR] 자동 인사평가 실패: {e}")
 
         # ai-agent-logs에도 이슈가 있을 때만 전송
         if issues or restarts:
