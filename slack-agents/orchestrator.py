@@ -453,10 +453,12 @@ async def main():
         try:
             result = await ls_client.buy(stock_code=stock_code, qty=qty, price=price, order_type=order_type)
             if result.get("결과") == "성공":
-                await _reply(channel, f"✅ *매수 주문 성공!*\n주문번호: {result['주문번호']}\n종목: {result['종목코드']} | {qty}주 | {price_str}", thread_ts)
+                await _reply(channel, f"✅ *매수 주문 성공!*\n주문번호: {result.get('주문번호')}\n종목: {result.get('종목코드', stock_code)} | {qty}주 | {price_str}", thread_ts)
             else:
-                raw = result.get("raw", {})
-                err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
+                err_msg = result.get("에러", "")
+                if not err_msg:
+                    raw = result.get("raw", {})
+                    err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
                 await _reply(channel, f"❌ *매수 주문 실패*\n{err_msg}", thread_ts)
         except Exception as e:
             await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)
@@ -490,10 +492,12 @@ async def main():
         try:
             result = await ls_client.sell(stock_code=stock_code, qty=qty, price=price, order_type=order_type)
             if result.get("결과") == "성공":
-                await _reply(channel, f"✅ *매도 주문 성공!*\n주문번호: {result['주문번호']}\n종목: {result['종목코드']} | {qty}주 | {price_str}", thread_ts)
+                await _reply(channel, f"✅ *매도 주문 성공!*\n주문번호: {result.get('주문번호')}\n종목: {result.get('종목코드', stock_code)} | {qty}주 | {price_str}", thread_ts)
             else:
-                raw = result.get("raw", {})
-                err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
+                err_msg = result.get("에러", "")
+                if not err_msg:
+                    raw = result.get("raw", {})
+                    err_msg = raw.get("rsp_msg", "") or raw.get("msg1", "") or str(raw)[:300]
                 await _reply(channel, f"❌ *매도 주문 실패*\n{err_msg}", thread_ts)
         except Exception as e:
             await _reply(channel, f"❌ {friendly_error_message(e)}", thread_ts)

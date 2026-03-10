@@ -75,11 +75,15 @@ def friendly_error_message(error: Exception) -> str:
                 return f"{market_hours_message()}\n(API: {rsp_msg})" if rsp_msg else market_hours_message()
             return f"⚠️ 요청이 거부됐어요: {rsp_msg}" if rsp_msg else f"⚠️ 요청 오류 ({status})"
 
-        # 기타 에러 코드
+        # 기타 HTTP 에러 코드 (403, 404, 429 등)
         if rsp_msg:
             if not is_market_open():
                 return f"{market_hours_message()}\n(API: {rsp_msg})"
             return f"⚠️ {rsp_msg}"
+        # rsp_msg가 없는 기타 HTTP 에러
+        if not is_market_open():
+            return f"{market_hours_message()}\n(HTTP {status})"
+        return f"⚠️ 요청 오류 (HTTP {status})"
 
     # 네트워크 에러 (연결 실패, 타임아웃 등)
     if "connect" in err_str.lower() or "timeout" in err_str.lower():
@@ -426,18 +430,39 @@ class LSSecuritiesClient:
                 }
             },
         )
-        resp.raise_for_status()
-        data = resp.json()
+        action = "매수" if bns_tp == "2" else "매도"
+        # HTTP 에러 시에도 응답 본문의 에러 메시지를 보존
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if resp.status_code != 200:
+            rsp_msg = data.get("rsp_msg", "") or data.get("msg1", "") or resp.text[:300]
+            logger.error(f"[ls] 주문 실패 (HTTP {resp.status_code}): {rsp_msg}")
+            return {
+                "결과": "실패",
+                "주문번호": "",
+                "종목코드": stock_code,
+                "주문유형": action,
+                "수량": qty,
+                "가격": price if price else "시장가",
+                "에러": rsp_msg,
+                "raw": data,
+            }
         out1 = data.get("CSPAT00601OutBlock1", {})
         out2 = data.get("CSPAT00601OutBlock2", {})
-        action = "매수" if bns_tp == "2" else "매도"
+        rsp_msg = data.get("rsp_msg", "")
+        success = bool(out2.get("OrdNo"))
+        if not success:
+            logger.warning(f"[ls] 주문 실패 (API): rsp_cd={data.get('rsp_cd')}, rsp_msg={rsp_msg}")
         return {
-            "결과": "성공" if out2.get("OrdNo") else "실패",
+            "결과": "성공" if success else "실패",
             "주문번호": out2.get("OrdNo", ""),
             "종목코드": out1.get("IsuNo", stock_code),
             "주문유형": action,
             "수량": qty,
             "가격": price if price else "시장가",
+            "에러": "" if success else (rsp_msg or "주문번호가 반환되지 않았습니다"),
             "raw": data,
         }
 
