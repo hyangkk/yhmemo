@@ -170,7 +170,7 @@ def research_topic(topic: str) -> str:
     client = anthropic.Anthropic()
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=2000,
             tools=[{"type": "web_search_20250305"}],
             messages=[{"role": "user", "content": f"""다음 주제에 대해 의사결정이나 대화에 필요한 최신 정보를 조사해주세요.
@@ -408,7 +408,7 @@ def generate_board_response(message: str, intent: dict, members: list, client: a
 }}"""
 
     msg = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )

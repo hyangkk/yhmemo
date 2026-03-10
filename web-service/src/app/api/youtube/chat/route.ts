@@ -24,7 +24,7 @@ export async function POST(request: Request) {
 
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 3000,
       system: `당신은 YouTube 영상${titleHint}의 내용을 완벽히 이해한 전문가입니다. 자막 내용을 바탕으로 질문에 정확하게 답변하세요. 자막에 없는 내용은 '영상에서 다루지 않은 내용'이라고 명시하세요. 마크다운 포맷으로 작성하세요.`,
       messages: [

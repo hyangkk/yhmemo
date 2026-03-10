@@ -259,7 +259,7 @@ def generate_analysis(entries_text: str, total_count: int, months: int, date_ran
 {FINAL_JSON_SCHEMA}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=16000,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -336,7 +336,7 @@ def run_chunked_analysis(entries: list, months: int, date_range: str) -> dict:
 }}"""
 
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -369,7 +369,7 @@ def run_chunked_analysis(entries: list, months: int, date_range: str) -> dict:
 {FINAL_JSON_SCHEMA}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=16000,
         messages=[{"role": "user", "content": meta_prompt}],
     )

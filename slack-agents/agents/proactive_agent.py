@@ -49,7 +49,7 @@ class ProactiveAgent(BaseAgent):
             description="완전 자율운영 에이전트. "
                         "목표 기반으로 기획, 개발, 런칭, 측정까지 자율 실행한다.",
             slack_channel=SlackClient.CHANNEL_GENERAL,
-            loop_interval=300,  # 5분 간격
+            loop_interval=1800,  # 30분 간격 (비용 절감: 5분 → 30분)
             **kwargs,
         )
         self._state_file = os.path.join(DATA_DIR, "proactive_state.json")
@@ -207,6 +207,12 @@ class ProactiveAgent(BaseAgent):
         minute = now.minute
         today = now.strftime("%Y-%m-%d")
         weekday = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
+
+        # 야간(23시~7시) 2시간 간격, 주간 30분 간격 (비용 절감)
+        if 23 <= hour or hour < 7:
+            self.loop_interval = 7200  # 2시간
+        else:
+            self.loop_interval = 1800  # 30분
 
         self._state["cycle_count"] = self._state.get("cycle_count", 0) + 1
         cycle = self._state["cycle_count"]

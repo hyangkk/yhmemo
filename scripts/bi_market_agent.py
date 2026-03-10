@@ -248,7 +248,7 @@ def analyze_market_intelligence(news_items: list, user_context: str = "") -> dic
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -391,7 +391,7 @@ def generate_weekly_trend_summary(token: str, chat_id: str) -> None:
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=800,
             messages=[{
                 "role": "user",

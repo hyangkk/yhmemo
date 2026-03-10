@@ -2,8 +2,8 @@ name: 생각일기 이사회 에이전트
 
 on:
   schedule:
-    # 매 시간 실행 (Supabase 설정에 따라 스킵)
-    - cron: '0 * * * *'
+    # 매 6시간 실행 (비용 절감: 매 시간 → 6시간)
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     # 수동 실행 (Actions 탭 → Run workflow)
 
