@@ -605,44 +605,43 @@ async def main():
         import httpx as _httpx
         lines = ["🔍 *LS증권 서버 연결 진단*\n"]
 
-        # 모의투자 서버 (29080)
-        try:
-            start = _time.time()
-            test_http = _httpx.AsyncClient(timeout=10.0, verify=False)
-            resp = await test_http.post(
-                "https://openapi.ls-sec.co.kr:29080/oauth2/token",
-                headers={"content-type": "application/x-www-form-urlencoded"},
-                data={"grant_type": "client_credentials", "appkey": "test", "appsecretkey": "test", "scope": "oob"},
-            )
-            elapsed = _time.time() - start
-            lines.append(f"✅ 모의투자 서버 (29080): 응답 {resp.status_code} ({elapsed:.1f}초)")
-            await test_http.aclose()
-        except Exception as e:
-            elapsed = _time.time() - start
-            lines.append(f"❌ 모의투자 서버 (29080): {type(e).__name__} ({elapsed:.1f}초)")
+        app_key = ls_client.app_key
+        app_secret = ls_client.app_secret
 
-        # 실전 서버 (8080)
-        try:
-            start = _time.time()
-            test_http = _httpx.AsyncClient(timeout=10.0, verify=False)
-            resp = await test_http.post(
-                "https://openapi.ls-sec.co.kr:8080/oauth2/token",
-                headers={"content-type": "application/x-www-form-urlencoded"},
-                data={"grant_type": "client_credentials", "appkey": "test", "appsecretkey": "test", "scope": "oob"},
-            )
-            elapsed = _time.time() - start
-            lines.append(f"✅ 실전 서버 (8080): 응답 {resp.status_code} ({elapsed:.1f}초)")
-            await test_http.aclose()
-        except Exception as e:
-            elapsed = _time.time() - start
-            lines.append(f"❌ 실전 서버 (8080): {type(e).__name__} ({elapsed:.1f}초)")
+        for name, port in [("모의투자", 29080), ("실전", 8080)]:
+            url = f"https://openapi.ls-sec.co.kr:{port}/oauth2/token"
+            try:
+                start = _time.time()
+                test_http = _httpx.AsyncClient(timeout=10.0, verify=False)
+                resp = await test_http.post(
+                    url,
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                    data={"grant_type": "client_credentials", "appkey": app_key, "appsecretkey": app_secret, "scope": "oob"},
+                )
+                elapsed = _time.time() - start
+                try:
+                    body = resp.json()
+                    token_ok = "access_token" in body
+                    msg = body.get("rsp_msg", "") or body.get("error_description", "")
+                except Exception:
+                    token_ok = False
+                    msg = resp.text[:100]
+                if token_ok:
+                    lines.append(f"✅ {name} ({port}): 토큰 발급 성공 ({elapsed:.1f}초)")
+                else:
+                    lines.append(f"⚠️ {name} ({port}): HTTP {resp.status_code} ({elapsed:.1f}초)\n   → {msg}")
+                await test_http.aclose()
+            except Exception as e:
+                elapsed = _time.time() - start
+                lines.append(f"❌ {name} ({port}): {type(e).__name__} ({elapsed:.1f}초)")
 
         # 설정 정보
         lines.append(f"\n📋 *설정 정보*")
         lines.append(f"• 모드: {'모의투자' if ls_client.paper_trading else '실전투자'}")
-        lines.append(f"• base_url: {ls_client.base_url}")
-        lines.append(f"• app_key 설정: {'✅' if ls_client.app_key else '❌'}")
-        lines.append(f"• account_no 설정: {'✅' if ls_client.account_no else '❌'}")
+        lines.append(f"• base_url: `{ls_client.base_url}`")
+        lines.append(f"• app_key: `{app_key[:4]}...{app_key[-4:]}` ({len(app_key)}자)" if app_key else "• app_key: ❌ 미설정")
+        lines.append(f"• app_secret: `{app_secret[:4]}...{app_secret[-4:]}` ({len(app_secret)}자)" if app_secret else "• app_secret: ❌ 미설정")
+        lines.append(f"• account_no: `{ls_client.account_no}`" if ls_client.account_no else "• account_no: ❌ 미설정")
         lines.append(f"• 장 운영시간: {'✅ 장중' if is_market_open() else '❌ 장외'}")
 
         await _reply(channel, "\n".join(lines), thread_ts)
