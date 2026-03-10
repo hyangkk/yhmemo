@@ -53,6 +53,8 @@ from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
 from agents.diary_quote_agent import DiaryQuoteAgent
 from agents.sentiment_agent import SentimentAgent
+from agents.auto_trader_agent import AutoTraderAgent
+from agents.market_info_agent import MarketInfoAgent
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -244,6 +246,10 @@ async def main():
         **common_kwargs,
     )
 
+    # ── 자율 거래 + 시장 정보 에이전트 ─────────────────────
+    auto_trader = AutoTraderAgent(ls_client=ls_client, **common_kwargs)
+    market_info = MarketInfoAgent(**common_kwargs)
+
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
         ai_think_fn=curator.ai_think,
@@ -252,7 +258,7 @@ async def main():
     # 기존 에이전트들 HR 등록
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "quote",
-                        "fortune", "message_bus"]:
+                        "fortune", "message_bus", "auto_trader", "market_info"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
@@ -1257,6 +1263,8 @@ async def main():
         # "invest_report": lambda: asyncio.create_task(invest_report.start(), name="invest_report"),  # 비활성화됨
         "task_board": lambda: asyncio.create_task(task_board.start(), name="task_board"),
         "sentiment": lambda: asyncio.create_task(sentiment.start(), name="sentiment"),
+        "auto_trader": lambda: asyncio.create_task(auto_trader.start(), name="auto_trader"),
+        "market_info": lambda: asyncio.create_task(market_info.start(), name="market_info"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
