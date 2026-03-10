@@ -333,6 +333,10 @@ class SlackClient:
                 for msg in reversed(messages):
                     # 봇 자신의 메시지 무시 (단, !명령어 또는 [마스터] 접두사는 허용)
                     text_peek = msg.get("text", "")
+                    # Slack이 봇 메시지에서 !를 \!로 이스케이프할 수 있음
+                    if text_peek.startswith("\\!"):
+                        text_peek = text_peek[1:]
+                        msg["text"] = text_peek
                     is_master = text_peek.startswith("!") or text_peek.startswith("[마스터]")
                     if (msg.get("bot_id") or msg.get("user") == bot_id) and not is_master:
                         continue
@@ -547,6 +551,10 @@ class SlackClient:
         @self._app.event({"type": "message", "subtype": "bot_message"})
         async def handle_bot_message(event):
             text = event.get("text", "")
+            # Slack이 봇 메시지에서 !를 \!로 이스케이프할 수 있음
+            if text.startswith("\\!"):
+                event["text"] = text[1:]  # \! → !
+                text = event["text"]
             if text.startswith("!") or text.startswith("[마스터]"):
                 logger.info(f"[socket] Bot self-command: '{text[:50]}'")
                 await _process_message(event)
