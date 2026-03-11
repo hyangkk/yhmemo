@@ -30,22 +30,20 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 외부 시그널 처리 (비호스트)
+  // 외부 시그널 처리 (호스트 + 비호스트 모두)
   useEffect(() => {
     if (externalRecordingSignal === 'start' && !isRecording && stream) {
       startRecording();
     } else if (externalRecordingSignal === 'stop' && isRecording) {
-      handleStop();
+      (async () => {
+        const result = await stopRecording();
+        if (result) {
+          onRecordingComplete(result.blob, result.durationMs);
+        }
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalRecordingSignal]);
-
-  const handleStop = async () => {
-    const blob = await stopRecording();
-    if (blob) {
-      onRecordingComplete(blob, recordingDuration * 1000);
-    }
-  };
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');

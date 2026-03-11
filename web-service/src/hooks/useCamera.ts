@@ -18,7 +18,7 @@ interface UseCameraReturn {
   startCamera: () => Promise<void>;
   stopCamera: () => void;
   startRecording: () => void;
-  stopRecording: () => Promise<Blob | null>;
+  stopRecording: () => Promise<{ blob: Blob; durationMs: number } | null>;
   switchCamera: () => Promise<void>;
 }
 
@@ -116,13 +116,15 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     }, 1000);
   }, [stream]);
 
-  const stopRecording = useCallback((): Promise<Blob | null> => {
+  const stopRecording = useCallback((): Promise<{ blob: Blob; durationMs: number } | null> => {
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
       if (!recorder || recorder.state === 'inactive') {
         resolve(null);
         return;
       }
+
+      const durationMs = startTimeRef.current > 0 ? Date.now() - startTimeRef.current : 0;
 
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -133,7 +135,7 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
         setRecordedBlob(blob);
         setIsRecording(false);
-        resolve(blob);
+        resolve({ blob, durationMs });
       };
 
       recorder.stop();
