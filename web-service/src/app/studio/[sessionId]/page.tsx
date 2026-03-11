@@ -82,13 +82,10 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
       xhr.onload = async () => {
         if (xhr.status === 200) {
-          const data = JSON.parse(xhr.responseText);
           await updateDeviceStatus('done');
           setUploading(false);
-
-          if (data.allUploaded) {
-            router.push(`/studio/${sessionId}/result`);
-          }
+          // 업로드 완료 후 결과 페이지로 이동 (호스트, 비호스트 모두)
+          router.push(`/studio/${sessionId}/result`);
         } else {
           await updateDeviceStatus('error');
           setUploading(false);
