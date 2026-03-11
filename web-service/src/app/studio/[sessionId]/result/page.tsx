@@ -146,6 +146,15 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
             </a>
           </div>
         )}
+        {session.status === 'done' && !data.result && (
+          <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-3">
+            <div className="text-4xl">✅</div>
+            <h2 className="text-lg font-semibold">촬영 완료!</h2>
+            <p className="text-gray-400 text-sm">
+              아래에서 각 카메라의 클립을 개별 다운로드할 수 있습니다.
+            </p>
+          </div>
+        )}
         {session.status === 'done' && data.result?.status === 'error' && (
           <div className="bg-red-900/30 border border-red-500/30 rounded-2xl p-6 text-center space-y-3">
             <div className="text-4xl">⚠️</div>
