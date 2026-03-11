@@ -20,7 +20,9 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import httpx
+import http.cookiejar
+import ssl
+import urllib.request
 
 from core.base_agent import BaseAgent
 from core.message_bus import TaskMessage
@@ -53,12 +55,10 @@ class BulletinAgent(BaseAgent):
             loop_interval=21600,  # 6시간마다 실행
             **kwargs,
         )
-        self._http = httpx.AsyncClient(
-            timeout=20.0,
-            follow_redirects=True,
-            headers=HEADERS,
-            verify=False,  # 구린 사이트 SSL 인증서 문제 대응
-        )
+        # SSL 검증 비활성화 (구린 사이트 대응)
+        self._ssl_ctx = ssl.create_default_context()
+        self._ssl_ctx.check_hostname = False
+        self._ssl_ctx.verify_mode = ssl.CERT_NONE
 
     async def start(self):
         """에이전트 시작 — 테이블 확인만 하고 자동 루프는 실행하지 않음 (수동 전용)"""
@@ -194,53 +194,77 @@ class BulletinAgent(BaseAgent):
 
         return await asyncio.to_thread(_sync_load)
 
-    # ── HTTP 요청 (세션 쿠키 대응) ──────────────────────
+    # ── HTTP 요청 (urllib + 쿠키 대응) ─────────────────
 
-    async def _fetch_with_session(self, url: str) -> httpx.Response:
-        """세션 쿠키가 필요한 사이트 대응: 메인 페이지 먼저 접근 후 타겟 URL 요청"""
+    def _fetch_url(self, url: str) -> tuple[bytes, dict]:
+        """urllib로 URL 가져오기. 세션 쿠키 자동 처리. (content, headers) 반환"""
         parsed = urlparse(url)
         root_url = f"{parsed.scheme}://{parsed.netloc}/"
 
-        # 매 요청마다 새 클라이언트 (쿠키 격리)
-        async with httpx.AsyncClient(
-            timeout=20.0,
-            follow_redirects=True,
-            headers=HEADERS,
-            verify=False,
-        ) as client:
-            # 1차: 직접 요청 시도
-            resp = await client.get(url)
-            if resp.status_code < 400:
-                return resp
+        # 쿠키 자동 관리 opener
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cj),
+            urllib.request.HTTPSHandler(context=self._ssl_ctx),
+        )
 
-            logger.info(f"[bulletin] 직접 접근 {resp.status_code} — 세션 쿠키 획득 후 재시도")
+        def _make_request(target_url: str, referer: str = "") -> urllib.request.Request:
+            req = urllib.request.Request(target_url)
+            for k, v in HEADERS.items():
+                req.add_header(k, v)
+            if referer:
+                req.add_header("Referer", referer)
+            return req
 
-            # 2차: 메인 페이지로 세션 쿠키 획득 후 재시도
+        # 1차: 직접 요청
+        try:
+            req = _make_request(url)
+            with opener.open(req, timeout=20) as resp:
+                content = resp.read()
+                headers = dict(resp.headers)
+                logger.info(f"[bulletin] 직접 접근 성공: {resp.status} ({len(content)}B)")
+                return content, headers
+        except urllib.error.HTTPError as e:
+            logger.info(f"[bulletin] 직접 접근 {e.code} — 세션 쿠키 획득 후 재시도")
+        except Exception as e:
+            logger.info(f"[bulletin] 직접 접근 실패: {e} — 세션 쿠키 획득 후 재시도")
+
+        # 2차: 메인 페이지로 세션 쿠키 획득 후 재시도
+        try:
+            req = _make_request(root_url)
+            opener.open(req, timeout=10).read()
+        except Exception:
+            pass
+
+        try:
+            req = _make_request(url, referer=root_url)
+            with opener.open(req, timeout=20) as resp:
+                content = resp.read()
+                headers = dict(resp.headers)
+                logger.info(f"[bulletin] 쿠키+Referer 재시도 성공: {resp.status} ({len(content)}B)")
+                return content, headers
+        except Exception as e:
+            logger.warning(f"[bulletin] 쿠키+Referer 재시도 실패: {e}")
+
+        # 3차: HTTP 폴백
+        if parsed.scheme == "https":
+            http_url = url.replace("https://", "http://", 1)
+            http_root = root_url.replace("https://", "http://", 1)
             try:
-                await client.get(root_url)
+                opener.open(_make_request(http_root), timeout=10).read()
             except Exception:
-                pass  # 메인 페이지 실패해도 쿠키는 받았을 수 있음
+                pass
+            try:
+                req = _make_request(http_url, referer=http_root)
+                with opener.open(req, timeout=20) as resp:
+                    content = resp.read()
+                    headers = dict(resp.headers)
+                    logger.info(f"[bulletin] HTTP 폴백 성공: {resp.status} ({len(content)}B)")
+                    return content, headers
+            except Exception as e:
+                logger.warning(f"[bulletin] HTTP 폴백 실패: {e}")
 
-            # Referer 추가해서 재시도
-            resp = await client.get(url, headers={**HEADERS, "Referer": root_url})
-            if resp.status_code < 400:
-                return resp
-
-            # 3차: HTTP로 시도 (HTTPS→HTTP 폴백)
-            if parsed.scheme == "https":
-                http_url = url.replace("https://", "http://", 1)
-                http_root = root_url.replace("https://", "http://", 1)
-                try:
-                    await client.get(http_root)
-                    resp = await client.get(http_url, headers={**HEADERS, "Referer": http_root})
-                    if resp.status_code < 400:
-                        return resp
-                except Exception:
-                    pass
-
-            # 최종 실패 시 원본 응답 raise
-            resp.raise_for_status()
-            return resp  # unreachable but for type safety
+        raise RuntimeError(f"모든 접근 방법 실패: {url}")
 
     # ── 게시판 스크래핑 ──────────────────────────────────
 
@@ -293,13 +317,13 @@ class BulletinAgent(BaseAgent):
         debug_info = ""
 
         try:
-            resp = await self._fetch_with_session(url)
+            content, headers = await asyncio.to_thread(self._fetch_url, url)
         except Exception as e:
             logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
             return [], f"HTTP 오류: {e}"
 
         # 인코딩 감지 및 처리
-        html = self._decode_html(resp)
+        html = self._decode_html(content, headers)
         logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신")
 
         # BeautifulSoup 파싱
@@ -344,21 +368,20 @@ class BulletinAgent(BaseAgent):
 
         return posts, debug_info
 
-    def _decode_html(self, resp: httpx.Response) -> str:
+    def _decode_html(self, raw: bytes, headers: dict) -> str:
         """응답 인코딩 자동 감지 (EUC-KR 사이트 대응)"""
-        content_type = resp.headers.get("content-type", "")
+        content_type = headers.get("Content-Type", headers.get("content-type", ""))
 
         # Content-Type 헤더에서 charset 추출
         charset_match = re.search(r"charset=([^\s;]+)", content_type, re.I)
         if charset_match:
             charset = charset_match.group(1).strip()
             try:
-                return resp.content.decode(charset)
+                return raw.decode(charset)
             except (UnicodeDecodeError, LookupError):
                 pass
 
         # HTML meta 태그에서 charset 추출
-        raw = resp.content
         meta_match = re.search(
             rb'<meta[^>]+charset=["\']?([^"\'\s;>]+)', raw, re.I
         )
