@@ -27,7 +27,7 @@ ANALYSIS_INTERVAL_SECONDS = int(os.getenv("ANALYSIS_INTERVAL", "30"))
 CAPTURE_WIDTH = int(os.getenv("CAPTURE_WIDTH", "1280"))
 CAPTURE_HEIGHT = int(os.getenv("CAPTURE_HEIGHT", "720"))
 # Claude 모델
-VISION_MODEL = os.getenv("VISION_MODEL", "claude-sonnet-4-5-20250514")
+VISION_MODEL = os.getenv("VISION_MODEL", "claude-haiku-4-5-20251001")
 
 # ===== 아이 프로필 =====
 CHILD_NAME = os.getenv("CHILD_NAME", "아이")
@@ -70,8 +70,11 @@ def get_rtsp_url() -> str:
     """Tapo 카메라 RTSP URL 생성"""
     if not all([TAPO_USERNAME, TAPO_PASSWORD, TAPO_CAMERA_IP]):
         return ""
+    # 비밀번호에 특수문자(@, : 등)가 포함될 수 있으므로 URL 인코딩
+    from urllib.parse import quote
+    encoded_password = quote(TAPO_PASSWORD, safe="")
     return (
-        f"rtsp://{TAPO_USERNAME}:{TAPO_PASSWORD}"
+        f"rtsp://{TAPO_USERNAME}:{encoded_password}"
         f"@{TAPO_CAMERA_IP}:{TAPO_RTSP_PORT}/stream1"
     )
 
