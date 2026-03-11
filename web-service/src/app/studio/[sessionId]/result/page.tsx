@@ -19,6 +19,8 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [selectedClipIdx, setSelectedClipIdx] = useState(0);
 
   useEffect(() => {
+    const startTime = Date.now();
+
     const load = async () => {
       const res = await fetch(`/api/studio/sessions/${sessionId}`);
       if (res.ok) {
@@ -32,10 +34,24 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     const interval = setInterval(async () => {
       const res = await fetch(`/api/studio/sessions/${sessionId}`);
       if (res.ok) {
-        const d = await res.json();
+        const d: SessionData = await res.json();
         setData(d);
+
         if (d.session.status === 'done') {
           clearInterval(interval);
+          return;
+        }
+
+        // uploading 상태에서 30초 이상 지났는데 stuck된 디바이스가 있으면 강제 전환
+        const elapsed = Date.now() - startTime;
+        if (d.session.status === 'uploading' && elapsed > 30000) {
+          const stuckDevices = d.devices.filter(
+            dev => dev.status !== 'done' && dev.status !== 'error'
+          );
+          if (stuckDevices.length > 0) {
+            // stuck 디바이스를 error로 변경하고 세션을 done으로 전환
+            await fetch(`/api/studio/sessions/${sessionId}/finalize`, { method: 'POST' });
+          }
         }
       }
     }, 5000);
