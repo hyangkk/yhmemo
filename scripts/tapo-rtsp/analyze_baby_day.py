@@ -254,6 +254,8 @@ def print_results(results, date_str, start_hour, end_hour):
 
 
 async def main():
+    global CAMERA_IP, CAMERA_PASS
+
     parser = argparse.ArgumentParser(description="아기 하루 활동 분석기")
     parser.add_argument("--date", "-d", default=datetime.now().strftime("%Y-%m-%d"),
                         help="분석할 날짜 (YYYY-MM-DD, 기본: 오늘)")
@@ -264,7 +266,6 @@ async def main():
     parser.add_argument("--password", "-p", default=CAMERA_PASS, help="Tapo 클라우드 비밀번호")
     args = parser.parse_args()
 
-    global CAMERA_IP, CAMERA_PASS
     CAMERA_IP = args.ip
     CAMERA_PASS = args.password
 
