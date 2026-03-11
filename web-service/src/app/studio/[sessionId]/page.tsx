@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStudioSession } from '@/hooks/useStudioSession';
+import { supabase } from '@/lib/supabase';
 import CameraView from '@/components/studio/CameraView';
 
 export default function SessionRoomPage({ params }: { params: Promise<{ sessionId: string }> }) {
@@ -58,10 +59,10 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     await updateDeviceStatus('recording');
   }, [sendSignal, updateDeviceStatus]);
 
-  // 호스트: 녹화 종료
+  // 호스트: 녹화 종료 (시그널을 먼저 설정해서 CameraView가 즉시 녹화 중지)
   const handleStopRecording = useCallback(async () => {
-    await sendSignal('stop');
     setRecordingSignal('stop');
+    try { await sendSignal('stop'); } catch {}
   }, [sendSignal]);
 
   // 녹화 완료 → 업로드 (ref 사용으로 stale closure 방지)
@@ -71,9 +72,8 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
     setUploading(true);
 
-    // 디바이스 상태를 직접 업데이트 (ref의 최신값 사용)
+    // 디바이스 상태를 직접 업데이트
     try {
-      const { supabase } = await import('@/lib/supabase');
       await supabase.from('studio_devices').update({ status: 'uploading' }).eq('id', device.id);
     } catch {}
 
@@ -85,6 +85,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `/api/studio/sessions/${sessionId}/upload`);
+      xhr.timeout = 60000; // 60초 타임아웃
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -92,15 +93,14 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
         }
       };
 
-      xhr.onload = () => {
+      const goToResult = () => {
         setUploading(false);
         router.push(`/studio/${sessionId}/result`);
       };
 
-      xhr.onerror = () => {
-        setUploading(false);
-        router.push(`/studio/${sessionId}/result`);
-      };
+      xhr.onload = goToResult;
+      xhr.onerror = goToResult;
+      xhr.ontimeout = goToResult;
 
       xhr.send(formData);
     } catch {
