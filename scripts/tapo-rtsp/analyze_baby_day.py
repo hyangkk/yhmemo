@@ -23,8 +23,8 @@ from datetime import datetime
 
 # === 카메라 설정 (필요시 수정) ===
 CAMERA_IP = "172.30.1.79"
-CAMERA_USER = "admin"
-CAMERA_PASS = "asdfzxcv12@"  # Tapo 클라우드 비밀번호
+CAMERA_USER = "yhtapo"
+CAMERA_PASS = "asdfzxcv12@"  # Tapo 카메라 계정 비밀번호
 OUTPUT_DIR = "./baby_analysis"
 
 
