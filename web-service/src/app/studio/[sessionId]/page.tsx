@@ -177,7 +177,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
       {/* 카메라 뷰 (전체 화면) */}
       <div className="flex-1 relative">
-        {joined && (
+        {joined && !uploading && (
           <CameraView
             onRecordingComplete={handleRecordingComplete}
             isHost={isHost}
@@ -185,9 +185,9 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           />
         )}
 
-        {/* 업로드 중 오버레이 */}
+        {/* 업로드 중 화면 (카메라 꺼짐) */}
         {uploading && (
-          <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10">
+          <div className="absolute inset-0 bg-black flex items-center justify-center">
             <div className="text-center space-y-4">
               <div className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
               <p className="text-lg">영상 업로드 중...</p>

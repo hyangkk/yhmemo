@@ -160,14 +160,16 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     await startCameraWithFacing(newFacing);
   }, [facingMode, stream, isRecording, startCameraWithFacing]);
 
+  // stream ref (클린업용)
+  const streamRef = useRef<MediaStream | null>(null);
+  useEffect(() => { streamRef.current = stream; }, [stream]);
+
   // 클린업
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      stream?.getTracks().forEach(track => track.stop());
+      streamRef.current?.getTracks().forEach(track => track.stop());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {

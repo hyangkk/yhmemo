@@ -92,6 +92,17 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
       </div>
 
       <div className="max-w-2xl mx-auto p-4 space-y-6">
+        {/* 업로드 대기 중 */}
+        {session.status === 'uploading' && (
+          <div className="bg-blue-900/30 border border-blue-500/30 rounded-2xl p-6 text-center space-y-3">
+            <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto" />
+            <h2 className="text-lg font-semibold">영상 업로드 중</h2>
+            <p className="text-gray-400 text-sm">
+              {devices.filter(d => d.status === 'done').length}/{devices.length}대 카메라 업로드 완료
+            </p>
+          </div>
+        )}
+
         {/* 편집 상태 */}
         {session.status === 'editing' && (
           <div className="bg-purple-900/30 border border-purple-500/30 rounded-2xl p-6 text-center space-y-3">
@@ -164,13 +175,19 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         </div>
 
-        {/* 새 촬영 */}
-        <div className="pt-4">
+        {/* 네비게이션 버튼 */}
+        <div className="pt-4 space-y-3">
           <button
             onClick={() => router.push('/studio')}
-            className="w-full bg-gray-800 hover:bg-gray-700 py-3 rounded-xl font-semibold transition"
+            className="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-xl font-semibold transition"
           >
             새 촬영 시작
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="w-full bg-gray-800 hover:bg-gray-700 py-3 rounded-xl font-semibold transition"
+          >
+            홈으로 돌아가기
           </button>
         </div>
       </div>
