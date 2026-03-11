@@ -2,12 +2,12 @@
 생각일기 명언 에이전트 (Diary Quote Agent)
 
 역할:
-- 매 정각마다 노션 '생각일기' DB에서 최근 3개월간 글을 조회
+- 6시간마다(0시, 6시, 12시, 18시) 노션 '생각일기' DB에서 최근 3개월간 글을 조회
 - 랜덤으로 하나를 골라 각오, 방향, 목표, 사고방식 등의 핵심 문장을 추출
 - 슬랙 '명언' 채널에 전송하여 자신의 기록을 잊지 않도록 일깨움
 
 자율 행동:
-- Observe: 정각 확인 + 노션 생각일기 DB에서 최근 3개월 글 조회
+- Observe: 6시간 간격(0시, 6시, 12시, 18시) 확인 + 노션 생각일기 DB에서 최근 3개월 글 조회
 - Think: AI로 랜덤 선택된 글에서 각오/목표/사고방식 핵심 문장 추출
 - Act: 슬랙 명언 채널에 전송
 """
@@ -31,12 +31,12 @@ DIARY_QUOTE_HISTORY_FILE = os.path.join(DATA_DIR, "diary_quote_history.json")
 
 
 class DiaryQuoteAgent(BaseAgent):
-    """노션 생각일기에서 핵심 문장을 추출하여 매 시각마다 슬랙에 전송하는 에이전트"""
+    """노션 생각일기에서 핵심 문장을 추출하여 6시간마다 슬랙에 전송하는 에이전트"""
 
     def __init__(self, diary_db_id: str = "", target_channel: str = "C0AJUJTHJGL", **kwargs):  # 명언-한마디
         super().__init__(
             name="diary_quote",
-            description="노션 생각일기에서 각오, 방향, 목표, 사고방식 등의 핵심 문장을 매 시각 추출하여 슬랙에 전송",
+            description="노션 생각일기에서 각오, 방향, 목표, 사고방식 등의 핵심 문장을 6시간마다 추출하여 슬랙에 전송",
             slack_channel=target_channel,
             loop_interval=60,  # 1분마다 체크 (정각에만 실행)
             **kwargs,
@@ -75,8 +75,8 @@ class DiaryQuoteAgent(BaseAgent):
         now = datetime.now(KST)
         current_hour = now.hour
 
-        # 매시간 정각(0~5분)에 실행
-        if 0 <= now.minute <= 5:
+        # 6시간 간격(0시, 6시, 12시, 18시) 정각(0~5분)에 실행
+        if current_hour % 6 == 0 and 0 <= now.minute <= 5:
             current_slot = f"{current_hour}:00"
         else:
             return None
@@ -349,5 +349,5 @@ class DiaryQuoteAgent(BaseAgent):
             message += f"  {link}"
         if context_note:
             message += f"\n\n💭 _{context_note}_"
-        message += "\n\n`⏰ 매시각 정시 자동 발송`"
+        message += "\n\n`⏰ 6시간마다 자동 발송`"
         return message
