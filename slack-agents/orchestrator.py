@@ -55,6 +55,7 @@ from agents.diary_quote_agent import DiaryQuoteAgent
 from agents.sentiment_agent import SentimentAgent
 from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
+from agents.swing_trader_agent import SwingTraderAgent
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -249,6 +250,7 @@ async def main():
     # ── 자율 거래 + 시장 정보 에이전트 ─────────────────────
     auto_trader = AutoTraderAgent(ls_client=ls_client, **common_kwargs)
     market_info = MarketInfoAgent(**common_kwargs)
+    swing_trader = SwingTraderAgent(ls_client=ls_client, **common_kwargs)
 
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
@@ -1223,6 +1225,7 @@ async def main():
         curator.stop()
         quote.stop()
         proactive.stop()
+        swing_trader.stop()
         # invest.stop()          # 비활성화됨
         # invest_report.stop()   # 비활성화됨
 
@@ -1265,6 +1268,7 @@ async def main():
         "sentiment": lambda: asyncio.create_task(sentiment.start(), name="sentiment"),
         "auto_trader": lambda: asyncio.create_task(auto_trader.start(), name="auto_trader"),
         "market_info": lambda: asyncio.create_task(market_info.start(), name="market_info"),
+        "swing_trader": lambda: asyncio.create_task(swing_trader.start(), name="swing_trader"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
