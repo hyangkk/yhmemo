@@ -19,6 +19,24 @@ jobs:
       - name: Fly.io CLI 설치
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: ICN 리전 볼륨 확인/생성
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          cd slack-agents
+          # ICN 리전에 agents_data 볼륨이 없으면 생성
+          if ! flyctl volumes list -a yhmbp14 --json | python3 -c "
+            import json,sys
+            vols = json.load(sys.stdin)
+            icn_vols = [v for v in vols if v.get('region') == 'icn' and v.get('name') == 'agents_data']
+            sys.exit(0 if icn_vols else 1)
+          "; then
+            echo 'ICN 볼륨 생성 중...'
+            flyctl volumes create agents_data --region icn --size 1 -a yhmbp14 -y
+          else
+            echo 'ICN 볼륨 이미 존재'
+          fi
+
       - name: 배포
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
