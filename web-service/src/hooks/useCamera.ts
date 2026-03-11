@@ -30,6 +30,8 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cameraActiveRef = useRef(false);
+  const facingModeRef = useRef(initialFacing);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -38,12 +40,17 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   const [error, setError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState(initialFacing);
 
-  const startCamera = useCallback(async () => {
+  // facingModeRef를 동기화
+  useEffect(() => {
+    facingModeRef.current = facingMode;
+  }, [facingMode]);
+
+  const startCameraWithFacing = useCallback(async (facing: 'user' | 'environment') => {
     try {
       setError(null);
       const constraints: MediaStreamConstraints = {
         video: {
-          facingMode,
+          facingMode: facing,
           width: { ideal: width },
           height: { ideal: height },
         },
@@ -52,6 +59,7 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
 
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
+      cameraActiveRef.current = true;
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -60,7 +68,11 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
       const msg = err instanceof Error ? err.message : '카메라 접근 실패';
       setError(msg);
     }
-  }, [facingMode, width, height]);
+  }, [width, height]);
+
+  const startCamera = useCallback(async () => {
+    await startCameraWithFacing(facingModeRef.current);
+  }, [startCameraWithFacing]);
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -129,23 +141,28 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   }, []);
 
   const switchCamera = useCallback(async () => {
-    stopCamera();
+    if (isRecording) return;
+
+    // 현재 스트림 정지
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    }
+
+    // 새 facingMode로 즉시 카메라 재시작
     const newFacing = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newFacing);
-  }, [facingMode, stopCamera]);
-
-  // facingMode 변경 시 카메라 재시작
-  useEffect(() => {
-    if (stream === null && videoRef.current) {
-      // 컴포넌트가 마운트된 후에만 자동 시작하지 않음
-      // startCamera는 명시적으로 호출해야 함
-    }
-  }, [facingMode, stream]);
+    await startCameraWithFacing(newFacing);
+  }, [facingMode, stream, isRecording, startCameraWithFacing]);
 
   // 클린업
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       stream?.getTracks().forEach(track => track.stop());
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

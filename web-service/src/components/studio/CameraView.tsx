@@ -88,40 +88,20 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
       )}
 
       {/* 카메라 전환 버튼 */}
-      <button
-        onClick={switchCamera}
-        className="absolute top-4 right-4 bg-black/60 p-3 rounded-full text-white hover:bg-black/80 transition"
-        aria-label="카메라 전환"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
-          <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
-          <circle cx="12" cy="12" r="3" />
-          <path d="m18 22-3-3 3-3" />
-          <path d="m6 2 3 3-3 3" />
-        </svg>
-      </button>
-
-      {/* 호스트 녹화 제어 버튼 */}
-      {isHost && (
-        <div className="absolute bottom-8 left-0 right-0 flex justify-center">
-          {!isRecording ? (
-            <button
-              onClick={startRecording}
-              disabled={!stream}
-              className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center disabled:opacity-50 transition"
-            >
-              <div className="w-16 h-16 bg-red-500 rounded-full" />
-            </button>
-          ) : (
-            <button
-              onClick={handleStop}
-              className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center transition"
-            >
-              <div className="w-8 h-8 bg-red-500 rounded-sm" />
-            </button>
-          )}
-        </div>
+      {!isRecording && (
+        <button
+          onClick={switchCamera}
+          className="absolute top-4 right-4 bg-black/60 p-3 rounded-full text-white hover:bg-black/80 transition"
+          aria-label="카메라 전환"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
+            <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="m18 22-3-3 3-3" />
+            <path d="m6 2 3 3-3 3" />
+          </svg>
+        </button>
       )}
     </div>
   );
