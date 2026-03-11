@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useCamera } from '@/hooks/useCamera';
 
 interface CameraViewProps {
@@ -23,6 +23,19 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     switchCamera,
   } = useCamera();
 
+  // ref로 최신 값 추적 (stale closure 방지)
+  const isRecordingRef = useRef(isRecording);
+  const streamRef = useRef(stream);
+  const stopRecordingRef = useRef(stopRecording);
+  const startRecordingRef = useRef(startRecording);
+  const onRecordingCompleteRef = useRef(onRecordingComplete);
+
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { streamRef.current = stream; }, [stream]);
+  useEffect(() => { stopRecordingRef.current = stopRecording; }, [stopRecording]);
+  useEffect(() => { startRecordingRef.current = startRecording; }, [startRecording]);
+  useEffect(() => { onRecordingCompleteRef.current = onRecordingComplete; }, [onRecordingComplete]);
+
   // 카메라 자동 시작
   useEffect(() => {
     startCamera();
@@ -32,17 +45,17 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
 
   // 외부 시그널 처리 (호스트 + 비호스트 모두)
   useEffect(() => {
-    if (externalRecordingSignal === 'start' && !isRecording && stream) {
-      startRecording();
-    } else if (externalRecordingSignal === 'stop' && isRecording) {
+    if (externalRecordingSignal === 'start' && !isRecordingRef.current && streamRef.current) {
+      startRecordingRef.current();
+    } else if (externalRecordingSignal === 'stop') {
+      // stop은 isRecording 체크 없이 항상 시도 (stale closure 방지)
       (async () => {
-        const result = await stopRecording();
+        const result = await stopRecordingRef.current();
         if (result) {
-          onRecordingComplete(result.blob, result.durationMs);
+          onRecordingCompleteRef.current(result.blob, result.durationMs);
         }
       })();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalRecordingSignal]);
 
   const formatTime = (seconds: number) => {
