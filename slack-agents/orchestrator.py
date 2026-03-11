@@ -438,17 +438,9 @@ async def main():
     async def cmd_bulletin(args: str, user: str, channel: str, thread_ts: str = None):
         parts = args.strip().split(maxsplit=1)
         if not parts:
-            # 즉시 스크래핑
-            await _reply(channel, ":mag: 게시판 스크래핑 시작...", thread_ts)
-            context = await bulletin.observe()
-            if context:
-                decision = await bulletin.think(context)
-                if decision:
-                    await bulletin.act(decision)
-                else:
-                    await _reply(channel, "새 게시글이 없습니다.", thread_ts)
-            else:
-                await _reply(channel, "등록된 게시판이 없습니다. `!게시판 등록 이름 URL`로 추가하세요.", thread_ts)
+            # 즉시 스크래핑 — 최근 게시글을 바로 보여줌
+            await _reply(channel, ":mag: 게시판 스크래핑 중...", thread_ts)
+            await bulletin.scrape_and_show(channel, thread_ts, max_posts=5)
         elif parts[0] == "등록" and len(parts) > 1:
             # !게시판 등록 이름 URL [parser_type]
             reg_parts = parts[1].split()
