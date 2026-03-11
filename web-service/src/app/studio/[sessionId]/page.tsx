@@ -98,9 +98,16 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
         router.push(`/studio/${sessionId}/result`);
       };
 
+      const goToResultWithError = async () => {
+        try {
+          await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
+        } catch {}
+        goToResult();
+      };
+
       xhr.onload = goToResult;
-      xhr.onerror = goToResult;
-      xhr.ontimeout = goToResult;
+      xhr.onerror = goToResultWithError;
+      xhr.ontimeout = goToResultWithError;
 
       xhr.send(formData);
     } catch {
