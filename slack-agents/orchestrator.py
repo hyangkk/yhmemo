@@ -1343,41 +1343,11 @@ async def main():
         # 4.5. 계획 저장 (다음 리포트에서 이행 검증용)
         _save_planned_tasks(now_str, next_activities)
 
-        # 5. Slack 오케스트레이션 가동 리포트 (매 1시간마다 항상 전송)
+        # 5. 오케스트레이션 가동 리포트 — 아침 종합 보고(08:00)에 통합됨
+        #    개별 슬랙 전송 비활성화. 헬스체크 로직(재시작/heartbeat)은 그대로 유지.
         alive = sum(1 for t in agent_tasks.values() if not t.done())
         total = len(agent_tasks)
-
-        report_lines = [f"*📊 오케스트레이션 가동 리포트* ({now_str} KST) — {alive}/{total} 에이전트"]
-
-        if restarts:
-            report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
-        if issues:
-            for issue in issues:
-                report_lines.append(issue)
-
-        # 이전 계획 이행률 (있으면)
-        if fulfillment:
-            report_lines.append("")
-            for line in fulfillment:
-                report_lines.append(line)
-
-        report_lines.append("")
-        report_lines.append("*지난 1시간:*")
-        if past_activities:
-            for line in past_activities:
-                report_lines.append(f"• {line}")
-        else:
-            report_lines.append("• (활동 없음)")
-
-        report_lines.append("")
-        report_lines.append("*앞으로 1시간:*")
-        for line in next_activities:
-            report_lines.append(f"• {line}")
-
-        try:
-            await slack.send_message(SlackClient.CHANNEL_GENERAL, "\n".join(report_lines))
-        except Exception as e:
-            logger.error(f"[watchdog] Slack report failed: {e}")
+        logger.info(f"[watchdog] Health check: {alive}/{total} agents alive, issues={len(issues)}, restarts={restarts}")
 
         # 6. 매일 09:00 KST 자동 인사평가
         if now.strftime("%H:%M") == "09:00":
