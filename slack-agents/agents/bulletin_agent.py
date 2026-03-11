@@ -15,6 +15,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -65,6 +66,10 @@ class BulletinAgent(BaseAgent):
             pass
         self._ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1
         self._ssl_ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+
+        # 한국 프록시 설정 (해외 IP 차단 사이트 우회)
+        # 형식: http://user:pass@host:port 또는 socks5://host:port
+        self._proxy_url = os.environ.get("KOREAN_PROXY_URL", "")
 
     async def start(self):
         """에이전트 시작 — 테이블 확인만 하고 자동 루프는 실행하지 않음 (수동 전용)"""
@@ -202,18 +207,33 @@ class BulletinAgent(BaseAgent):
 
     # ── HTTP 요청 (urllib + 쿠키 대응) ─────────────────
 
+    def _build_opener(self) -> tuple[urllib.request.OpenerDirector, http.cookiejar.CookieJar]:
+        """프록시 설정을 포함한 opener 생성"""
+        cj = http.cookiejar.CookieJar()
+        handlers = [
+            urllib.request.HTTPCookieProcessor(cj),
+            urllib.request.HTTPSHandler(context=self._ssl_ctx),
+        ]
+
+        if self._proxy_url:
+            proxy_handler = urllib.request.ProxyHandler({
+                "http": self._proxy_url,
+                "https": self._proxy_url,
+            })
+            handlers.append(proxy_handler)
+            logger.info(f"[bulletin] 한국 프록시 사용: {self._proxy_url[:30]}...")
+
+        opener = urllib.request.build_opener(*handlers)
+        return opener, cj
+
     def _fetch_url(self, url: str) -> tuple[bytes, dict]:
         """urllib로 URL 가져오기. 세션 쿠키 자동 처리. (content, headers) 반환"""
         parsed = urlparse(url)
         root_url = f"{parsed.scheme}://{parsed.netloc}/"
         errors = []
 
-        # 쿠키 자동 관리 opener
-        cj = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(cj),
-            urllib.request.HTTPSHandler(context=self._ssl_ctx),
-        )
+        # 쿠키 자동 관리 + 프록시 opener
+        opener, cj = self._build_opener()
 
         def _make_request(target_url: str, referer: str = "") -> urllib.request.Request:
             req = urllib.request.Request(target_url)

@@ -1,5 +1,5 @@
 app = 'yhmbp14'
-primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
+primary_region = 'icn'  # 인천, 한국 (한국 공공기관 사이트 해외IP 차단 대응)
 
 [build]
 
