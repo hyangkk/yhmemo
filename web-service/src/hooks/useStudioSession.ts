@@ -80,7 +80,8 @@ export function useStudioSession(sessionId: string | null): UseStudioSessionRetu
         filter: `session_id=eq.${sessionId}`,
       }, (payload) => {
         if (payload.eventType === 'INSERT') {
-          setDevices(prev => [...prev, payload.new as StudioDevice]);
+          const newDev = payload.new as StudioDevice;
+          setDevices(prev => prev.some(d => d.id === newDev.id) ? prev : [...prev, newDev]);
         } else if (payload.eventType === 'UPDATE') {
           setDevices(prev => prev.map(d =>
             d.id === (payload.new as StudioDevice).id ? payload.new as StudioDevice : d
@@ -136,12 +137,21 @@ export function useStudioSession(sessionId: string | null): UseStudioSessionRetu
     const device = data as StudioDevice;
     setMyDevice(device);
 
+    // 로컬 devices 배열에도 즉시 추가 (Realtime 대기 없이)
+    setDevices(prev => {
+      if (prev.some(d => d.id === device.id)) return prev;
+      return [...prev, device];
+    });
+
     // 첫 번째 참여자가 호스트
     if (nextIndex === 0) {
       await supabase
         .from('studio_sessions')
         .update({ host_device_id: device.id })
         .eq('id', sid);
+
+      // 세션 로컬 상태도 즉시 업데이트 (Realtime 대기 없이)
+      setSession(prev => prev ? { ...prev, host_device_id: device.id } as StudioSession : null);
     }
 
     return device;
