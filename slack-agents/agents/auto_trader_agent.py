@@ -28,12 +28,19 @@ KST = timezone(timedelta(hours=9))
 DEFAULT_CONFIG = {
     "max_position_amount": 200_000_000,   # 최대 보유 금액 (2억)
     "per_stock_limit": 50_000_000,        # 종목당 최대 (5천만)
-    "stop_loss_pct": -0.5,               # 손절선 (-0.5%)
+    "stop_loss_pct": -1.5,               # 손절선 (-1.5%, 시장가 슬리피지 반영)
     "take_profit_pct": 1.0,              # 익절선 (+1%)
     "half_profit_pct": 0.5,              # 절반 익절선 (+0.5%)
-    "max_stocks": 8,                     # 최대 동시 보유 종목 수
+    "max_stocks": 5,                     # 최대 동시 보유 종목 수 (집중 관리)
     "no_buy_after": "15:15",             # 이 시간 이후 매수 금지
     "force_sell_by": "15:20",            # 이 시간까지 전량 매도
+    # 시즌4 매매 규칙 엔진
+    "min_hold_minutes": 30,              # 최소 보유시간 (분) - 패닉셀 방지
+    "max_daily_trades": 6,               # 하루 최대 매매 횟수 (과매매 방지)
+    "no_chase_pct": 5.0,                 # 이 등락률 이상 급등주 매수 금지
+    "max_same_sector": 2,                # 동일 섹터 최대 종목 수
+    "prefer_limit_order": True,          # 지정가 주문 우선 사용
+    "spread_threshold_pct": 0.3,         # 이 이상이면 반드시 지정가
     "scan_tickers": [                    # 스캔 대상 종목
         "005930", "000660", "005380", "000270",  # 삼성전자, SK하이닉스, 현대차, 기아
         "006400", "035720", "068270", "003670",  # 삼성SDI, 카카오, 셀트리온, 포스코퓨처엠
@@ -51,6 +58,18 @@ STOCK_NAMES = {
     "105560": "KB금융", "051910": "LG화학", "066570": "LG전자",
     "035420": "NAVER", "028260": "삼성물산", "012330": "현대모비스",
     "055550": "신한지주", "373220": "LG에너지솔루션", "207940": "삼성바이오로직스",
+}
+
+# 섹터 분류 (동일 섹터 과집중 방지용)
+STOCK_SECTORS = {
+    "005930": "반도체", "000660": "반도체", "009150": "반도체",
+    "005380": "자동차", "000270": "자동차", "012330": "자동차",
+    "006400": "2차전지", "373220": "2차전지", "003670": "2차전지",
+    "035720": "IT플랫폼", "035420": "IT플랫폼",
+    "068270": "바이오", "207940": "바이오",
+    "105560": "금융", "055550": "금융",
+    "051910": "화학", "066570": "전자",
+    "028260": "건설",
 }
 
 
@@ -82,8 +101,10 @@ class AutoTraderAgent(BaseAgent):
         self._session_start = None
         self._daily_pnl = 0
         self._cycle = 0
+        self._daily_trade_count = 0  # 당일 매매 횟수
         self._last_prices: dict[str, dict] = {}  # 종목코드 → 시세 데이터
         self._holdings: dict[str, dict] = {}      # 종목코드 → 보유 정보
+        self._buy_times: dict[str, datetime] = {}  # 종목코드 → 매수 시각
         self._enabled = os.environ.get("AUTO_TRADER_ENABLED", "false").lower() == "true"
         self._reported_today = False
 
@@ -202,26 +223,35 @@ class AutoTraderAgent(BaseAgent):
                 return {"actions": actions, "reasoning": "장마감 전 전량 매도"}
             return None
 
-        # 2) 기계적 손절/익절 체크
+        # 2) 기계적 손절/익절 체크 (최소 보유시간 규칙 적용)
+        now = self._now_kst()
+        min_hold = self.config.get("min_hold_minutes", 30)
+
         for code, h in context["holdings"].items():
             if h["잔고수량"] <= 0:
                 continue
             pnl_pct = h["수익률"]
-            # 손절
+            buy_time = self._buy_times.get(code)
+            held_minutes = (now - buy_time).total_seconds() / 60 if buy_time else 999
+
+            # 손절 (긴급 손절은 보유시간 무관, 일반 손절은 최소 보유시간 적용)
             if pnl_pct <= self.config["stop_loss_pct"]:
                 actions.append({
                     "action": "sell",
                     "code": code,
                     "qty": h["잔고수량"],
-                    "reason": f"손절: {pnl_pct:.1f}%",
+                    "reason": f"손절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
                 })
+            # 최소 보유시간 미만이면 익절 보류 (패닉셀 방지)
+            elif held_minutes < min_hold:
+                continue
             # 익절 (전량)
             elif pnl_pct >= self.config["take_profit_pct"]:
                 actions.append({
                     "action": "sell",
                     "code": code,
                     "qty": h["잔고수량"],
-                    "reason": f"익절: {pnl_pct:.1f}%",
+                    "reason": f"익절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
                 })
             # 절반 익절
             elif pnl_pct >= self.config["half_profit_pct"]:
@@ -230,7 +260,7 @@ class AutoTraderAgent(BaseAgent):
                     "action": "sell",
                     "code": code,
                     "qty": half,
-                    "reason": f"절반 익절: {pnl_pct:.1f}%",
+                    "reason": f"절반 익절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
                 })
 
         # 3) 매수 금지 시간이면 매도만 실행
@@ -254,7 +284,20 @@ class AutoTraderAgent(BaseAgent):
         return {"actions": actions, "reasoning": "AI 매매 판단"}
 
     async def _ai_decide(self, context: dict) -> list[dict]:
-        """Claude AI로 매수 종목 판단"""
+        """Claude AI로 매수 종목 판단 (매매 규칙 엔진 적용)"""
+        # 매매 횟수 제한 체크
+        max_trades = self.config.get("max_daily_trades", 6)
+        if self._daily_trade_count >= max_trades:
+            logger.info(f"[auto_trader] 일일 매매 한도 도달 ({self._daily_trade_count}/{max_trades})")
+            return []
+
+        # 보유 종목 수 제한 체크
+        current_holding_count = len([
+            h for h in context["holdings"].values() if h["잔고수량"] > 0
+        ])
+        if current_holding_count >= self.config["max_stocks"]:
+            return []
+
         # 현재 보유 금액 계산
         total_position = sum(
             h["현재가"] * h["잔고수량"]
@@ -263,19 +306,46 @@ class AutoTraderAgent(BaseAgent):
         )
         remaining_budget = self.config["max_position_amount"] - total_position
 
-        if remaining_budget < 1_000_000:  # 100만원 미만이면 매수 불가
+        if remaining_budget < 1_000_000:
             return []
 
-        # 시세 데이터 정리
+        # 보유 종목의 섹터 카운트
+        held_sectors: dict[str, int] = {}
+        for code in context["holdings"]:
+            sector = STOCK_SECTORS.get(code, "기타")
+            held_sectors[sector] = held_sectors.get(sector, 0) + 1
+
+        # 급등주 필터링 & 시세 데이터 정리
+        no_chase_pct = self.config.get("no_chase_pct", 5.0)
         price_summary = []
+        eligible_codes = set()
         for code, p in context["prices"].items():
             if p.get("현재가", 0) == 0:
                 continue
             name = STOCK_NAMES.get(code, code)
             change_pct = p.get("등락률", 0)
+
+            # 호가 스프레드 분석
+            spread_info = ""
+            if self.ls and hasattr(self.ls, "analyze_spread"):
+                spread = self.ls.analyze_spread(p)
+                spread_pct = spread.get("스프레드비율", 0)
+                spread_info = f" 스프레드:{spread_pct:.2f}%({spread.get('추천주문방식', '')})"
+
             price_summary.append(
-                f"{name}({code}): {p['현재가']:,}원 ({change_pct:+.2f}%) 거래량:{p.get('거래량', 0):,}"
+                f"{name}({code}): {p['현재가']:,}원 ({change_pct:+.2f}%) 거래량:{p.get('거래량', 0):,}{spread_info}"
             )
+
+            # 매수 자격 체크: 급등주 제외, 보유종목 제외, 섹터 제한
+            if code in context["holdings"]:
+                continue
+            if abs(change_pct) > no_chase_pct:
+                continue
+            sector = STOCK_SECTORS.get(code, "기타")
+            max_sector = self.config.get("max_same_sector", 2)
+            if held_sectors.get(sector, 0) >= max_sector:
+                continue
+            eligible_codes.add(code)
 
         # 보유 종목 정리
         holding_summary = []
@@ -286,15 +356,33 @@ class AutoTraderAgent(BaseAgent):
                     f"{name}({code}): {h['잔고수량']}주, 수익률:{h['수익률']:.1f}%"
                 )
 
+        # 분봉 추세 데이터 수집 (매수 가능 종목만)
+        trend_summary = []
+        if self.ls and hasattr(self.ls, "get_minute_bars"):
+            for code in list(eligible_codes)[:6]:  # 상위 6종목만
+                try:
+                    bars = await self.ls.get_minute_bars(code, interval=5, count=20)
+                    if bars:
+                        trend = self.ls.detect_trend(bars)
+                        name = STOCK_NAMES.get(code, code)
+                        trend_summary.append(f"{name}({code}): 5분봉 추세={trend}")
+                except Exception as e:
+                    logger.warning(f"[auto_trader] 분봉 조회 실패 {code}: {e}")
+
         # 뉴스 요약
         news_summary = "\n".join(
             f"- {n['title']}" for n in context["news"][:5]
         ) if context["news"] else "최근 뉴스 없음"
 
+        trend_text = "\n".join(trend_summary) if trend_summary else "분봉 데이터 없음"
+
         prompt = f"""당신은 한국 주식 데이트레이딩 AI입니다. 현재 시장 데이터를 분석하고 매수할 종목을 추천하세요.
 
-## 현재 시세
+## 현재 시세 (호가 스프레드 포함)
 {chr(10).join(price_summary)}
+
+## 분봉 추세 분석
+{trend_text}
 
 ## 보유 종목
 {chr(10).join(holding_summary) if holding_summary else "없음"}
@@ -305,29 +393,32 @@ class AutoTraderAgent(BaseAgent):
 ## 최근 뉴스
 {news_summary}
 
-## 매매 규칙
+## 매매 규칙 (반드시 준수)
 - 등락률 +2%~+5% 구간의 초기 모멘텀 종목 선호
-- 이미 +10% 이상 급등한 종목은 회피 (고점 추격 금지)
-- 거래량이 활발한 종목 우선
+- +{no_chase_pct}% 이상 급등주 매수 금지
+- 5분봉 추세가 "상승"인 종목만 매수 (데이터 있을 경우)
+- 거래량 활발한 종목 우선
 - 종목당 최대 {self.config['per_stock_limit']:,}원
-- 현재 보유 종목은 추가 매수 금지
+- 현재 보유 종목 추가 매수 금지
+- 매수 가능 종목: {', '.join(eligible_codes) if eligible_codes else '없음'}
+- 스프레드 > 0.3%이면 지정가 주문 사용
+- 수수료(0.015%)+증권거래세(0.18%) 고려하여 최소 +0.5% 이상 수익 기대 종목만
 
 ## 응답 형식 (JSON)
 매수할 종목이 있으면:
-{{"buy": [{{"code": "종목코드", "qty": 주문수량, "reason": "매수 근거"}}]}}
+{{"buy": [{{"code": "종목코드", "qty": 주문수량, "limit_price": 지정가(0이면시장가), "reason": "매수 근거"}}]}}
 매수할 종목이 없으면:
 {{"buy": [], "reason": "관망 근거"}}
 
 반드시 유효한 JSON만 출력하세요."""
 
         resp = await self.ai.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
 
         text = resp.content[0].text.strip()
-        # JSON 파싱
         if "```" in text:
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -344,16 +435,17 @@ class AutoTraderAgent(BaseAgent):
         for buy in decision.get("buy", []):
             code = buy.get("code", "")
             qty = int(buy.get("qty", 0))
-            if code and qty > 0 and code not in context["holdings"]:
-                # 금액 한도 체크
+            if code and qty > 0 and code in eligible_codes:
                 price = context["prices"].get(code, {}).get("현재가", 0)
                 if price > 0:
                     order_amount = price * qty
                     if order_amount <= min(remaining_budget, self.config["per_stock_limit"]):
+                        limit_price = int(buy.get("limit_price", 0))
                         actions.append({
                             "action": "buy",
                             "code": code,
                             "qty": qty,
+                            "limit_price": limit_price,
                             "reason": buy.get("reason", "AI 판단"),
                         })
                         remaining_budget -= order_amount
@@ -363,7 +455,9 @@ class AutoTraderAgent(BaseAgent):
     # ── Act ─────────────────────────────────────────────
 
     async def act(self, decision: dict):
-        """매매 주문 실행"""
+        """매매 주문 실행 (지정가/시장가 자동 결정, 비용 기록)"""
+        from integrations.ls_securities import LSSecuritiesClient
+
         actions = decision.get("actions", [])
         if not actions:
             return
@@ -373,14 +467,34 @@ class AutoTraderAgent(BaseAgent):
             qty = action["qty"]
             name = STOCK_NAMES.get(code, code)
             reason = action.get("reason", "")
+            limit_price = action.get("limit_price", 0)
 
             try:
                 if action["action"] == "buy":
-                    result = await self.ls.buy(code, qty)
+                    # 지정가 주문 여부 결정
+                    if limit_price and self.config.get("prefer_limit_order"):
+                        result = await self.ls.buy_limit(code, qty, limit_price)
+                        order_type = f"지정가({limit_price:,}원)"
+                    else:
+                        # 호가 스프레드 체크 → 자동 결정
+                        price_data = self._last_prices.get(code, {})
+                        spread = self.ls.analyze_spread(price_data)
+                        threshold = self.config.get("spread_threshold_pct", 0.3)
+                        if spread.get("스프레드비율", 0) > threshold and spread.get("매수추천가"):
+                            result = await self.ls.buy_limit(code, qty, spread["매수추천가"])
+                            order_type = f"지정가({spread['매수추천가']:,}원, 스프레드{spread['스프레드비율']:.2f}%)"
+                        else:
+                            result = await self.ls.buy(code, qty)
+                            order_type = "시장가"
                     emoji = "📈"
                     action_str = "매수"
                 elif action["action"] == "sell":
-                    result = await self.ls.sell(code, qty)
+                    if limit_price and self.config.get("prefer_limit_order"):
+                        result = await self.ls.sell_limit(code, qty, limit_price)
+                        order_type = f"지정가({limit_price:,}원)"
+                    else:
+                        result = await self.ls.sell(code, qty)
+                        order_type = "시장가"
                     emoji = "📉"
                     action_str = "매도"
                 else:
@@ -388,6 +502,21 @@ class AutoTraderAgent(BaseAgent):
 
                 success = result.get("결과") == "성공"
                 order_no = result.get("주문번호", "")
+
+                # 매수 시각 기록 (보유시간 추적용)
+                if success and action_str == "매수":
+                    self._buy_times[code] = self._now_kst()
+
+                # 매매 횟수 카운트
+                if success:
+                    self._daily_trade_count += 1
+
+                # 매매 비용 계산
+                price_now = self._last_prices.get(code, {}).get("현재가", 0)
+                cost = LSSecuritiesClient.estimate_trading_cost(
+                    price_now or limit_price, qty,
+                    side="buy" if action_str == "매수" else "sell"
+                )
 
                 # 거래 로그 기록
                 log_entry = {
@@ -398,12 +527,14 @@ class AutoTraderAgent(BaseAgent):
                     "qty": qty,
                     "success": success,
                     "order_no": order_no,
+                    "order_type": order_type,
                     "reason": reason,
                     "error": result.get("에러", ""),
+                    "estimated_cost": cost,
                 }
                 self._trade_log.append(log_entry)
 
-                # Supabase 기록
+                # Supabase 기록 (비용 포함)
                 try:
                     self.supabase.table("auto_trade_log").insert({
                         "trade_time": self._now_kst().isoformat(),
@@ -413,7 +544,7 @@ class AutoTraderAgent(BaseAgent):
                         "quantity": qty,
                         "success": success,
                         "order_no": order_no,
-                        "reason": reason,
+                        "reason": f"{reason} | {order_type} | 비용:{cost['총비용']:,}원",
                         "error_msg": result.get("에러", ""),
                     }).execute()
                 except Exception as e:
@@ -421,7 +552,15 @@ class AutoTraderAgent(BaseAgent):
 
                 # 슬랙 보고
                 if success:
-                    msg = f"{emoji} *[자율거래] {action_str} 완료*\n{name}({code}) | {qty}주 | 주문번호: {order_no}\n사유: {reason}"
+                    cost_info = f"수수료:{cost['수수료']:,}원"
+                    if cost['증권거래세']:
+                        cost_info += f"+세금:{cost['증권거래세']:,}원"
+                    msg = (
+                        f"{emoji} *[자율거래] {action_str} 완료*\n"
+                        f"{name}({code}) | {qty}주 | {order_type} | 주문번호: {order_no}\n"
+                        f"사유: {reason}\n"
+                        f"예상비용: {cost_info} (총 {cost['총비용']:,}원)"
+                    )
                 else:
                     msg = f"❌ *[자율거래] {action_str} 실패*\n{name}({code}) | {qty}주\n에러: {result.get('에러', '알 수 없음')}"
 
