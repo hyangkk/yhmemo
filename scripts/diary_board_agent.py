@@ -794,9 +794,7 @@ def main():
     now = datetime.now(KST)
 
     print("[4/4] 발송 및 저장 중...")
-    reply_to = command_msg_id if is_command else None
-    ok = send_to_telegram(report, members, len(entries), actual_hours, now, reply_to=reply_to)
-    send_to_slack(report, members, len(entries), actual_hours, now)
+    ok = send_to_slack(report, members, len(entries), actual_hours, now)
 
     board_db_id = settings.get("board_notion_db_id", "")
     if board_db_id:
