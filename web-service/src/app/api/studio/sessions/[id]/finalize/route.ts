@@ -16,11 +16,25 @@ export async function POST(
     .eq('session_id', id)
     .not('status', 'in', '("done","error")');
 
-  // 세션을 done으로 전환
-  await supabase
-    .from('studio_sessions')
-    .update({ status: 'done', updated_at: new Date().toISOString() })
-    .eq('id', id);
+  // 업로드 성공한 클립이 있는지 확인
+  const { data: clips } = await supabase
+    .from('studio_clips')
+    .select('id')
+    .eq('session_id', id);
+
+  if (clips && clips.length > 0) {
+    // 클립이 있으면 editing으로 전환 → Fly.io 폴링 서버가 편집 실행
+    await supabase
+      .from('studio_sessions')
+      .update({ status: 'editing', updated_at: new Date().toISOString() })
+      .eq('id', id);
+  } else {
+    // 클립 없으면 done으로 전환
+    await supabase
+      .from('studio_sessions')
+      .update({ status: 'done', updated_at: new Date().toISOString() })
+      .eq('id', id);
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -73,9 +73,10 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
       // stop은 isRecording 체크 없이 항상 시도 (stale closure 방지)
       (async () => {
         const result = await stopRecordingRef.current();
-        if (result) {
-          onRecordingCompleteRef.current(result.blob, result.durationMs);
-        }
+        // 녹화 성공이든 실패든 항상 콜백 호출 (실패 시 빈 blob → 업로드 스킵 후 결과 이동)
+        const blob = result?.blob ?? new Blob([], { type: 'video/webm' });
+        const durationMs = result?.durationMs ?? 0;
+        onRecordingCompleteRef.current(blob, durationMs);
       })();
     }
   }, [externalRecordingSignal]);

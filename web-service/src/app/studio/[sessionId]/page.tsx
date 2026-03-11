@@ -78,7 +78,19 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
   // 녹화 완료 → 업로드 (ref 사용으로 stale closure 방지)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
-    if (!device || !sessionId) return;
+    const goToResult = () => {
+      setUploading(false);
+      router.push(`/studio/${sessionId}/result`);
+    };
+
+    // device가 없거나 녹화된 데이터가 없으면 바로 결과 페이지로
+    if (!device || !sessionId || blob.size === 0) {
+      if (device) {
+        try { await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id); } catch {}
+      }
+      goToResult();
+      return;
+    }
 
     setUploading(true);
 
@@ -101,11 +113,6 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
         if (e.lengthComputable) {
           setUploadProgress(Math.round((e.loaded / e.total) * 100));
         }
-      };
-
-      const goToResult = () => {
-        setUploading(false);
-        router.push(`/studio/${sessionId}/result`);
       };
 
       const goToResultWithError = async () => {
