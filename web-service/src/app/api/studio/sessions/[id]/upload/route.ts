@@ -68,6 +68,12 @@ export async function POST(
     const hasClips = allDevices?.some(d => d.status === 'done');
 
     if (allFinished && hasClips) {
+      // 세션 상태를 'editing'으로 업데이트
+      await supabase
+        .from('studio_sessions')
+        .update({ status: 'editing', updated_at: new Date().toISOString() })
+        .eq('id', sessionId);
+
       // 업로드된 클립이 1개 이상이면 편집 서버에 요청
       const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmbp14.fly.dev';
       try {
