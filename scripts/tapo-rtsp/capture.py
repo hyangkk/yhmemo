@@ -53,11 +53,15 @@ def record_stream(rtsp_url: str, duration: int, output_path: str = None):
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-t", str(duration),
-        "-c:v", "libx264",    # H.264로 변환 (macOS QuickTime 호환)
-        "-preset", "fast",    # 인코딩 속도 (fast/medium/slow)
-        "-crf", "23",         # 화질 (낮을수록 고화질, 18~28 권장)
-        "-c:a", "aac",        # 오디오는 AAC로
-        "-movflags", "+faststart",  # 웹 재생 호환
+        "-c:v", "libx264",       # H.264로 변환 (macOS QuickTime 호환)
+        "-pix_fmt", "yuv420p",   # QuickTime 필수 픽셀 포맷
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",           # pcm_alaw → AAC 변환
+        "-ar", "44100",          # 오디오 샘플레이트 표준화
+        "-ac", "1",              # 모노
+        "-f", "mp4",             # 명시적 MP4 컨테이너
+        "-movflags", "+faststart",
         output_path
     ]
 
@@ -65,7 +69,8 @@ def record_stream(rtsp_url: str, duration: int, output_path: str = None):
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        process.wait()
+        # 실시간 진행 표시
+        process.wait(timeout=duration + 30)
 
         if process.returncode == 0:
             size_mb = os.path.getsize(output_path) / (1024 * 1024)
