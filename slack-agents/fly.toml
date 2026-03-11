@@ -1,5 +1,5 @@
 app = 'yhmbp14'
-primary_region = 'icn'  # 인천, 한국 (한국 공공기관 사이트 해외IP 차단 대응)
+primary_region = 'nrt'  # 도쿄 (Fly.io 한국 리전 미지원, 프록시로 우회)
 
 [build]
 
