@@ -40,6 +40,10 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   const [error, setError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState(initialFacing);
 
+  // stream ref (stale closure 방지 - startRecording/stopCamera에서 사용)
+  const streamRef = useRef<MediaStream | null>(null);
+  useEffect(() => { streamRef.current = stream; }, [stream]);
+
   // facingModeRef를 동기화
   useEffect(() => {
     facingModeRef.current = facingMode;
@@ -70,6 +74,7 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
       if (!mediaStream) throw new Error('카메라를 시작할 수 없습니다');
 
       setStream(mediaStream);
+      streamRef.current = mediaStream; // useEffect 대기 없이 즉시 업데이트
       cameraActiveRef.current = true;
 
       if (videoRef.current) {
@@ -86,17 +91,19 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   }, [startCameraWithFacing]);
 
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
       setStream(null);
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-  }, [stream]);
+  }, []);
 
   const startRecording = useCallback(() => {
-    if (!stream) return;
+    // ref를 사용하여 항상 최신 stream 참조 (stale closure 방지)
+    const currentStream = streamRef.current;
+    if (!currentStream) return;
 
     chunksRef.current = [];
     setRecordedBlob(null);
@@ -108,7 +115,7 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
         ? 'video/webm'
         : 'video/mp4';
 
-    const recorder = new MediaRecorder(stream, { mimeType });
+    const recorder = new MediaRecorder(currentStream, { mimeType });
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
@@ -125,7 +132,7 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     timerRef.current = setInterval(() => {
       setRecordingDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
-  }, [stream]);
+  }, []);
 
   const stopRecording = useCallback((): Promise<{ blob: Blob; durationMs: number } | null> => {
     return new Promise((resolve) => {
@@ -157,8 +164,8 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     if (isRecording) return;
 
     // 현재 스트림 정지
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
       setStream(null);
       if (videoRef.current) {
         videoRef.current.srcObject = null;
@@ -166,14 +173,10 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     }
 
     // 새 facingMode로 즉시 카메라 재시작
-    const newFacing = facingMode === 'user' ? 'environment' : 'user';
+    const newFacing = facingModeRef.current === 'user' ? 'environment' : 'user';
     setFacingMode(newFacing);
     await startCameraWithFacing(newFacing);
-  }, [facingMode, stream, isRecording, startCameraWithFacing]);
-
-  // stream ref (클린업용)
-  const streamRef = useRef<MediaStream | null>(null);
-  useEffect(() => { streamRef.current = stream; }, [stream]);
+  }, [isRecording, startCameraWithFacing]);
 
   // 클린업
   useEffect(() => {
