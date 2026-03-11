@@ -1,0 +1,49 @@
+{
+  "error_code": 0,
+  "result": {
+    "deviceList": [
+      {
+        "deviceType": "SMART.IPCAMERA",
+        "accountApiUrl": "http://aps1-account-api-internal.tplinkcloud.com",
+        "role": 0,
+        "fwVer": "1.3.16 Build 241022 Rel.56666n(4555)",
+        "appServerUrl": "https://aps1-wap.tplinkcloud.com",
+        "deviceRegion": "ap-southeast-1",
+        "deviceId": "8021835A0DD66E3B477F14EDC453803A1E4094F8",
+        "deviceName": "C200",
+        "lastBindTime": 1732454721000,
+        "deviceHwVer": "2.0",
+        "alias": "Tapo_소형 C200_D817",
+        "deviceMac": "005F67CFD817",
+        "oemId": "6C6C8A3E1B5801A276305D7B2FEFFF67",
+        "deviceModel": "C200",
+        "hwId": "9C09BC4DF198CCF158CEDAD8A5584B41",
+        "fwId": "AF2568168458589B3AC80B3D8E0E7B12",
+        "isSameRegion": false,
+        "appServerUrlV2": "https://aps1-wap.tplinkcloud.com",
+        "status": 0
+      },
+      {
+        "deviceType": "SMART.IPCAMERA",
+        "accountApiUrl": "http://aps1-account-api-internal.tplinkcloud.com",
+        "role": 0,
+        "fwVer": "1.1.12 Build 260128 Rel.43380n",
+        "appServerUrl": "https://aps1-wap.tplinkcloud.com",
+        "deviceRegion": "ap-southeast-1",
+        "deviceId": "80218D10BF055206701E632FD1C3BBF024A46A43",
+        "deviceName": "C260 1.0",
+        "lastBindTime": 1763785889000,
+        "deviceHwVer": "1.0",
+        "alias": "Tapo 대형 C260",
+        "deviceMac": "CCBABD0611E7",
+        "oemId": "08C08ADA34CD0818B0BEF5FA00585BD0",
+        "deviceModel": "C260",
+        "hwId": "B27B3722F82B0611179441AB43C162C2",
+        "fwId": "4637865EDF9883B30C7D1E6502472CB3",
+        "isSameRegion": false,
+        "appServerUrlV2": "https://aps1-wap.tplinkcloud.com",
+        "status": 0
+      }
+    ]
+  }
+}
