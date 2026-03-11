@@ -2,12 +2,12 @@
 생각일기 명언 에이전트 (Diary Quote Agent)
 
 역할:
-- 6시간마다(0시, 6시, 12시, 18시) 노션 '생각일기' DB에서 최근 3개월간 글을 조회
+- 6시간마다(0시, 6시, 12시, 18시) 노션 '생각일기' DB에서 최근 60개월간 글을 조회
 - 랜덤으로 하나를 골라 각오, 방향, 목표, 사고방식 등의 핵심 문장을 추출
 - 슬랙 '명언' 채널에 전송하여 자신의 기록을 잊지 않도록 일깨움
 
 자율 행동:
-- Observe: 6시간 간격(0시, 6시, 12시, 18시) 확인 + 노션 생각일기 DB에서 최근 3개월 글 조회
+- Observe: 6시간 간격(0시, 6시, 12시, 18시) 확인 + 노션 생각일기 DB에서 최근 60개월 글 조회
 - Think: AI로 랜덤 선택된 글에서 각오/목표/사고방식 핵심 문장 추출
 - Act: 슬랙 명언 채널에 전송
 """
@@ -90,11 +90,11 @@ class DiaryQuoteAgent(BaseAgent):
             logger.warning("[diary_quote] Skipping: diary_db_id=%s, notion=%s", bool(self._diary_db_id), bool(self.notion))
             return None
 
-        # 최근 3개월간의 글 조회
-        three_months_ago = (now - timedelta(days=90)).strftime("%Y-%m-%dT00:00:00+09:00")
+        # 최근 60개월(5년)간의 글 조회
+        five_years_ago = (now - timedelta(days=1825)).strftime("%Y-%m-%dT00:00:00+09:00")
         filter_dict = {
             "timestamp": "created_time",
-            "created_time": {"after": three_months_ago},
+            "created_time": {"after": five_years_ago},
         }
 
         pages = await self.notion.query_database_all(
@@ -104,7 +104,7 @@ class DiaryQuoteAgent(BaseAgent):
         )
 
         if not pages:
-            logger.warning("[diary_quote] No diary entries found in last 3 months (db=%s)", self._diary_db_id)
+            logger.warning("[diary_quote] No diary entries found in last 60 months (db=%s)", self._diary_db_id)
             return None
 
         logger.info("[diary_quote] Found %d diary entries, slot=%s", len(pages), current_slot)
@@ -253,15 +253,15 @@ class DiaryQuoteAgent(BaseAgent):
             return "노션 연동이 안 되어 있어요."
 
         now = datetime.now(KST)
-        three_months_ago = (now - timedelta(days=90)).strftime("%Y-%m-%dT00:00:00+09:00")
+        five_years_ago = (now - timedelta(days=1825)).strftime("%Y-%m-%dT00:00:00+09:00")
 
         pages = await self.notion.query_database_all(
             self._diary_db_id,
-            filter_dict={"timestamp": "created_time", "created_time": {"after": three_months_ago}},
+            filter_dict={"timestamp": "created_time", "created_time": {"after": five_years_ago}},
             sorts=[{"timestamp": "created_time", "direction": "descending"}],
         )
         if not pages:
-            return "최근 3개월간 생각일기가 없어요."
+            return "생각일기가 없어요."
 
         used_ids = self._recently_used_page_ids()
         candidates = [p for p in pages if p.get("id") not in used_ids] or pages
