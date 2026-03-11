@@ -10,8 +10,11 @@ REST API 기반 국내 주식 시세 조회 및 매매 주문.
   LS_ACCOUNT_NO   - 계좌번호 (주문 시 필요, 예: "12345678901")
 """
 
+import asyncio
+import json
 import logging
 import os
+import subprocess
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -21,6 +24,32 @@ logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 BASE_URL_LIVE = "https://openapi.ls-sec.co.kr:8080"
 BASE_URL_PAPER = "https://openapi.ls-sec.co.kr:8080"  # 모의투자도 동일 포트, 앱키로 구분
+
+
+def get_tick_size(price: int) -> int:
+    """가격대별 호가 단위 반환 (KOSPI 기준)"""
+    if price < 2_000:
+        return 1
+    elif price < 5_000:
+        return 5
+    elif price < 20_000:
+        return 10
+    elif price < 50_000:
+        return 50
+    elif price < 200_000:
+        return 100
+    elif price < 500_000:
+        return 500
+    else:
+        return 1_000
+
+
+def round_to_tick(price: int, direction: str = "down") -> int:
+    """호가 단위에 맞게 가격 반올림 (direction: 'up'=올림, 'down'=내림)"""
+    tick = get_tick_size(price)
+    if direction == "up":
+        return ((price + tick - 1) // tick) * tick
+    return (price // tick) * tick
 
 
 def is_market_open() -> bool:
@@ -131,6 +160,7 @@ class LSSecuritiesClient:
         self._last_balance: dict | None = None
         self._last_balance_time: datetime | None = None
         self._price_cache: dict[str, dict] = {}  # {종목코드: {data, time}}
+        self._use_curl_fallback = False  # httpx 실패 시 curl로 전환
 
     @property
     def is_configured(self) -> bool:
@@ -478,6 +508,296 @@ class LSSecuritiesClient:
             "가격": price if price else "시장가",
             "에러": "" if success else (rsp_msg or "주문번호가 반환되지 않았습니다"),
             "raw": data,
+        }
+
+    # ── curl fallback ───────────────────────────────────
+
+    async def _curl_post(self, url: str, headers: dict, body: dict, retries: int = 3) -> dict:
+        """curl을 사용한 HTTP POST (프록시 환경에서 httpx 실패 시 fallback)"""
+        header_args = []
+        for k, v in headers.items():
+            header_args.extend(["-H", f"{k}: {v}"])
+
+        json_body = json.dumps(body, ensure_ascii=False)
+
+        for attempt in range(retries):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "curl", "-sk", "-X", "POST", url,
+                    *header_args,
+                    "-d", json_body,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                if proc.returncode == 0 and stdout:
+                    return json.loads(stdout.decode())
+                logger.warning(f"[ls] curl 실패 (attempt {attempt+1}): rc={proc.returncode}")
+            except asyncio.TimeoutError:
+                logger.warning(f"[ls] curl 타임아웃 (attempt {attempt+1})")
+            except Exception as e:
+                logger.warning(f"[ls] curl 오류 (attempt {attempt+1}): {e}")
+
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+
+        raise ConnectionError(f"curl POST 실패: {url}")
+
+    async def _api_post(self, url: str, headers: dict, body: dict) -> dict:
+        """httpx 우선, 실패 시 curl fallback으로 API 호출"""
+        if self._use_curl_fallback:
+            return await self._curl_post(url, headers, body)
+
+        try:
+            resp = await self._http.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.ProxyError, httpx.ConnectTimeout, httpx.ConnectError) as e:
+            logger.warning(f"[ls] httpx 실패, curl fallback 전환: {e}")
+            self._use_curl_fallback = True
+            return await self._curl_post(url, headers, body)
+
+    # ── 지정가 주문 ───────────────────────────────────────
+
+    async def buy_limit(self, stock_code: str, qty: int, price: int) -> dict:
+        """지정가 매수 주문
+
+        Args:
+            stock_code: 종목코드
+            qty: 수량
+            price: 지정가 (호가 단위 자동 보정)
+        """
+        adjusted_price = round_to_tick(price, direction="down")  # 매수는 내림
+        return await self._place_order(
+            stock_code=stock_code, qty=qty, price=adjusted_price,
+            order_type="00", bns_tp="2",
+        )
+
+    async def sell_limit(self, stock_code: str, qty: int, price: int) -> dict:
+        """지정가 매도 주문
+
+        Args:
+            stock_code: 종목코드
+            qty: 수량
+            price: 지정가 (호가 단위 자동 보정)
+        """
+        adjusted_price = round_to_tick(price, direction="up")  # 매도는 올림
+        return await self._place_order(
+            stock_code=stock_code, qty=qty, price=adjusted_price,
+            order_type="00", bns_tp="1",
+        )
+
+    async def cancel_order(self, org_order_no: str, stock_code: str, qty: int) -> dict:
+        """미체결 주문 취소 (CSPAT00801)"""
+        await self._ensure_token()
+        url = f"{self.base_url}/stock/order"
+        headers = self._auth_header("CSPAT00801")
+        body = {
+            "CSPAT00801InBlock1": {
+                "OrgOrdNo": int(org_order_no),
+                "IsuNo": stock_code,
+                "OrdQty": qty,
+                "OrdPrc": 0,
+                "OrdprcPtnCode": "00",
+                "MgntrnCode": "000",
+                "LoanDt": "",
+                "AcntNo": self.account_no,
+                "InptPwd": self.account_pwd,
+            }
+        }
+        try:
+            data = await self._api_post(url, headers, body)
+            out2 = data.get("CSPAT00801OutBlock2", {})
+            success = bool(out2.get("OrdNo"))
+            return {
+                "결과": "성공" if success else "실패",
+                "주문번호": out2.get("OrdNo", ""),
+                "에러": "" if success else data.get("rsp_msg", "취소 실패"),
+            }
+        except Exception as e:
+            return {"결과": "실패", "에러": str(e)}
+
+    async def get_unfilled_orders(self) -> list[dict]:
+        """미체결 주문 조회 (t0425)"""
+        await self._ensure_token()
+        url = f"{self.base_url}/stock/accno"
+        headers = self._auth_header("t0425")
+        body = {
+            "t0425InBlock": {
+                "accno": self.account_no,
+                "expcode": "",
+                "chegb": "2",  # 미체결만
+                "medession": "0",
+                "sortgb": "2",
+                "cts_ordno": "",
+            }
+        }
+        try:
+            data = await self._api_post(url, headers, body)
+            orders = data.get("t0425OutBlock1", [])
+            return [
+                {
+                    "주문번호": o.get("ordno", ""),
+                    "종목코드": o.get("expcode", ""),
+                    "종목명": o.get("hname", ""),
+                    "주문유형": "매수" if o.get("medosu", "") == "2" else "매도",
+                    "주문수량": int(o.get("qty", 0)),
+                    "미체결수량": int(o.get("ordrem", 0)),
+                    "주문가격": int(o.get("price", 0)),
+                    "주문시각": o.get("ordtime", ""),
+                }
+                for o in orders
+            ]
+        except Exception as e:
+            logger.warning(f"[ls] 미체결 조회 실패: {e}")
+            return []
+
+    # ── 분봉 데이터 (t8412) ──────────────────────────────
+
+    async def get_minute_bars(self, stock_code: str, interval: int = 1, count: int = 30) -> list[dict]:
+        """분봉 차트 데이터 조회 (t8412)
+
+        Args:
+            stock_code: 종목코드
+            interval: 분봉 단위 (1, 3, 5, 10, 30, 60)
+            count: 조회할 봉 수
+
+        Returns:
+            list of {시간, 시가, 고가, 저가, 종가, 거래량}
+        """
+        await self._ensure_token()
+        url = f"{self.base_url}/stock/chart"
+        today = datetime.now(KST).strftime("%Y%m%d")
+        headers = self._auth_header("t8412")
+        body = {
+            "t8412InBlock": {
+                "shcode": stock_code,
+                "ncnt": interval,
+                "qrycnt": count,
+                "nday": "1",
+                "sdate": today,
+                "edate": today,
+                "cts_time": "",
+                "comp_yn": "N",
+            }
+        }
+        try:
+            data = await self._api_post(url, headers, body)
+            bars = data.get("t8412OutBlock1", [])
+            return [
+                {
+                    "시간": b.get("time", ""),
+                    "시가": int(b.get("open", 0)),
+                    "고가": int(b.get("high", 0)),
+                    "저가": int(b.get("low", 0)),
+                    "종가": int(b.get("close", 0)),
+                    "거래량": int(b.get("jdiff_vol", 0)),
+                }
+                for b in bars
+            ]
+        except Exception as e:
+            logger.warning(f"[ls] 분봉 조회 실패 ({stock_code}): {e}")
+            return []
+
+    def calculate_moving_average(self, bars: list[dict], period: int = 5) -> float | None:
+        """분봉 데이터에서 이동평균 계산"""
+        if len(bars) < period:
+            return None
+        prices = [b["종가"] for b in bars[-period:]]
+        return sum(prices) / period
+
+    def detect_trend(self, bars: list[dict]) -> str:
+        """분봉 데이터에서 단기 추세 판단 (상승/하락/횡보)"""
+        if len(bars) < 10:
+            return "판단불가"
+        ma5 = self.calculate_moving_average(bars, 5)
+        ma20 = self.calculate_moving_average(bars, 20)
+        if ma5 is None or ma20 is None:
+            ma10 = self.calculate_moving_average(bars, 10)
+            if ma5 is not None and ma10 is not None:
+                if ma5 > ma10 * 1.001:
+                    return "상승"
+                elif ma5 < ma10 * 0.999:
+                    return "하락"
+                return "횡보"
+            return "판단불가"
+        if ma5 > ma20 * 1.001:
+            return "상승"
+        elif ma5 < ma20 * 0.999:
+            return "하락"
+        return "횡보"
+
+    # ── 호가 스프레드 분석 ───────────────────────────────
+
+    def analyze_spread(self, price_data: dict) -> dict:
+        """호가 스프레드 분석 → 주문 방식 추천
+
+        Args:
+            price_data: get_price() 반환값
+
+        Returns:
+            {스프레드, 스프레드비율, 추천주문방식, 매수추천가, 매도추천가}
+        """
+        bid = price_data.get("매수호가1", 0)
+        ask = price_data.get("매도호가1", 0)
+        current = price_data.get("현재가", 0)
+
+        if not bid or not ask or not current:
+            return {"추천주문방식": "시장가", "분석불가": True}
+
+        spread = ask - bid
+        spread_pct = (spread / current) * 100
+
+        # 스프레드 기준으로 주문 방식 결정
+        if spread_pct > 0.3:
+            order_method = "지정가"
+        elif spread_pct > 0.15:
+            order_method = "지정가_권장"
+        else:
+            order_method = "시장가"
+
+        return {
+            "매수호가1": bid,
+            "매도호가1": ask,
+            "스프레드": spread,
+            "스프레드비율": round(spread_pct, 3),
+            "추천주문방식": order_method,
+            "매수추천가": bid,  # 매수 시 매수1호가에 지정가
+            "매도추천가": ask,  # 매도 시 매도1호가에 지정가
+        }
+
+    # ── 매매 비용 계산 ──────────────────────────────────
+
+    @staticmethod
+    def estimate_trading_cost(price: int, qty: int, side: str = "buy") -> dict:
+        """예상 매매 비용 계산 (수수료 + 제세공과금)
+
+        Args:
+            price: 주문가격
+            qty: 수량
+            side: "buy" 또는 "sell"
+
+        Returns:
+            {거래금액, 수수료, 증권거래세, 총비용, 순거래금액}
+        """
+        amount = price * qty
+        commission = int(amount * 0.00015)  # 수수료 0.015%
+
+        if side == "sell":
+            tax = int(amount * 0.0018)  # 증권거래세 0.18% (KOSPI)
+            total_cost = commission + tax
+            net_amount = amount - total_cost
+        else:
+            tax = 0
+            total_cost = commission
+            net_amount = amount + total_cost
+
+        return {
+            "거래금액": amount,
+            "수수료": commission,
+            "증권거래세": tax,
+            "총비용": total_cost,
+            "순거래금액": net_amount,
         }
 
     # ── 정리 ─────────────────────────────────────────────
