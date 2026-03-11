@@ -55,10 +55,16 @@ class BulletinAgent(BaseAgent):
             loop_interval=21600,  # 6시간마다 실행
             **kwargs,
         )
-        # SSL 검증 비활성화 (구린 사이트 대응)
-        self._ssl_ctx = ssl.create_default_context()
+        # SSL 검증 비활성화 + 구형 사이트 호환 (보안 레벨 낮춤)
+        self._ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         self._ssl_ctx.check_hostname = False
         self._ssl_ctx.verify_mode = ssl.CERT_NONE
+        try:
+            self._ssl_ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+        except ssl.SSLError:
+            pass
+        self._ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1
+        self._ssl_ctx.maximum_version = ssl.TLSVersion.TLSv1_3
 
     async def start(self):
         """에이전트 시작 — 테이블 확인만 하고 자동 루프는 실행하지 않음 (수동 전용)"""
@@ -200,6 +206,7 @@ class BulletinAgent(BaseAgent):
         """urllib로 URL 가져오기. 세션 쿠키 자동 처리. (content, headers) 반환"""
         parsed = urlparse(url)
         root_url = f"{parsed.scheme}://{parsed.netloc}/"
+        errors = []
 
         # 쿠키 자동 관리 opener
         cj = http.cookiejar.CookieJar()
@@ -212,6 +219,9 @@ class BulletinAgent(BaseAgent):
             req = urllib.request.Request(target_url)
             for k, v in HEADERS.items():
                 req.add_header(k, v)
+            # 추가 헤더 (구린 사이트 호환)
+            req.add_header("Connection", "keep-alive")
+            req.add_header("Upgrade-Insecure-Requests", "1")
             if referer:
                 req.add_header("Referer", referer)
             return req
@@ -225,16 +235,25 @@ class BulletinAgent(BaseAgent):
                 logger.info(f"[bulletin] 직접 접근 성공: {resp.status} ({len(content)}B)")
                 return content, headers
         except urllib.error.HTTPError as e:
-            logger.info(f"[bulletin] 직접 접근 {e.code} — 세션 쿠키 획득 후 재시도")
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                pass
+            errors.append(f"1차(직접): HTTP {e.code} {e.reason} body={body}")
+            logger.info(f"[bulletin] 직접 접근 HTTP {e.code}: {body[:100]}")
         except Exception as e:
-            logger.info(f"[bulletin] 직접 접근 실패: {e} — 세션 쿠키 획득 후 재시도")
+            errors.append(f"1차(직접): {type(e).__name__}: {e}")
+            logger.info(f"[bulletin] 직접 접근 실패: {e}")
 
         # 2차: 메인 페이지로 세션 쿠키 획득 후 재시도
         try:
             req = _make_request(root_url)
-            opener.open(req, timeout=10).read()
-        except Exception:
-            pass
+            with opener.open(req, timeout=10) as resp:
+                resp.read()
+                logger.info(f"[bulletin] 메인 페이지 접근 성공: {resp.status}, cookies={len(cj)}")
+        except Exception as e:
+            errors.append(f"2차(메인): {type(e).__name__}: {e}")
 
         try:
             req = _make_request(url, referer=root_url)
@@ -243,8 +262,15 @@ class BulletinAgent(BaseAgent):
                 headers = dict(resp.headers)
                 logger.info(f"[bulletin] 쿠키+Referer 재시도 성공: {resp.status} ({len(content)}B)")
                 return content, headers
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                pass
+            errors.append(f"2차(쿠키+Referer): HTTP {e.code} body={body}")
         except Exception as e:
-            logger.warning(f"[bulletin] 쿠키+Referer 재시도 실패: {e}")
+            errors.append(f"2차(쿠키+Referer): {type(e).__name__}: {e}")
 
         # 3차: HTTP 폴백
         if parsed.scheme == "https":
@@ -261,10 +287,18 @@ class BulletinAgent(BaseAgent):
                     headers = dict(resp.headers)
                     logger.info(f"[bulletin] HTTP 폴백 성공: {resp.status} ({len(content)}B)")
                     return content, headers
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8", errors="replace")[:200]
+                except Exception:
+                    pass
+                errors.append(f"3차(HTTP): HTTP {e.code} body={body}")
             except Exception as e:
-                logger.warning(f"[bulletin] HTTP 폴백 실패: {e}")
+                errors.append(f"3차(HTTP): {type(e).__name__}: {e}")
 
-        raise RuntimeError(f"모든 접근 방법 실패: {url}")
+        detail = "\n".join(errors)
+        raise RuntimeError(f"모든 접근 방법 실패:\n{detail}")
 
     # ── 게시판 스크래핑 ──────────────────────────────────
 
