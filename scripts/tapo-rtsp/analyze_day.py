@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from config import CAMERA_IP, CAMERA_USER, CAMERA_PASS, SAVE_DIR
 
 
-async def get_recordings_list(date_str: str):
+def get_recordings_list(date_str: str):
     """특정 날짜의 녹화 목록 조회"""
     from pytapo import Tapo
 
@@ -33,33 +33,28 @@ async def get_recordings_list(date_str: str):
     print(f"{date_str} 녹화 목록 조회 중...")
     try:
         recordings = tapo.getRecordings(date_compact)
-        return recordings
+        return tapo, recordings
     except Exception as e:
         print(f"녹화 목록 조회 실패: {e}")
-        return None
+        return tapo, None
 
 
-async def download_recordings(date_str: str, output_dir: str = None):
+def download_recordings(date_str: str, output_dir: str = None):
     """특정 날짜의 녹화본 다운로드"""
-    from pytapo import Tapo
     from pytapo.media_stream.downloader import Downloader
 
     if not output_dir:
         output_dir = os.path.join(SAVE_DIR, date_str)
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"카메라 연결 중 ({CAMERA_IP})...")
-    tapo = Tapo(CAMERA_IP, CAMERA_USER, CAMERA_PASS)
-
-    year, month, day = date_str.split("-")
-    date_compact = f"{year}{month}{day}"
-
-    print(f"{date_str} 녹화 목록 조회 중...")
-    recordings = tapo.getRecordings(date_compact)
+    tapo, recordings = get_recordings_list(date_str)
 
     if not recordings:
         print("해당 날짜에 녹화본이 없습니다.")
         return []
+
+    year, month, day = date_str.split("-")
+    date_compact = f"{year}{month}{day}"
 
     # 녹화 세그먼트 정보 출력
     segments = []
@@ -81,26 +76,28 @@ async def download_recordings(date_str: str, output_dir: str = None):
     print(f"\n녹화본 다운로드 시작 → {output_dir}")
     downloaded_files = []
 
-    window_size = 50  # 동시 다운로드 수
+    window_size = 50
 
-    async def download_callback(current, total, file_path):
-        if current == total:
-            print(f"  완료: {os.path.basename(file_path)}")
-            downloaded_files.append(file_path)
+    async def _do_download():
+        async def download_callback(current, total, file_path):
+            if current == total:
+                print(f"  완료: {os.path.basename(file_path)}")
+                downloaded_files.append(file_path)
 
-    try:
-        downloader = Downloader(
-            tapo,
-            date_compact,
-            2,  # 저화질 (1=고화질, 분석용이니 저화질로)
-            output_dir,
-            None,  # fileName prefix
-            window_size
-        )
-        await downloader.download(download_callback)
-    except Exception as e:
-        print(f"다운로드 중 오류: {e}")
+        try:
+            downloader = Downloader(
+                tapo,
+                date_compact,
+                2,  # 저화질 (분석용)
+                output_dir,
+                None,
+                window_size
+            )
+            await downloader.download(download_callback)
+        except Exception as e:
+            print(f"다운로드 중 오류: {e}")
 
+    asyncio.run(_do_download())
     return downloaded_files
 
 
@@ -250,22 +247,35 @@ def analyze_day(date_str: str, recordings_dir: str):
     print(f"\n분석 결과 저장: {result_path}")
 
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(description="Tapo 카메라 하루 활동 분석")
     parser.add_argument("--date", "-d", default="2026-03-11",
                         help="분석할 날짜 (YYYY-MM-DD, 기본 2026-03-11)")
     parser.add_argument("--skip-download", action="store_true",
                         help="다운로드 건너뛰기 (이미 다운로드한 경우)")
     parser.add_argument("--output", "-o", help="저장 폴더 경로")
+    parser.add_argument("--list-only", action="store_true",
+                        help="녹화 목록만 조회 (다운로드 안 함)")
 
     args = parser.parse_args()
     output_dir = args.output or os.path.join(SAVE_DIR, args.date)
 
+    if args.list_only:
+        _, recs = get_recordings_list(args.date)
+        if recs:
+            total = 0
+            for r in recs:
+                for v in r.get("searchVideoResult", {}).get("video", []):
+                    print(f"  {v.get('startTime')} ~ {v.get('endTime')}")
+                    total += 1
+            print(f"\n총 {total}개 세그먼트")
+        return
+
     if not args.skip_download:
-        await download_recordings(args.date, output_dir)
+        download_recordings(args.date, output_dir)
 
     analyze_day(args.date, output_dir)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
