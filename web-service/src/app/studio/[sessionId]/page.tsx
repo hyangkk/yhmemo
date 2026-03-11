@@ -168,7 +168,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
         {/* 플로팅 녹화 컨트롤 (호스트) */}
         {isHost && !uploading && (
-          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+          <div className="absolute top-4 left-0 right-0 flex justify-center z-10">
             {recordingSignal !== 'start' ? (
               <button
                 onClick={handleStartRecording}
@@ -191,7 +191,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
         {/* 비호스트: 대기 플로팅 */}
         {!isHost && !uploading && recordingSignal === 'idle' && (
-          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+          <div className="absolute top-4 left-0 right-0 flex justify-center z-10">
             <div className="bg-gray-800/80 px-5 py-2.5 rounded-full text-gray-400 text-sm backdrop-blur-sm">
               호스트가 녹화를 시작할 때까지 대기 중...
             </div>
