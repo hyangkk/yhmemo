@@ -282,8 +282,8 @@ def _check_ffmpeg() -> bool:
 # ── 서버 시작 (orchestrator에서 호출) ─────────────────
 
 def start_studio_server(port: int = 8000):
-    """별도 스레드에서 스튜디오 API 서버 시작"""
-    def _run():
+    """별도 스레드에서 스튜디오 API 서버 + 편집 폴링 루프 시작"""
+    def _run_server():
         try:
             print(f"[studio] API 서버 시작 시도 (port={port})", flush=True)
             logger.info(f"[studio] API 서버 시작 (port={port})")
@@ -292,7 +292,57 @@ def start_studio_server(port: int = 8000):
             print(f"[studio] API 서버 크래시: {e}", flush=True)
             logger.error(f"[studio] API 서버 크래시: {e}")
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    print(f"[studio] 스레드 시작됨 (alive={t.is_alive()})", flush=True)
-    return t
+    def _run_polling():
+        """DB 폴링: status='editing'인 세션을 자동 감지하여 편집 실행"""
+        import time
+        print("[studio] 편집 폴링 루프 시작", flush=True)
+        while True:
+            try:
+                time.sleep(10)  # 10초마다 체크
+                sb = _get_supabase()
+                # editing 상태이면서 아직 result가 없는 세션 찾기
+                sessions = sb.table("studio_sessions").select("id").eq("status", "editing").execute()
+                if not sessions.data:
+                    continue
+
+                for sess in sessions.data:
+                    sid = sess["id"]
+                    # 이미 처리 중인 result가 있는지 확인
+                    existing = sb.table("studio_results").select("id,status").eq("session_id", sid).execute()
+                    if existing.data and any(r["status"] == "processing" for r in existing.data):
+                        continue  # 이미 처리 중
+                    if existing.data and any(r["status"] == "done" for r in existing.data):
+                        # 결과는 있는데 세션이 아직 editing → done으로 전환
+                        sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
+                        continue
+
+                    # 클립 확인
+                    clips = sb.table("studio_clips").select("*").eq("session_id", sid).execute()
+                    if not clips.data:
+                        print(f"[studio] 세션 {sid}: 클립 없음, done으로 전환", flush=True)
+                        sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
+                        continue
+
+                    # 편집 시작
+                    print(f"[studio] 세션 {sid}: 편집 시작 ({len(clips.data)}개 클립)", flush=True)
+                    result = sb.table("studio_results").insert({
+                        "session_id": sid,
+                        "storage_path": "",
+                        "status": "processing",
+                    }).execute()
+                    result_id = result.data[0]["id"]
+
+                    # 동기적으로 편집 실행 (폴링 스레드에서)
+                    asyncio.run(process_edit(sid, result_id, clips.data, "auto"))
+                    print(f"[studio] 세션 {sid}: 편집 완료", flush=True)
+
+            except Exception as e:
+                print(f"[studio] 폴링 오류: {e}", flush=True)
+                logger.error(f"[studio] 폴링 오류: {e}")
+
+    t_server = threading.Thread(target=_run_server, daemon=True)
+    t_server.start()
+    t_polling = threading.Thread(target=_run_polling, daemon=True)
+    t_polling.start()
+    print(f"[studio] 스레드 시작됨 (server={t_server.is_alive()}, polling={t_polling.is_alive()})", flush=True)
+    return t_server
