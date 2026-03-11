@@ -82,7 +82,7 @@ class MarketInfoAgent(BaseAgent):
                 logger.warning(f"[market_info] DART_API_KEY 로드 실패: {e}")
         self._http = httpx.AsyncClient(timeout=15.0)
         self._cycle = 0
-        self._enabled = os.environ.get("MARKET_INFO_ENABLED", "true").lower() == "true"
+        self._enabled = os.environ.get("MARKET_INFO_ENABLED", "false").lower() == "true"
 
     def _hash(self, text: str) -> str:
         return hashlib.md5(text.encode()).hexdigest()
