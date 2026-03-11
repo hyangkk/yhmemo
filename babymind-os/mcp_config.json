@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "babymind-os": {
+      "command": "python",
+      "args": ["main.py", "--mcp"],
+      "cwd": "/path/to/babymind-os",
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "TAPO_USERNAME": "${TAPO_USERNAME}",
+        "TAPO_PASSWORD": "${TAPO_PASSWORD}",
+        "TAPO_CAMERA_IP": "${TAPO_CAMERA_IP}"
+      }
+    }
+  }
+}
