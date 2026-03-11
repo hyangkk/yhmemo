@@ -191,6 +191,14 @@ async def main():
     budget = os.environ.get("DAILY_AI_BUDGET_USD", "10.0")
     logger.info(f"Initializing services... (AI budget: ${budget}/day)")
 
+    # 스튜디오 API 서버 (별도 스레드)
+    try:
+        from studio_api import start_studio_server
+        start_studio_server(port=8000)
+        logger.info("Studio API 서버 시작됨 (port=8000)")
+    except Exception as e:
+        logger.warning(f"Studio API 서버 시작 실패 (무시): {e}")
+
     # Supabase
     supabase = create_client(config["SUPABASE_URL"], config["SUPABASE_SERVICE_ROLE_KEY"])
 

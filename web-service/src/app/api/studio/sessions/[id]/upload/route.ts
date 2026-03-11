@@ -68,7 +68,7 @@ export async function POST(
 
     if (allDone) {
       // 모든 업로드 완료 → Fly.io 편집 서버에 자동 편집 요청
-      const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmemo-studio.fly.dev';
+      const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmbp14.fly.dev';
       try {
         await fetch(`${studioServerUrl}/edit`, {
           method: 'POST',
