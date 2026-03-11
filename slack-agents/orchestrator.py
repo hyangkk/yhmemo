@@ -194,8 +194,17 @@ async def main():
     # 스튜디오 API 서버 (별도 스레드)
     try:
         from studio_api import start_studio_server
-        start_studio_server(port=8000)
-        logger.info("Studio API 서버 시작됨 (port=8000)")
+        import time as _time
+        studio_thread = start_studio_server(port=8000)
+        _time.sleep(2)  # uvicorn 시작 대기
+        logger.info(f"Studio API: thread_alive={studio_thread.is_alive()}")
+        # 로컬 health check
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen("http://localhost:8000/health", timeout=3)
+            logger.info(f"Studio API health: {resp.read().decode()}")
+        except Exception as hc_err:
+            logger.warning(f"Studio API health check 실패: {hc_err}")
     except Exception as e:
         logger.warning(f"Studio API 서버 시작 실패 (무시): {e}")
 
