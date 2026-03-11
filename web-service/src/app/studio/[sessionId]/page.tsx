@@ -75,7 +75,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     try { await sendSignal('stop'); } catch {}
   }, [sendSignal]);
 
-  // 녹화 완료 → 업로드 (ref 사용으로 stale closure 방지)
+  // 녹화 완료 → 업로드 (signed URL로 Supabase Storage 직접 업로드)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
     const goToResult = () => {
@@ -99,15 +99,27 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
       await supabase.from('studio_devices').update({ status: 'uploading' }).eq('id', device.id);
     } catch {}
 
-    try {
-      const formData = new FormData();
-      formData.append('video', blob, `camera-${device.camera_index}.webm`);
-      formData.append('deviceId', device.id);
-      formData.append('durationMs', durationMs.toString());
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
 
+    try {
+      // 1단계: 서버에서 signed upload URL 발급
+      const urlRes = await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phase: 'url', deviceId: device.id, ext }),
+      });
+
+      if (!urlRes.ok) {
+        throw new Error('signed URL 발급 실패');
+      }
+
+      const { signedUrl, token, storagePath } = await urlRes.json();
+
+      // 2단계: Supabase Storage에 직접 업로드 (Vercel body size 제한 우회)
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `/api/studio/sessions/${sessionId}/upload`);
-      xhr.timeout = 60000; // 60초 타임아웃
+      xhr.open('PUT', signedUrl);
+      xhr.setRequestHeader('Content-Type', blob.type);
+      xhr.timeout = 120000; // 120초 타임아웃 (대용량 파일 대비)
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -115,21 +127,40 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
         }
       };
 
-      const goToResultWithError = async () => {
-        try {
-          await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
-        } catch {}
+      const onUploadDone = async (success: boolean) => {
+        if (success) {
+          // 3단계: 업로드 완료 → 서버에 메타데이터 기록
+          try {
+            await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                phase: 'confirm',
+                deviceId: device.id,
+                durationMs,
+                fileSize: blob.size,
+                storagePath,
+              }),
+            });
+          } catch {}
+        } else {
+          try {
+            await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
+          } catch {}
+        }
         goToResult();
       };
 
-      xhr.onload = goToResult;
-      xhr.onerror = goToResultWithError;
-      xhr.ontimeout = goToResultWithError;
+      xhr.onload = () => onUploadDone(xhr.status >= 200 && xhr.status < 300);
+      xhr.onerror = () => onUploadDone(false);
+      xhr.ontimeout = () => onUploadDone(false);
 
-      xhr.send(formData);
+      xhr.send(blob);
     } catch {
-      setUploading(false);
-      router.push(`/studio/${sessionId}/result`);
+      try {
+        await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
+      } catch {}
+      goToResult();
     }
   }, [sessionId, router]);
 

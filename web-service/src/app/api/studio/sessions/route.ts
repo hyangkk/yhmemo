@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from('studio_sessions')
     .select('*')
-    .eq('code', code.toUpperCase())
+    .eq('code', code.trim())
     .single();
 
   if (error || !data) {
