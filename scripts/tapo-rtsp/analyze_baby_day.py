@@ -29,12 +29,26 @@ OUTPUT_DIR = "./baby_analysis"
 
 
 def connect_camera(ip, user, password):
-    """카메라 연결 (동기)"""
+    """카메라 연결 (동기) - 카메라 계정 → admin fallback 순서로 시도"""
     from pytapo import Tapo
-    print(f"카메라 연결 중 ({ip})...")
-    tapo = Tapo(ip, user, password, password)
-    print("연결 성공!")
-    return tapo
+    # 1차: 카메라 계정으로 시도
+    print(f"카메라 연결 중 ({ip}), 계정: {user}...")
+    try:
+        tapo = Tapo(ip, user, password, password)
+        print("연결 성공!")
+        return tapo
+    except Exception as e:
+        print(f"계정 '{user}' 실패: {e}")
+    # 2차: admin으로 fallback
+    if user != "admin":
+        print("admin 계정으로 재시도...")
+        try:
+            tapo = Tapo(ip, "admin", password, password)
+            print("admin 계정으로 연결 성공!")
+            return tapo
+        except Exception as e:
+            print(f"admin 계정도 실패: {e}")
+    raise Exception("카메라 인증 실패 - Tapo 앱에서 카메라 계정/비밀번호를 확인하세요")
 
 
 def get_recordings(tapo, date_str):
