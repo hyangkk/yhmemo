@@ -61,9 +61,11 @@ class BulletinAgent(BaseAgent):
         )
 
     async def start(self):
-        """에이전트 시작 시 테이블 자동 생성"""
+        """에이전트 시작 — 테이블 확인만 하고 자동 루프는 실행하지 않음 (수동 전용)"""
         await self._ensure_tables()
-        await super().start()
+        self._running = True
+        logger.info(f"[{self.name}] Agent registered (manual-only mode, no auto loop)")
+        # 자동 루프 실행하지 않음 — !게시판 명령어로만 실행
 
     async def _ensure_tables(self):
         """bulletin_boards, bulletin_posts 테이블이 없으면 생성"""
