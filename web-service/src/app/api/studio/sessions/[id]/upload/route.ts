@@ -68,30 +68,17 @@ export async function POST(
     const hasClips = allDevices?.some(d => d.status === 'done');
 
     if (allFinished && hasClips) {
-      // 세션 상태를 'editing'으로 업데이트
+      // 세션 상태를 'editing'으로 업데이트 → Fly.io 편집 서버가 DB 폴링으로 자동 감지
       await supabase
         .from('studio_sessions')
         .update({ status: 'editing', updated_at: new Date().toISOString() })
         .eq('id', sessionId);
-
-      // 업로드된 클립이 1개 이상이면 편집 서버에 요청
-      const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmbp14.fly.dev';
-      try {
-        const editRes = await fetch(`${studioServerUrl}/edit`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, mode: 'auto' }),
-          signal: AbortSignal.timeout(10000), // 10초 타임아웃
-        });
-        if (!editRes.ok) throw new Error(`편집 서버 응답 오류: ${editRes.status}`);
-      } catch (editErr) {
-        console.error('편집 서버 호출 실패:', editErr);
-        // 편집 서버 실패 시 done으로 전환 (개별 클립 다운로드 제공)
-        await supabase
-          .from('studio_sessions')
-          .update({ status: 'done', updated_at: new Date().toISOString() })
-          .eq('id', sessionId);
-      }
+    } else if (allFinished && !hasClips) {
+      // 모든 디바이스 실패 → done으로 전환
+      await supabase
+        .from('studio_sessions')
+        .update({ status: 'done', updated_at: new Date().toISOString() })
+        .eq('id', sessionId);
     }
 
     return NextResponse.json({ clip, allUploaded: allFinished });
