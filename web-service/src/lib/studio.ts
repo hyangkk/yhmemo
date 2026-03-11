@@ -38,14 +38,10 @@ export interface StudioResult {
   created_at: string;
 }
 
-// 6자리 참여 코드 생성
+// 2자리 숫자 참여 코드 생성 (00~99)
 export function generateSessionCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 혼동 방지: O,0,I,1 제외
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
+  const num = Math.floor(Math.random() * 100);
+  return num.toString().padStart(2, '0');
 }
 
 // 디바이스 이름 자동 생성

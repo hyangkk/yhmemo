@@ -34,7 +34,7 @@ export default function StudioPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/studio/sessions?code=${joinCode.toUpperCase()}`);
+      const res = await fetch(`/api/studio/sessions?code=${joinCode.trim()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       router.push(`/studio/${data.id}`);
@@ -89,15 +89,17 @@ export default function StudioPage() {
           <h2 className="text-lg font-semibold">코드로 참여</h2>
           <input
             type="text"
-            placeholder="6자리 참여 코드"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            placeholder="참여 코드 (2자리)"
             value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
-            maxLength={6}
-            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-center text-2xl tracking-[0.3em] font-mono placeholder-gray-500 placeholder:text-base placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
+            onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
+            maxLength={2}
+            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-center text-4xl tracking-[0.5em] font-mono placeholder-gray-500 placeholder:text-base placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button
             onClick={joinSession}
-            disabled={loading || joinCode.length < 6}
+            disabled={loading || joinCode.length < 2}
             className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white font-semibold py-3 rounded-xl transition"
           >
             {loading ? '참여 중...' : '세션 참여하기'}
