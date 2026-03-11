@@ -284,9 +284,15 @@ def _check_ffmpeg() -> bool:
 def start_studio_server(port: int = 8000):
     """별도 스레드에서 스튜디오 API 서버 시작"""
     def _run():
-        logger.info(f"[studio] API 서버 시작 (port={port})")
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+        try:
+            print(f"[studio] API 서버 시작 시도 (port={port})", flush=True)
+            logger.info(f"[studio] API 서버 시작 (port={port})")
+            uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        except Exception as e:
+            print(f"[studio] API 서버 크래시: {e}", flush=True)
+            logger.error(f"[studio] API 서버 크래시: {e}")
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
+    print(f"[studio] 스레드 시작됨 (alive={t.is_alive()})", flush=True)
     return t
