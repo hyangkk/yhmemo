@@ -1,122 +1,113 @@
 #!/usr/bin/env python3
 """
-Tapo 카메라 녹화본 다운로드 및 아기 활동 분석
+Tapo 카메라 RTSP 기반 하루 활동 분석
 
-3월 11일 하루 동안의 녹화본을 다운로드하고,
-시간대별 움직임을 분석합니다.
+pytapo 대신 ffmpeg + RTSP로 직접 녹화/분석합니다.
+시간대별로 짧은 샘플을 캡처하여 움직임을 분석합니다.
 
 사용법:
-  # 맥북에서 실행 (pip3 install pytapo opencv-python-headless 필요)
-  python3 analyze_day.py --date 2026-03-11
+  # venv 활성화 후 (pip install opencv-python-headless)
+  python3 analyze_day.py                    # 현재 시점부터 샘플 캡처 + 분석
+  python3 analyze_day.py --hours 12         # 최근 12시간 분석
+  python3 analyze_day.py --analyze-only     # 이미 캡처된 파일만 분석
 """
 
 import argparse
-import asyncio
+import glob
 import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
-from config import CAMERA_IP, CAMERA_USER, CAMERA_PASS, SAVE_DIR
+from config import CAMERA_IP, CAMERA_USER, CAMERA_PASS, RTSP_PORT, SAVE_DIR
 
 
-def get_recordings_list(date_str: str):
-    """특정 날짜의 녹화 목록 조회"""
-    from pytapo import Tapo
+RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:{RTSP_PORT}/stream2"
 
-    print(f"카메라 연결 중 ({CAMERA_IP})...")
-    tapo = Tapo(CAMERA_IP, CAMERA_USER, CAMERA_PASS)
 
-    year, month, day = date_str.split("-")
-    date_compact = f"{year}{month}{day}"
-
-    print(f"{date_str} 녹화 목록 조회 중...")
+def capture_sample(output_path: str, duration: int = 30):
+    """RTSP에서 짧은 샘플 캡처"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-rtsp_transport", "tcp",
+        "-i", RTSP_URL,
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-an",  # 오디오 제외 (분석용)
+        "-f", "mp4",
+        "-movflags", "+faststart",
+        output_path
+    ]
     try:
-        recordings = tapo.getRecordings(date_compact)
-        return tapo, recordings
-    except Exception as e:
-        print(f"녹화 목록 조회 실패: {e}")
-        return tapo, None
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 30)
+        if result.returncode == 0 and os.path.exists(output_path):
+            size_kb = os.path.getsize(output_path) / 1024
+            return True
+        return False
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"    캡처 실패: {e}")
+        return False
 
 
-def download_recordings(date_str: str, output_dir: str = None):
-    """특정 날짜의 녹화본 다운로드"""
-    from pytapo.media_stream.downloader import Downloader
-
-    if not output_dir:
-        output_dir = os.path.join(SAVE_DIR, date_str)
+def capture_continuous(output_dir: str, chunk_minutes: int = 10, total_hours: float = 1):
+    """연속 캡처 (chunk 단위로 분할 저장)"""
     os.makedirs(output_dir, exist_ok=True)
 
-    tapo, recordings = get_recordings_list(date_str)
+    total_seconds = int(total_hours * 3600)
+    chunk_seconds = chunk_minutes * 60
+    num_chunks = max(1, total_seconds // chunk_seconds)
 
-    if not recordings:
-        print("해당 날짜에 녹화본이 없습니다.")
+    print(f"연속 캡처 시작: {total_hours}시간, {chunk_minutes}분 단위")
+    print(f"총 {num_chunks}개 청크 → {output_dir}\n")
+
+    captured = []
+    for i in range(num_chunks):
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(output_dir, f"chunk_{ts}.mp4")
+        print(f"  [{i+1}/{num_chunks}] 캡처 중... ({chunk_minutes}분)")
+
+        ok = capture_sample(output_path, chunk_seconds)
+        if ok:
+            size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"    저장: {os.path.basename(output_path)} ({size_mb:.1f}MB)")
+            captured.append(output_path)
+        else:
+            print(f"    실패, 건너뜀")
+
+    print(f"\n캡처 완료: {len(captured)}/{num_chunks}개 성공")
+    return captured
+
+
+def capture_snapshot_per_hour(output_dir: str, sample_duration: int = 60):
+    """현재 RTSP에서 1분짜리 샘플 1개 캡처 (테스트용)"""
+    os.makedirs(output_dir, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    hour = datetime.now().strftime("%H")
+    output_path = os.path.join(output_dir, f"sample_{hour}h_{ts}.mp4")
+
+    print(f"샘플 캡처 중 ({sample_duration}초)...")
+    ok = capture_sample(output_path, sample_duration)
+    if ok:
+        size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        print(f"저장: {output_path} ({size_mb:.1f}MB)")
+        return [output_path]
+    else:
+        print("캡처 실패. RTSP 연결을 확인하세요.")
+        print(f"  URL: {RTSP_URL}")
         return []
 
-    year, month, day = date_str.split("-")
-    date_compact = f"{year}{month}{day}"
 
-    # 녹화 세그먼트 정보 출력
-    segments = []
-    for rec_list in recordings:
-        for search_result in rec_list.get("searchVideoResult", {}).get("video", []):
-            start = search_result.get("startTime", "")
-            end = search_result.get("endTime", "")
-            segments.append({
-                "start": start,
-                "end": end,
-                "raw": search_result
-            })
-
-    print(f"\n총 {len(segments)}개 녹화 세그먼트 발견:")
-    for i, seg in enumerate(segments):
-        print(f"  [{i+1}] {seg['start']} ~ {seg['end']}")
-
-    # 다운로드
-    print(f"\n녹화본 다운로드 시작 → {output_dir}")
-    downloaded_files = []
-
-    window_size = 50
-
-    async def _do_download():
-        async def download_callback(current, total, file_path):
-            if current == total:
-                print(f"  완료: {os.path.basename(file_path)}")
-                downloaded_files.append(file_path)
-
-        try:
-            downloader = Downloader(
-                tapo,
-                date_compact,
-                2,  # 저화질 (분석용)
-                output_dir,
-                None,
-                window_size
-            )
-            await downloader.download(download_callback)
-        except Exception as e:
-            print(f"다운로드 중 오류: {e}")
-
-    asyncio.run(_do_download())
-    return downloaded_files
-
-
-def analyze_motion_in_video(video_path: str, sample_interval: int = 30):
-    """
-    비디오에서 움직임 수준을 분석
-
-    Args:
-        video_path: 비디오 파일 경로
-        sample_interval: 프레임 샘플링 간격 (초)
-
-    Returns:
-        시간대별 움직임 점수 리스트
-    """
+def analyze_motion_in_video(video_path: str, sample_interval: int = 5):
+    """비디오에서 움직임 수준을 분석"""
     try:
         import cv2
-        import numpy as np
     except ImportError:
-        print("opencv 미설치. pip3 install opencv-python-headless")
+        print("opencv 미설치. pip install opencv-python-headless")
         return []
 
     cap = cv2.VideoCapture(video_path)
@@ -127,7 +118,7 @@ def analyze_motion_in_video(video_path: str, sample_interval: int = 30):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps
 
-    frame_skip = int(fps * sample_interval)
+    frame_skip = max(1, int(fps * sample_interval))
     prev_gray = None
     motion_scores = []
 
@@ -159,17 +150,17 @@ def analyze_motion_in_video(video_path: str, sample_interval: int = 30):
     return motion_scores
 
 
-def analyze_day(date_str: str, recordings_dir: str):
-    """하루치 녹화본을 분석하여 활동 리포트 생성"""
-    import glob
-
-    video_files = sorted(glob.glob(os.path.join(recordings_dir, "*.mp4")))
+def analyze_videos(date_str: str, recordings_dir: str):
+    """폴더 내 비디오 파일들을 분석하여 활동 리포트 생성"""
+    video_files = sorted(
+        glob.glob(os.path.join(recordings_dir, "*.mp4"))
+    )
     if not video_files:
         print(f"분석할 비디오 파일이 없습니다: {recordings_dir}")
         return
 
     print(f"\n{'='*60}")
-    print(f" {date_str} 하루 활동 분석")
+    print(f"  {date_str} 활동 분석")
     print(f"{'='*60}")
     print(f"분석 대상: {len(video_files)}개 파일\n")
 
@@ -180,21 +171,27 @@ def analyze_day(date_str: str, recordings_dir: str):
         basename = os.path.basename(vf)
         print(f"분석 중 [{i+1}/{len(video_files)}]: {basename}")
 
-        # 파일명에서 시간 추출 시도
+        # 파일명에서 시간 추출 (sample_HHh_... 또는 chunk_YYYYMMDD_HHMMSS)
+        hour = -1
         try:
-            # pytapo 다운로드 파일명 형식에서 시간 파싱
-            parts = basename.replace(".mp4", "").split("_")
-            # 시간 정보가 파일명에 있으면 파싱
-            for part in parts:
-                if len(part) == 6 and part.isdigit():
-                    hour = int(part[:2])
-                    break
+            if "sample_" in basename:
+                # sample_14h_20260311_143000.mp4
+                hour = int(basename.split("_")[1].replace("h", ""))
+            elif "chunk_" in basename:
+                # chunk_20260311_143000.mp4
+                time_part = basename.split("_")[2]  # HHMMSS
+                hour = int(time_part[:2])
             else:
-                hour = -1
+                # 숫자 6자리 파트 찾기
+                parts = basename.replace(".mp4", "").split("_")
+                for part in parts:
+                    if len(part) == 6 and part.isdigit():
+                        hour = int(part[:2])
+                        break
         except (ValueError, IndexError):
-            hour = -1
+            pass
 
-        scores = analyze_motion_in_video(vf, sample_interval=10)
+        scores = analyze_motion_in_video(vf, sample_interval=5)
         for s in scores:
             s["file"] = basename
             if hour >= 0:
@@ -203,9 +200,15 @@ def analyze_day(date_str: str, recordings_dir: str):
                     hourly_activity[target_hour].append(s["score"])
         all_scores.extend(scores)
 
+    # 전체 활동 통계
+    if all_scores:
+        avg_all = sum(s["score"] for s in all_scores) / len(all_scores)
+        max_all = max(s["score"] for s in all_scores)
+        print(f"\n전체 평균 움직임: {avg_all:.1f}, 최대: {max_all:.1f}")
+
     # 시간대별 리포트
     print(f"\n{'='*60}")
-    print(f" 시간대별 활동량")
+    print(f"  시간대별 활동량")
     print(f"{'='*60}")
 
     activity_levels = []
@@ -220,7 +223,7 @@ def analyze_day(date_str: str, recordings_dir: str):
             print(f"  {hour:02d}:00  {bar:<40} 평균:{avg:.1f} 최대:{max_s:.1f} [{level}]")
             activity_levels.append({"hour": hour, "avg": avg, "max": max_s, "level": level})
         else:
-            print(f"  {hour:02d}:00  {'─' * 5} (녹화 없음)")
+            print(f"  {hour:02d}:00  {'─' * 5} (데이터 없음)")
 
     # 요약
     if activity_levels:
@@ -229,52 +232,70 @@ def analyze_day(date_str: str, recordings_dir: str):
         active_hours = [a for a in activity_levels if a["level"] in ("높음", "보통")]
 
         print(f"\n{'='*60}")
-        print(f" 요약")
+        print(f"  요약")
         print(f"{'='*60}")
-        print(f"  가장 활발한 시간: {peak_hour['hour']:02d}시 (활동점수 {peak_hour['avg']:.1f})")
+        print(f"  가장 활발한 시간: {peak_hour['hour']:02d}시 (점수 {peak_hour['avg']:.1f})")
         print(f"  활동적인 시간대: {len(active_hours)}시간")
         print(f"  조용한 시간대: {len(quiet_hours)}시간 (수면/휴식 추정)")
 
-    # 결과 JSON 저장
+    # JSON 저장
     result_path = os.path.join(recordings_dir, "analysis_result.json")
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump({
             "date": date_str,
             "total_files": len(video_files),
             "hourly_activity": activity_levels,
-            "motion_scores": all_scores[:100]  # 샘플만 저장
+            "motion_scores": all_scores[:200]
         }, f, ensure_ascii=False, indent=2)
-    print(f"\n분석 결과 저장: {result_path}")
+    print(f"\n결과 저장: {result_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tapo 카메라 하루 활동 분석")
-    parser.add_argument("--date", "-d", default="2026-03-11",
-                        help="분석할 날짜 (YYYY-MM-DD, 기본 2026-03-11)")
-    parser.add_argument("--skip-download", action="store_true",
-                        help="다운로드 건너뛰기 (이미 다운로드한 경우)")
-    parser.add_argument("--output", "-o", help="저장 폴더 경로")
-    parser.add_argument("--list-only", action="store_true",
-                        help="녹화 목록만 조회 (다운로드 안 함)")
+    parser = argparse.ArgumentParser(description="Tapo 카메라 RTSP 기반 활동 분석")
+    parser.add_argument("--date", "-d", default=datetime.now().strftime("%Y-%m-%d"),
+                        help="날짜 라벨 (기본: 오늘)")
+    parser.add_argument("--analyze-only", action="store_true",
+                        help="캡처 없이 기존 파일만 분석")
+    parser.add_argument("--output", "-o", help="저장 폴더")
+    parser.add_argument("--sample", type=int, default=0,
+                        help="테스트용 짧은 샘플 캡처 (초, 예: 60)")
+    parser.add_argument("--continuous", type=float, default=0,
+                        help="연속 캡처 시간 (시간 단위, 예: 2)")
+    parser.add_argument("--chunk", type=int, default=10,
+                        help="연속 캡처 시 청크 크기 (분, 기본 10)")
+    parser.add_argument("--test", action="store_true",
+                        help="RTSP 연결 테스트 (5초 캡처)")
 
     args = parser.parse_args()
     output_dir = args.output or os.path.join(SAVE_DIR, args.date)
 
-    if args.list_only:
-        _, recs = get_recordings_list(args.date)
-        if recs:
-            total = 0
-            for r in recs:
-                for v in r.get("searchVideoResult", {}).get("video", []):
-                    print(f"  {v.get('startTime')} ~ {v.get('endTime')}")
-                    total += 1
-            print(f"\n총 {total}개 세그먼트")
+    if args.test:
+        print("RTSP 연결 테스트 (5초)...")
+        os.makedirs(output_dir, exist_ok=True)
+        test_path = os.path.join(output_dir, "test.mp4")
+        ok = capture_sample(test_path, 5)
+        if ok:
+            size_kb = os.path.getsize(test_path) / 1024
+            print(f"성공! {size_kb:.0f}KB 캡처됨")
+        else:
+            print("실패. RTSP URL 확인:")
+            print(f"  {RTSP_URL}")
         return
 
-    if not args.skip_download:
-        download_recordings(args.date, output_dir)
+    if args.analyze_only:
+        analyze_videos(args.date, output_dir)
+        return
 
-    analyze_day(args.date, output_dir)
+    if args.sample > 0:
+        captured = capture_snapshot_per_hour(output_dir, args.sample)
+    elif args.continuous > 0:
+        captured = capture_continuous(output_dir, args.chunk, args.continuous)
+    else:
+        # 기본: 1분 샘플 캡처
+        captured = capture_snapshot_per_hour(output_dir, 60)
+
+    if captured:
+        analyze_videos(args.date, output_dir)
 
 
 if __name__ == "__main__":
