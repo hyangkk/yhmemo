@@ -18,7 +18,9 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
+import time
 from datetime import datetime
 
 # === 카메라 설정 (필요시 수정) ===
@@ -28,26 +30,46 @@ CAMERA_PASS = "asdfzxcv12@"  # Tapo 카메라 계정 비밀번호
 OUTPUT_DIR = "./baby_analysis"
 
 
-def connect_camera(ip, user, password):
-    """카메라 연결 (동기) - 카메라 계정 → admin fallback 순서로 시도"""
+def _try_connect(ip, user, password):
+    """단일 인증 시도. 성공 시 Tapo 객체, 실패 시 None + 에러메시지 반환."""
     from pytapo import Tapo
-    # 1차: 카메라 계정으로 시도
-    print(f"카메라 연결 중 ({ip}), 계정: {user}...")
     try:
         tapo = Tapo(ip, user, password, password)
+        return tapo, None
+    except Exception as e:
+        return None, str(e)
+
+
+def _parse_suspension_seconds(err_msg):
+    """'Temporary Suspension: Try again in N seconds'에서 N 추출."""
+    m = re.search(r"Try again in (\d+) seconds", err_msg)
+    return int(m.group(1)) if m else None
+
+
+def connect_camera(ip, user, password):
+    """카메라 연결 - 잠금 시 자동 대기 후 재시도"""
+    print(f"카메라 연결 중 ({ip}), 계정: {user}...")
+    tapo, err = _try_connect(ip, user, password)
+    if tapo:
         print("연결 성공!")
         return tapo
-    except Exception as e:
-        print(f"계정 '{user}' 실패: {e}")
-    # 2차: admin으로 fallback
-    if user != "admin":
-        print("admin 계정으로 재시도...")
-        try:
-            tapo = Tapo(ip, "admin", password, password)
-            print("admin 계정으로 연결 성공!")
+    print(f"계정 '{user}' 실패: {err}")
+
+    # 잠금(Temporary Suspension) 감지 → 대기 후 재시도
+    wait_sec = _parse_suspension_seconds(err or "")
+    if wait_sec:
+        wait_min = (wait_sec // 60) + 1
+        print(f"\n⏳ 카메라 로그인 잠금 감지 ({wait_sec}초 ≈ {wait_min}분)")
+        print(f"   이전 로그인 실패가 너무 많아 카메라가 일시 차단했습니다.")
+        print(f"   {wait_min}분 후 자동 재시도합니다... (Ctrl+C로 취소)")
+        time.sleep(wait_sec + 5)  # 여유 5초 추가
+        print("잠금 해제 시간 도래, 재연결 시도...")
+        tapo, err = _try_connect(ip, user, password)
+        if tapo:
+            print("연결 성공!")
             return tapo
-        except Exception as e:
-            print(f"admin 계정도 실패: {e}")
+        print(f"재시도 실패: {err}")
+
     raise Exception("카메라 인증 실패 - Tapo 앱에서 카메라 계정/비밀번호를 확인하세요")
 
 
