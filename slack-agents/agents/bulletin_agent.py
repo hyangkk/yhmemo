@@ -194,6 +194,54 @@ class BulletinAgent(BaseAgent):
 
         return await asyncio.to_thread(_sync_load)
 
+    # ── HTTP 요청 (세션 쿠키 대응) ──────────────────────
+
+    async def _fetch_with_session(self, url: str) -> httpx.Response:
+        """세션 쿠키가 필요한 사이트 대응: 메인 페이지 먼저 접근 후 타겟 URL 요청"""
+        parsed = urlparse(url)
+        root_url = f"{parsed.scheme}://{parsed.netloc}/"
+
+        # 매 요청마다 새 클라이언트 (쿠키 격리)
+        async with httpx.AsyncClient(
+            timeout=20.0,
+            follow_redirects=True,
+            headers=HEADERS,
+            verify=False,
+        ) as client:
+            # 1차: 직접 요청 시도
+            resp = await client.get(url)
+            if resp.status_code < 400:
+                return resp
+
+            logger.info(f"[bulletin] 직접 접근 {resp.status_code} — 세션 쿠키 획득 후 재시도")
+
+            # 2차: 메인 페이지로 세션 쿠키 획득 후 재시도
+            try:
+                await client.get(root_url)
+            except Exception:
+                pass  # 메인 페이지 실패해도 쿠키는 받았을 수 있음
+
+            # Referer 추가해서 재시도
+            resp = await client.get(url, headers={**HEADERS, "Referer": root_url})
+            if resp.status_code < 400:
+                return resp
+
+            # 3차: HTTP로 시도 (HTTPS→HTTP 폴백)
+            if parsed.scheme == "https":
+                http_url = url.replace("https://", "http://", 1)
+                http_root = root_url.replace("https://", "http://", 1)
+                try:
+                    await client.get(http_root)
+                    resp = await client.get(http_url, headers={**HEADERS, "Referer": http_root})
+                    if resp.status_code < 400:
+                        return resp
+                except Exception:
+                    pass
+
+            # 최종 실패 시 원본 응답 raise
+            resp.raise_for_status()
+            return resp  # unreachable but for type safety
+
     # ── 게시판 스크래핑 ──────────────────────────────────
 
     async def scrape_and_show(self, channel: str, thread_ts: str = None, max_posts: int = 5):
@@ -245,8 +293,7 @@ class BulletinAgent(BaseAgent):
         debug_info = ""
 
         try:
-            resp = await self._http.get(url)
-            resp.raise_for_status()
+            resp = await self._fetch_with_session(url)
         except Exception as e:
             logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
             return [], f"HTTP 오류: {e}"
