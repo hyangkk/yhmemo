@@ -222,7 +222,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
             새 촬영 시작
           </button>
           <button
-            onClick={() => router.push('/')}
+            onClick={() => router.push('/studio')}
             className="w-full bg-gray-800 hover:bg-gray-700 py-3 rounded-xl font-semibold transition"
           >
             홈으로 돌아가기
