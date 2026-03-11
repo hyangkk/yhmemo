@@ -2,7 +2,7 @@
 
 # 카메라 접속 정보
 CAMERA_IP = "172.30.1.79"
-CAMERA_USER = "yhtapo"
+CAMERA_USER = "admin"
 CAMERA_PASS = "asdfzxcv12@"
 RTSP_PORT = 554
 
