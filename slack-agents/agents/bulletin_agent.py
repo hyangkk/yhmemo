@@ -196,20 +196,64 @@ class BulletinAgent(BaseAgent):
 
     # ── 게시판 스크래핑 ──────────────────────────────────
 
-    async def _scrape_board(self, board: dict) -> list[dict]:
-        """게시판 HTML을 파싱하여 게시글 목록 추출"""
+    async def scrape_and_show(self, channel: str, thread_ts: str = None, max_posts: int = 5):
+        """게시판 스크래핑 후 결과를 바로 슬랙에 표시 (새 글 필터 없이)"""
+        boards = await self._load_boards()
+        if not boards:
+            await self._reply(channel, "등록된 게시판이 없습니다. `!게시판 등록 이름 URL`로 추가하세요.", thread_ts)
+            return
+
+        for board in boards:
+            try:
+                posts, debug_info = await self._scrape_board(board)
+                if posts:
+                    # 최근 N개만 표시
+                    display = posts[:max_posts]
+                    lines = [f"*:pushpin: [{board['name']}] 최근 게시글 (총 {len(posts)}건 중 {len(display)}건)*\n"]
+                    for p in display:
+                        title = p["title"]
+                        url = p.get("url", "")
+                        date = p.get("date", "")
+                        if url:
+                            lines.append(f"• <{url}|{title}>")
+                        else:
+                            lines.append(f"• {title}")
+                        if date:
+                            lines[-1] += f"  ({date})"
+                    lines.append(f"\n<{board['url']}|게시판 바로가기>")
+                    await self._reply(channel, "\n".join(lines), thread_ts)
+
+                    # 새 글만 저장
+                    new_posts = await self._filter_new_posts(board, posts)
+                    if new_posts:
+                        await self._save_posts(board, new_posts)
+                else:
+                    # 파싱 실패 — 디버그 정보 표시
+                    msg = f"*:warning: [{board['name']}] 게시글을 파싱하지 못했습니다.*\n"
+                    msg += f"URL: {board['url']}\n"
+                    if debug_info:
+                        msg += f"```{debug_info[:500]}```"
+                    await self._reply(channel, msg, thread_ts)
+            except Exception as e:
+                logger.error(f"[bulletin] {board['name']} 스크래핑 오류: {e}", exc_info=True)
+                await self._reply(channel, f":x: [{board['name']}] 오류: {e}", thread_ts)
+
+    async def _scrape_board(self, board: dict) -> tuple[list[dict], str]:
+        """게시판 HTML을 파싱하여 게시글 목록 추출. (posts, debug_info) 반환"""
         url = board["url"]
         parser_type = board.get("parser_type", "auto")
+        debug_info = ""
 
         try:
             resp = await self._http.get(url)
             resp.raise_for_status()
         except Exception as e:
             logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
-            return []
+            return [], f"HTTP 오류: {e}"
 
         # 인코딩 감지 및 처리
         html = self._decode_html(resp)
+        logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신")
 
         # BeautifulSoup 파싱
         from bs4 import BeautifulSoup
@@ -219,15 +263,39 @@ class BulletinAgent(BaseAgent):
 
         # 파서 타입에 따라 분기
         if parser_type == "table":
-            return self._parse_table_board(soup, base_url, board)
+            posts = self._parse_table_board(soup, base_url, board)
         elif parser_type == "list":
-            return self._parse_list_board(soup, base_url, board)
+            posts = self._parse_list_board(soup, base_url, board)
         else:
-            # auto: 테이블 먼저 시도, 실패하면 리스트
+            # auto: 테이블 → 리스트 → 링크 폴백
             posts = self._parse_table_board(soup, base_url, board)
             if not posts:
                 posts = self._parse_list_board(soup, base_url, board)
-            return posts
+            if not posts:
+                posts = self._parse_any_links(soup, base_url, board)
+
+        if not posts:
+            # 디버그: HTML 구조 힌트
+            tables = soup.find_all("table")
+            all_links = soup.find_all("a", href=True)
+            title_tag = soup.find("title")
+            page_title = title_tag.get_text(strip=True) if title_tag else "(제목 없음)"
+            debug_info = (
+                f"페이지 제목: {page_title}\n"
+                f"테이블: {len(tables)}개, 링크: {len(all_links)}개\n"
+                f"HTML 크기: {len(html)}자\n"
+            )
+            # 링크 샘플
+            link_samples = []
+            for a in all_links[:10]:
+                href = a.get("href", "")
+                text = a.get_text(strip=True)[:40]
+                if text:
+                    link_samples.append(f"  {text} → {href[:60]}")
+            if link_samples:
+                debug_info += "링크 샘플:\n" + "\n".join(link_samples)
+
+        return posts, debug_info
 
     def _decode_html(self, resp: httpx.Response) -> str:
         """응답 인코딩 자동 감지 (EUC-KR 사이트 대응)"""
@@ -458,6 +526,66 @@ class BulletinAgent(BaseAgent):
                     "date": date_str[:30],
                     "hash": content_hash,
                 })
+
+        return posts[:20]
+
+    def _parse_any_links(self, soup, base_url: str, board: dict) -> list[dict]:
+        """최후 폴백: 페이지 내 모든 링크에서 게시글 패턴 추출"""
+        posts = []
+        seen_titles = set()
+
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            text = a_tag.get_text(strip=True)
+
+            # 너무 짧거나 네비게이션 링크 제외
+            if len(text) < 4 or len(text) > 200:
+                continue
+            nav_keywords = ["홈", "로그인", "회원가입", "사이트맵", "메뉴", "이전", "다음",
+                            "처음", "마지막", "top", "home", "login", "prev", "next",
+                            "first", "last", "more", "목록", "닫기", "검색"]
+            if text.lower() in nav_keywords or text in seen_titles:
+                continue
+
+            # 게시글 링크 패턴: view, read, detail, content, idx, seq, no= 등
+            is_post_link = bool(re.search(
+                r"(view|read|detail|content|idx=|seq=|no=|num=|boardseq|articleseq|menuid.*groupid)",
+                href, re.I
+            ))
+            # 또는 같은 도메인의 .php/.do/.asp 링크
+            if not is_post_link:
+                is_post_link = bool(re.search(r"\.(php|do|asp|jsp)\?", href, re.I))
+
+            if not is_post_link:
+                continue
+
+            if not href.startswith("http"):
+                href = urljoin(base_url, href)
+
+            # 중복 제거
+            if text in seen_titles:
+                continue
+            seen_titles.add(text)
+
+            # 인접 요소에서 날짜 추출 시도
+            date_str = ""
+            parent = a_tag.parent
+            if parent:
+                parent_text = parent.get_text()
+                date_match = re.search(r"(\d{4}[-./]\d{1,2}[-./]\d{1,2})", parent_text)
+                if date_match:
+                    date_str = date_match.group(1)
+
+            content_hash = hashlib.sha256(
+                f"{board['id']}:{text}:{href}".encode()
+            ).hexdigest()[:16]
+
+            posts.append({
+                "title": text[:200],
+                "url": href,
+                "date": date_str,
+                "hash": content_hash,
+            })
 
         return posts[:20]
 
