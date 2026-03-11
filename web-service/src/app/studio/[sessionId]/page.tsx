@@ -166,6 +166,38 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           />
         )}
 
+        {/* 플로팅 녹화 컨트롤 (호스트) */}
+        {isHost && !uploading && (
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+            {recordingSignal !== 'start' ? (
+              <button
+                onClick={handleStartRecording}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-500 px-6 py-3 rounded-full font-semibold shadow-lg shadow-red-600/30 transition"
+              >
+                <div className="w-3 h-3 bg-white rounded-full" />
+                녹화 시작
+              </button>
+            ) : (
+              <button
+                onClick={handleStopRecording}
+                className="flex items-center gap-2 bg-gray-800/90 hover:bg-gray-700 px-6 py-3 rounded-full font-semibold shadow-lg transition"
+              >
+                <div className="w-3 h-3 bg-red-500 rounded-sm animate-pulse" />
+                녹화 종료
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 비호스트: 대기 플로팅 */}
+        {!isHost && !uploading && recordingSignal === 'idle' && (
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+            <div className="bg-gray-800/80 px-5 py-2.5 rounded-full text-gray-400 text-sm backdrop-blur-sm">
+              호스트가 녹화를 시작할 때까지 대기 중...
+            </div>
+          </div>
+        )}
+
         {/* 업로드 중 오버레이 */}
         {uploading && (
           <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10">
@@ -183,38 +215,6 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           </div>
         )}
       </div>
-
-      {/* 하단 컨트롤 (호스트) */}
-      {isHost && !uploading && (
-        <div className="flex-shrink-0 px-4 py-4 bg-gray-900/80 backdrop-blur-sm safe-area-bottom">
-          <div className="flex justify-center gap-4">
-            {recordingSignal !== 'start' ? (
-              <button
-                onClick={handleStartRecording}
-                className="flex items-center gap-2 bg-red-600 hover:bg-red-500 px-8 py-3 rounded-full font-semibold transition"
-              >
-                <div className="w-3 h-3 bg-white rounded-full" />
-                모든 카메라 녹화 시작
-              </button>
-            ) : (
-              <button
-                onClick={handleStopRecording}
-                className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-8 py-3 rounded-full font-semibold transition"
-              >
-                <div className="w-3 h-3 bg-red-500 rounded-sm" />
-                녹화 종료
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 비호스트: 대기 메시지 */}
-      {!isHost && !uploading && recordingSignal === 'idle' && (
-        <div className="flex-shrink-0 px-4 py-4 bg-gray-900/80 backdrop-blur-sm text-center safe-area-bottom">
-          <p className="text-gray-400">호스트가 녹화를 시작할 때까지 대기 중...</p>
-        </div>
-      )}
     </div>
   );
 }
