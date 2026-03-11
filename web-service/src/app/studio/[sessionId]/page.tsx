@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, use } from 'react';
+import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStudioSession } from '@/hooks/useStudioSession';
 import CameraView from '@/components/studio/CameraView';
-import DeviceList from '@/components/studio/DeviceList';
 
 export default function SessionRoomPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
@@ -25,13 +24,20 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploading, setUploading] = useState(false);
   const [joined, setJoined] = useState(false);
+  const joiningRef = useRef(false);
 
-  // 세션에 자동 참여
+  // myDevice를 ref로 추적 (stale closure 방지)
+  const myDeviceRef = useRef(myDevice);
+  useEffect(() => { myDeviceRef.current = myDevice; }, [myDevice]);
+
+  // 세션에 자동 참여 (이중 호출 방지)
   useEffect(() => {
-    if (sessionId && !joined && !loading && session) {
+    if (sessionId && !joined && !joiningRef.current && !loading && session) {
+      joiningRef.current = true;
       joinSession(sessionId).then((device) => {
         if (device) setJoined(true);
-      });
+        joiningRef.current = false;
+      }).catch(() => { joiningRef.current = false; });
     }
   }, [sessionId, joined, loading, session, joinSession]);
 
@@ -58,17 +64,23 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     setRecordingSignal('stop');
   }, [sendSignal]);
 
-  // 녹화 완료 → 업로드
+  // 녹화 완료 → 업로드 (ref 사용으로 stale closure 방지)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
-    if (!myDevice || !sessionId) return;
+    const device = myDeviceRef.current;
+    if (!device || !sessionId) return;
 
     setUploading(true);
-    await updateDeviceStatus('uploading');
+
+    // 디바이스 상태를 직접 업데이트 (ref의 최신값 사용)
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      await supabase.from('studio_devices').update({ status: 'uploading' }).eq('id', device.id);
+    } catch {}
 
     try {
       const formData = new FormData();
-      formData.append('video', blob, `camera-${myDevice.camera_index}.webm`);
-      formData.append('deviceId', myDevice.id);
+      formData.append('video', blob, `camera-${device.camera_index}.webm`);
+      formData.append('deviceId', device.id);
       formData.append('durationMs', durationMs.toString());
 
       const xhr = new XMLHttpRequest();
@@ -80,29 +92,22 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
         }
       };
 
-      xhr.onload = async () => {
-        if (xhr.status === 200) {
-          await updateDeviceStatus('done');
-          setUploading(false);
-          // 업로드 완료 후 결과 페이지로 이동 (호스트, 비호스트 모두)
-          router.push(`/studio/${sessionId}/result`);
-        } else {
-          await updateDeviceStatus('error');
-          setUploading(false);
-        }
+      xhr.onload = () => {
+        setUploading(false);
+        router.push(`/studio/${sessionId}/result`);
       };
 
-      xhr.onerror = async () => {
-        await updateDeviceStatus('error');
+      xhr.onerror = () => {
         setUploading(false);
+        router.push(`/studio/${sessionId}/result`);
       };
 
       xhr.send(formData);
     } catch {
-      await updateDeviceStatus('error');
       setUploading(false);
+      router.push(`/studio/${sessionId}/result`);
     }
-  }, [myDevice, sessionId, updateDeviceStatus, router]);
+  }, [sessionId, router]);
 
   if (loading) {
     return (

@@ -58,16 +58,17 @@ export async function POST(
       .update({ status: 'done' })
       .eq('id', deviceId);
 
-    // 모든 디바이스 업로드 완료 여부 확인
+    // 모든 디바이스 업로드 완료 여부 확인 (done 또는 error = 업로드 시도 완료)
     const { data: allDevices } = await supabase
       .from('studio_devices')
       .select('status')
       .eq('session_id', sessionId);
 
-    const allDone = allDevices?.every(d => d.status === 'done');
+    const allFinished = allDevices?.every(d => d.status === 'done' || d.status === 'error');
+    const hasClips = allDevices?.some(d => d.status === 'done');
 
-    if (allDone) {
-      // 모든 업로드 완료 → Fly.io 편집 서버에 자동 편집 요청
+    if (allFinished && hasClips) {
+      // 업로드된 클립이 1개 이상이면 편집 서버에 요청
       const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmbp14.fly.dev';
       try {
         await fetch(`${studioServerUrl}/edit`, {
@@ -77,11 +78,10 @@ export async function POST(
         });
       } catch (editErr) {
         console.error('편집 서버 호출 실패:', editErr);
-        // 편집 서버 호출 실패해도 업로드는 성공으로 처리
       }
     }
 
-    return NextResponse.json({ clip, allUploaded: allDone });
+    return NextResponse.json({ clip, allUploaded: allFinished });
   } catch {
     return NextResponse.json({ error: '업로드 처리 실패' }, { status: 500 });
   }
