@@ -53,7 +53,9 @@ def record_stream(rtsp_url: str, duration: int, output_path: str = None):
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-t", str(duration),
-        "-c:v", "copy",       # 비디오 재인코딩 없이 복사 (빠름)
+        "-c:v", "libx264",    # H.264로 변환 (macOS QuickTime 호환)
+        "-preset", "fast",    # 인코딩 속도 (fast/medium/slow)
+        "-crf", "23",         # 화질 (낮을수록 고화질, 18~28 권장)
         "-c:a", "aac",        # 오디오는 AAC로
         "-movflags", "+faststart",  # 웹 재생 호환
         output_path
