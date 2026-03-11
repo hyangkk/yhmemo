@@ -157,11 +157,13 @@ export async function POST(
     const hasClips = allDevices?.some(d => d.status === 'done');
 
     if (allFinished && hasClips) {
+      // 세션 상태를 'editing'으로 업데이트 → Fly.io 편집 서버가 DB 폴링으로 자동 감지
       await supabase
         .from('studio_sessions')
         .update({ status: 'editing', updated_at: new Date().toISOString() })
         .eq('id', sessionId);
     } else if (allFinished && !hasClips) {
+      // 모든 디바이스 실패 → done으로 전환
       await supabase
         .from('studio_sessions')
         .update({ status: 'done', updated_at: new Date().toISOString() })
