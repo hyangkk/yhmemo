@@ -342,7 +342,16 @@ class BulletinAgent(BaseAgent):
                     await self._reply(channel, msg, thread_ts)
             except Exception as e:
                 logger.error(f"[bulletin] {board['name']} 스크래핑 오류: {e}", exc_info=True)
-                await self._reply(channel, f":x: [{board['name']}] 오류: {e}", thread_ts)
+                error_msg = str(e)
+                if "400" in error_msg or "403" in error_msg or "503" in error_msg:
+                    await self._reply(
+                        channel,
+                        f":x: [{board['name']}] 사이트 접근 차단됨 (HTTP {error_msg[:80]})\n"
+                        f"해외 IP 차단이 원인일 수 있습니다. 한국 서버에서 실행하거나 프록시 설정이 필요합니다.",
+                        thread_ts,
+                    )
+                else:
+                    await self._reply(channel, f":x: [{board['name']}] 오류: {e}", thread_ts)
 
     async def _scrape_board(self, board: dict) -> tuple[list[dict], str]:
         """게시판 HTML을 파싱하여 게시글 목록 추출. (posts, debug_info) 반환"""
