@@ -67,11 +67,18 @@ export async function POST(
     const allDone = allDevices?.every(d => d.status === 'done');
 
     if (allDone) {
-      // 모든 업로드 완료 → 세션 상태를 editing으로 변경
-      await supabase
-        .from('studio_sessions')
-        .update({ status: 'editing', updated_at: new Date().toISOString() })
-        .eq('id', sessionId);
+      // 모든 업로드 완료 → Fly.io 편집 서버에 자동 편집 요청
+      const studioServerUrl = process.env.STUDIO_SERVER_URL || 'https://yhmemo-studio.fly.dev';
+      try {
+        await fetch(`${studioServerUrl}/edit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, mode: 'auto' }),
+        });
+      } catch (editErr) {
+        console.error('편집 서버 호출 실패:', editErr);
+        // 편집 서버 호출 실패해도 업로드는 성공으로 처리
+      }
     }
 
     return NextResponse.json({ clip, allUploaded: allDone });

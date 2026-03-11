@@ -9,10 +9,11 @@ export async function GET(
   const { id } = await params;
   const supabase = getServiceSupabase();
 
-  const [sessionRes, devicesRes, clipsRes] = await Promise.all([
+  const [sessionRes, devicesRes, clipsRes, resultsRes] = await Promise.all([
     supabase.from('studio_sessions').select('*').eq('id', id).single(),
     supabase.from('studio_devices').select('*').eq('session_id', id).order('camera_index'),
     supabase.from('studio_clips').select('*').eq('session_id', id),
+    supabase.from('studio_results').select('*').eq('session_id', id).order('created_at', { ascending: false }).limit(1),
   ]);
 
   if (sessionRes.error) {
@@ -23,6 +24,7 @@ export async function GET(
     session: sessionRes.data,
     devices: devicesRes.data || [],
     clips: clipsRes.data || [],
+    result: resultsRes.data?.[0] || null,
   });
 }
 

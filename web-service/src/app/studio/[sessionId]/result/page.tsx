@@ -2,12 +2,13 @@
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import type { StudioSession, StudioClip, StudioDevice } from '@/lib/studio';
+import type { StudioSession, StudioClip, StudioDevice, StudioResult } from '@/lib/studio';
 
 interface SessionData {
   session: StudioSession;
   devices: StudioDevice[];
   clips: StudioClip[];
+  result: StudioResult | null;
 }
 
 export default function ResultPage({ params }: { params: Promise<{ sessionId: string }> }) {
@@ -103,13 +104,29 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
-        {session.status === 'done' && (
-          <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-3">
+        {session.status === 'done' && data.result?.status === 'done' && (
+          <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-4">
             <div className="text-4xl">✅</div>
             <h2 className="text-lg font-semibold">편집 완료!</h2>
-            <button className="bg-green-600 hover:bg-green-500 px-6 py-3 rounded-xl font-semibold transition">
+            {data.result.duration_ms && (
+              <p className="text-gray-400 text-sm">
+                편집 영상 길이: {formatDuration(data.result.duration_ms)}
+              </p>
+            )}
+            <a
+              href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${data.result.storage_path}`}
+              download
+              className="inline-block bg-green-600 hover:bg-green-500 px-6 py-3 rounded-xl font-semibold transition"
+            >
               편집 영상 다운로드
-            </button>
+            </a>
+          </div>
+        )}
+        {session.status === 'done' && data.result?.status === 'error' && (
+          <div className="bg-red-900/30 border border-red-500/30 rounded-2xl p-6 text-center space-y-3">
+            <div className="text-4xl">⚠️</div>
+            <h2 className="text-lg font-semibold">편집 중 오류 발생</h2>
+            <p className="text-gray-400 text-sm">영상 편집에 실패했습니다. 각 클립은 아래에서 개별 다운로드 가능합니다.</p>
           </div>
         )}
 
@@ -134,7 +151,14 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     {formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}
                   </p>
                 </div>
-                <div className="text-green-400 text-sm">업로드 완료</div>
+                <a
+                  href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
+                  download
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-blue-400 hover:text-blue-300 text-sm underline"
+                >
+                  다운로드
+                </a>
               </button>
             ))}
           </div>
