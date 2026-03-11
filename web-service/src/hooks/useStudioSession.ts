@@ -158,14 +158,16 @@ export function useStudioSession(sessionId: string | null): UseStudioSessionRetu
   }, []);
 
   const sendSignal = useCallback(async (signal: 'start' | 'stop') => {
-    if (!channelRef.current) return;
-    channelRef.current.send({
-      type: 'broadcast',
-      event: 'signal',
-      payload: { signal, timestamp: Date.now() },
-    });
+    // Broadcast (best-effort - 채널이 없거나 에러 시 무시)
+    try {
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: { signal, timestamp: Date.now() },
+      });
+    } catch {}
 
-    // 세션 상태도 업데이트
+    // 세션 상태 업데이트 (DB에 기록 → Realtime postgres_changes로 게스트에게도 전달)
     if (sessionId) {
       const newStatus = signal === 'start' ? 'recording' : 'uploading';
       await supabase

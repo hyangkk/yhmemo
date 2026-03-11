@@ -42,7 +42,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     }
   }, [sessionId, joined, loading, session, joinSession]);
 
-  // 외부 시그널 수신 (비호스트)
+  // 외부 시그널 수신 (비호스트) - Broadcast + Realtime 세션 상태 폴백
   useEffect(() => {
     const handleSignal = (e: Event) => {
       const signal = (e as CustomEvent).detail.signal;
@@ -52,11 +52,21 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     return () => window.removeEventListener('studio-signal', handleSignal);
   }, []);
 
-  // 호스트: 녹화 시작
+  // 세션 상태 변경 감지 (Broadcast 못 받았을 때 폴백)
+  useEffect(() => {
+    if (!session) return;
+    if (session.status === 'recording' && recordingSignal === 'idle') {
+      setRecordingSignal('start');
+    } else if (session.status === 'uploading' && recordingSignal === 'start') {
+      setRecordingSignal('stop');
+    }
+  }, [session?.status, recordingSignal]);
+
+  // 호스트: 녹화 시작 (시그널 설정을 먼저, 네트워크 작업은 best-effort)
   const handleStartRecording = useCallback(async () => {
-    await sendSignal('start');
     setRecordingSignal('start');
-    await updateDeviceStatus('recording');
+    try { await sendSignal('start'); } catch {}
+    try { await updateDeviceStatus('recording'); } catch {}
   }, [sendSignal, updateDeviceStatus]);
 
   // 호스트: 녹화 종료 (시그널을 먼저 설정해서 CameraView가 즉시 녹화 중지)

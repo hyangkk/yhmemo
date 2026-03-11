@@ -45,8 +45,30 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
 
   // 외부 시그널 처리 (호스트 + 비호스트 모두)
   useEffect(() => {
-    if (externalRecordingSignal === 'start' && !isRecordingRef.current && streamRef.current) {
-      startRecordingRef.current();
+    if (externalRecordingSignal === 'start' && !isRecordingRef.current) {
+      // stream이 아직 없으면 잠시 대기 후 재시도
+      const tryStart = () => {
+        if (streamRef.current) {
+          startRecordingRef.current();
+        }
+      };
+
+      if (streamRef.current) {
+        tryStart();
+      } else {
+        // 카메라 초기화 대기 (최대 3초)
+        let attempts = 0;
+        const interval = setInterval(() => {
+          attempts++;
+          if (streamRef.current) {
+            clearInterval(interval);
+            startRecordingRef.current();
+          } else if (attempts >= 15) {
+            clearInterval(interval);
+          }
+        }, 200);
+        return () => clearInterval(interval);
+      }
     } else if (externalRecordingSignal === 'stop') {
       // stop은 isRecording 체크 없이 항상 시도 (stale closure 방지)
       (async () => {
