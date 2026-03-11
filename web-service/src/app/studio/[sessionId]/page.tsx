@@ -133,27 +133,46 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
   return (
     <div className="h-screen bg-black text-white flex flex-col">
-      {/* 상단 헤더 */}
-      <div className="flex-shrink-0 px-4 py-3 bg-gray-900/80 backdrop-blur-sm space-y-2 safe-area-top">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-semibold">{session.title}</h1>
-            <p className="text-gray-400 text-xs">참여 코드: <span className="font-mono text-white">{session.code}</span></p>
+      {/* 상단 헤더 - 컴팩트 1줄 + 녹화 버튼 */}
+      <div className="flex-shrink-0 px-3 py-2 bg-gray-900/80 backdrop-blur-sm safe-area-top">
+        <div className="flex items-center justify-between gap-2">
+          {/* 왼쪽: 세션 정보 */}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs text-gray-400 font-mono">{session.code}</span>
+            <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">{devices.length}대</span>
+            {isHost && <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">호스트</span>}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs bg-gray-800 px-2 py-1 rounded-full">
-              {devices.length}대 연결
-            </span>
-            {isHost && (
-              <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-1 rounded-full">
-                호스트
-              </span>
-            )}
-          </div>
-        </div>
 
-        {/* 디바이스 목록 */}
-        <DeviceList devices={devices} myDeviceId={myDevice?.id || null} />
+          {/* 오른쪽: 녹화 버튼 (호스트) / 상태 (비호스트) */}
+          {isHost && !uploading && (
+            recordingSignal !== 'start' ? (
+              <button
+                onClick={handleStartRecording}
+                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-4 py-2 rounded-full text-sm font-semibold transition"
+              >
+                <div className="w-2.5 h-2.5 bg-white rounded-full" />
+                녹화 시작
+              </button>
+            ) : (
+              <button
+                onClick={handleStopRecording}
+                className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-full text-sm font-semibold transition"
+              >
+                <div className="w-2.5 h-2.5 bg-red-500 rounded-sm animate-pulse" />
+                녹화 종료
+              </button>
+            )
+          )}
+          {!isHost && !uploading && recordingSignal === 'idle' && (
+            <span className="text-xs text-gray-500">대기 중...</span>
+          )}
+          {!isHost && recordingSignal === 'start' && (
+            <span className="flex items-center gap-1 text-xs text-red-400">
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              녹화 중
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 카메라 뷰 (전체 화면) */}
@@ -164,38 +183,6 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
             isHost={isHost}
             externalRecordingSignal={recordingSignal}
           />
-        )}
-
-        {/* 플로팅 녹화 컨트롤 (호스트) */}
-        {isHost && !uploading && (
-          <div className="absolute top-4 left-0 right-0 flex justify-center z-10">
-            {recordingSignal !== 'start' ? (
-              <button
-                onClick={handleStartRecording}
-                className="flex items-center gap-2 bg-red-600 hover:bg-red-500 px-6 py-3 rounded-full font-semibold shadow-lg shadow-red-600/30 transition"
-              >
-                <div className="w-3 h-3 bg-white rounded-full" />
-                녹화 시작
-              </button>
-            ) : (
-              <button
-                onClick={handleStopRecording}
-                className="flex items-center gap-2 bg-gray-800/90 hover:bg-gray-700 px-6 py-3 rounded-full font-semibold shadow-lg transition"
-              >
-                <div className="w-3 h-3 bg-red-500 rounded-sm animate-pulse" />
-                녹화 종료
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* 비호스트: 대기 플로팅 */}
-        {!isHost && !uploading && recordingSignal === 'idle' && (
-          <div className="absolute top-4 left-0 right-0 flex justify-center z-10">
-            <div className="bg-gray-800/80 px-5 py-2.5 rounded-full text-gray-400 text-sm backdrop-blur-sm">
-              호스트가 녹화를 시작할 때까지 대기 중...
-            </div>
-          </div>
         )}
 
         {/* 업로드 중 오버레이 */}
