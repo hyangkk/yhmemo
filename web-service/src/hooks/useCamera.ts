@@ -48,16 +48,27 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   const startCameraWithFacing = useCallback(async (facing: 'user' | 'environment') => {
     try {
       setError(null);
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: facing,
-          width: { ideal: width },
-          height: { ideal: height },
-        },
-        audio: true,
-      };
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      // 고해상도 → 저해상도 → 최소 순으로 시도
+      const constraintsList: MediaStreamConstraints[] = [
+        { video: { facingMode: facing, width: { ideal: width }, height: { ideal: height } }, audio: true },
+        { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
+        { video: { facingMode: facing }, audio: true },
+        { video: true, audio: true },
+      ];
+
+      let mediaStream: MediaStream | null = null;
+      for (const constraints of constraintsList) {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch {
+          continue;
+        }
+      }
+
+      if (!mediaStream) throw new Error('카메라를 시작할 수 없습니다');
+
       setStream(mediaStream);
       cameraActiveRef.current = true;
 
