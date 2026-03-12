@@ -376,7 +376,8 @@ class SwingTraderAgent(BaseAgent):
                 f"  {name}({code}): {h['잔고수량']}주 평단{h['매입단가']:,} "
                 f"현재{h['현재가']:,} 수익률{h['수익률']:+.1f}% 추세:{trend}"
             )
-        cash = total_asset - total_held
+        # 예수금이 있으면 사용, 없으면 fallback 계산
+        cash = summary.get("예수금", 0) or summary.get("주문가능금액", 0) or (total_asset - total_held)
 
         # 시세 정리
         price_lines = []
@@ -465,8 +466,9 @@ class SwingTraderAgent(BaseAgent):
                     existing_val = existing.get("현재가", 0) * existing.get("잔고수량", 0) if existing else 0
                     if amount + existing_val > max_per_stock:
                         continue
-                    if amount > cash:
-                        qty = int(cash * 0.95 / price)
+                    orderable = summary.get("주문가능금액", 0) or cash
+                    if amount > orderable:
+                        qty = int(orderable * 0.95 / price)
                         if qty <= 0:
                             continue
 

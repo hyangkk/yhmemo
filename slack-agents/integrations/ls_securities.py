@@ -315,10 +315,52 @@ class LSSecuritiesClient:
         resp.raise_for_status()
         return resp.json().get("t1102OutBlock", {})
 
+    # ── 예수금/총평가 조회 ─────────────────────────────────
+
+    async def _get_deposit_info(self) -> dict:
+        """예수금/주문가능금액/총평가 조회 (CSPAQ22200)
+
+        Returns:
+            dict with deposit/cash info, or empty dict on failure.
+        """
+        try:
+            url = f"{self.base_url}/stock/accno"
+            resp = await self._http.post(
+                url,
+                headers=self._auth_header("CSPAQ22200"),
+                json={
+                    "CSPAQ22200InBlock1": {
+                        "RecCnt": 1,
+                        "AcntNo": self.account_no,
+                        "Pwd": self.account_pwd,
+                        "BalCreTp": "0",
+                    }
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            block2 = data.get("CSPAQ22200OutBlock2", {})
+            return {
+                "예탁자산총액": int(block2.get("DpsastTotamt", 0)),
+                "예수금": int(block2.get("Dps", 0)),
+                "D2예수금": int(block2.get("D2Dps", 0)),
+                "총평가금액": int(block2.get("TotEvluAmt", 0)),
+                "현금주문가능": int(block2.get("MnyOrdAbleAmt", 0)),
+                "투자원금": int(block2.get("InvstOrgAmt", 0)),
+                "투자손익": int(block2.get("InvstPlAmt", 0)),
+                "손익률": float(block2.get("PnlRat", 0)),
+            }
+        except Exception as e:
+            logger.warning(f"[ls] 예수금 조회 실패 (CSPAQ22200): {e}")
+            return {}
+
     # ── 잔고 조회 ────────────────────────────────────────
 
     async def get_balance(self) -> dict:
-        """주식 잔고 조회 (t0424)
+        """주식 잔고 조회 (t0424 + CSPAQ22200)
+
+        t0424로 보유종목 조회 + CSPAQ22200으로 예수금/총평가 조회.
+        추정순자산 = 예탁자산총액 (CSPAQ22200) 우선, fallback으로 t0424.
 
         Returns:
             dict with account balance info. 실패 시 캐시된 잔고 반환.
@@ -326,6 +368,8 @@ class LSSecuritiesClient:
         try:
             await self._ensure_token()
             url = f"{self.base_url}/stock/accno"
+
+            # t0424: 보유종목 리스트
             resp = await self._http.post(
                 url,
                 headers=self._auth_header("t0424"),
@@ -342,27 +386,58 @@ class LSSecuritiesClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            summary = data.get("t0424OutBlock", {})
+            t0424_summary = data.get("t0424OutBlock", {})
             holdings = data.get("t0424OutBlock1", [])
+
+            # CSPAQ22200: 예수금/총평가 (정확한 추정순자산)
+            deposit_info = await self._get_deposit_info()
+
+            # 보유종목 평가금액 합산
+            parsed_holdings = []
+            stock_eval_total = 0
+            for h in holdings:
+                qty = int(h.get("janqty", 0))
+                price = int(h.get("price", 0))
+                stock_eval_total += qty * price
+                parsed_holdings.append({
+                    "종목코드": h.get("expcode", ""),
+                    "종목명": h.get("jangname", ""),
+                    "잔고수량": qty,
+                    "매입단가": int(h.get("pamt", 0)),
+                    "현재가": price,
+                    "평가금액": qty * price,
+                    "평가손익": int(h.get("dtsunik", 0)),
+                    "수익률": float(h.get("sunikrt", 0)),
+                })
+
+            # 추정순자산 계산: CSPAQ22200 우선, fallback t0424
+            if deposit_info.get("예탁자산총액", 0) > 0:
+                net_asset = deposit_info["예탁자산총액"]
+                cash = deposit_info.get("D2예수금", 0) or deposit_info.get("예수금", 0)
+                total_buy = deposit_info.get("투자원금", 0) or int(t0424_summary.get("mamt", 0))
+                pnl = deposit_info.get("투자손익", 0) or int(t0424_summary.get("dtsunik", 0))
+                pnl_rate = deposit_info.get("손익률", 0) or float(t0424_summary.get("sunamt1", 0))
+                orderable = deposit_info.get("현금주문가능", 0)
+            else:
+                # CSPAQ22200 실패 시 t0424 fallback
+                net_asset = int(t0424_summary.get("sunamt", 0))
+                cash = net_asset - stock_eval_total
+                total_buy = int(t0424_summary.get("mamt", 0))
+                pnl = int(t0424_summary.get("dtsunik", 0))
+                pnl_rate = float(t0424_summary.get("sunamt1", 0))
+                orderable = cash
+
             result = {
                 "summary": {
-                    "추정순자산": int(summary.get("sunamt", 0)),
-                    "총매입금액": int(summary.get("mamt", 0)),
-                    "추정손익": int(summary.get("dtsunik", 0)),
-                    "수익률": float(summary.get("sunamt1", 0)),
+                    "추정순자산": net_asset,
+                    "예수금": cash,
+                    "주문가능금액": orderable,
+                    "보유주식평가": stock_eval_total,
+                    "총매입금액": total_buy,
+                    "추정손익": pnl,
+                    "수익률": pnl_rate,
                 },
-                "holdings": [
-                    {
-                        "종목코드": h.get("expcode", ""),
-                        "종목명": h.get("jangname", ""),
-                        "잔고수량": int(h.get("janqty", 0)),
-                        "매입단가": int(h.get("pamt", 0)),
-                        "현재가": int(h.get("price", 0)),
-                        "평가손익": int(h.get("dtsunik", 0)),
-                        "수익률": float(h.get("sunikrt", 0)),
-                    }
-                    for h in holdings
-                ],
+                "holdings": parsed_holdings,
                 "cached": False,
             }
             # 성공 시 캐시 갱신

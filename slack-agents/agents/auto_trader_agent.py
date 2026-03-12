@@ -585,15 +585,18 @@ class AutoTraderAgent(BaseAgent):
 
         # 잔고 조회
         balance = await self.ls.get_balance()
-        pnl = balance.get("summary", {}).get("추정손익", 0)
-        total_asset = balance.get("summary", {}).get("추정순자산", 0)
+        summary = balance.get("summary", {})
+        pnl = summary.get("추정손익", 0)
+        total_asset = summary.get("추정순자산", 0)
+        cash = summary.get("예수금", 0)
+        stock_eval = summary.get("보유주식평가", 0)
 
         report = f"""📊 *[자율거래] {today} 일일 보고서*
 
 *거래 요약*
 - 총 거래: {total_trades}건 (매수 {len(buys)}건, 매도 {len(sells)}건)
 - 에러: {len(errors)}건
-- 추정순자산: {total_asset:,}원
+- 추정순자산: {total_asset:,}원 (예수금 {cash:,}원 + 주식 {stock_eval:,}원)
 - 추정손익: {pnl:,}원
 
 *거래 내역*"""
