@@ -95,7 +95,7 @@ class SwingTraderAgent(BaseAgent):
         self._last_report_hour = -1
         self._trade_log: list[dict] = []
         self._http = httpx.AsyncClient(timeout=15.0)
-        self._enabled = os.environ.get("SWING_TRADER_ENABLED", "true").lower() == "true"
+        self._enabled = os.environ.get("SWING_TRADER_ENABLED", "false").lower() == "true"
 
     def _now(self) -> datetime:
         return datetime.now(KST)
