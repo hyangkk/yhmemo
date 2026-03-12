@@ -585,6 +585,8 @@ async def main():
             else:
                 lines = [f"💰 *[{mode}] 계좌 잔고*"]
             lines.append(f"추정순자산: {summary.get('추정순자산', 0):,}원")
+            lines.append(f"  예수금: {summary.get('예수금', 0):,}원 | 주문가능: {summary.get('주문가능금액', 0):,}원")
+            lines.append(f"  보유주식평가: {summary.get('보유주식평가', 0):,}원")
             lines.append(f"총매입금액: {summary.get('총매입금액', 0):,}원")
             lines.append(f"추정손익: {summary.get('추정손익', 0):,}원")
             if holdings:
@@ -592,7 +594,8 @@ async def main():
                 for h in holdings:
                     pnl = h.get('평가손익', 0)
                     pnl_emoji = "🟢" if pnl >= 0 else "🔴"
-                    lines.append(f"{pnl_emoji} {h['종목명']} ({h['종목코드']}) | {h['잔고수량']}주 | 수익률: {h['수익률']:.1f}%")
+                    eval_amt = h.get('평가금액', h.get('현재가', 0) * h.get('잔고수량', 0))
+                    lines.append(f"{pnl_emoji} {h['종목명']} ({h['종목코드']}) | {h['잔고수량']}주 | {eval_amt:,}원 | 수익률: {h['수익률']:.1f}%")
             else:
                 lines.append("\n보유 종목이 없습니다.")
             await _reply(channel, "\n".join(lines), thread_ts)
