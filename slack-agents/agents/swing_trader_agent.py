@@ -279,17 +279,16 @@ class SwingTraderAgent(BaseAgent):
     async def think(self, ctx: dict) -> dict | None:
         is_market = ctx.get("is_market", False)
         is_pre = ctx.get("is_pre_market", False)
-        days_left = ctx.get("days_to_target", 99)
 
-        # 장중: 매매 판단
+        # 장중(09:00~15:30)에만 매매 판단
         if is_market:
             return await self._think_market(ctx)
 
-        # 프리마켓: 오픈 대응
+        # 프리마켓(08:45~09:05): 분석 보고만 (매매는 장 오픈 후)
         if is_pre:
             return await self._think_pre_market(ctx)
 
-        # 장외: 뉴스 분석 + 전략 수립
+        # 장외: 뉴스 분석만 (매매 없음)
         return await self._think_offhours(ctx)
 
     async def _think_market(self, ctx: dict) -> dict | None:
@@ -509,8 +508,13 @@ class SwingTraderAgent(BaseAgent):
             await self._analyze_overnight(decision)
 
     async def _execute_trades(self, actions: list[dict]):
-        """매매 주문 실행"""
+        """매매 주문 실행 (장중에만)"""
         if not self.ls or not self.ls.is_configured:
+            return
+
+        # 장중이 아니면 매매 금지 (모의투자 장외 체결 버그 방지)
+        if not self._is_market_hours():
+            logger.warning("[swing] 장외 시간 매매 시도 차단")
             return
 
         for action in actions:
@@ -615,21 +619,17 @@ class SwingTraderAgent(BaseAgent):
         await self.say("\n".join(lines), self.CHANNEL)
 
     async def _execute_pre_market(self, plan: dict):
-        """장 오픈 전 계획 실행"""
+        """장 오픈 전 분석 보고 (매매는 _execute_trades의 장중 체크가 보호)"""
         summary = plan.get("summary", "")
         trades = plan.get("trades", [])
 
         msg = f"🌅 *[프리마켓 분석]* D-{self._days_to_target()}\n{summary}"
         if trades:
-            msg += "\n\n계획된 거래:"
+            msg += "\n\n장 오픈 시 실행 예정:"
             for t in trades:
                 msg += f"\n  → {t.get('action','')} {STOCK_NAMES.get(t.get('code',''), t.get('code',''))} {t.get('qty','')}주: {t.get('reason','')}"
 
         await self.say(msg, self.CHANNEL)
-
-        # 장 오픈 후 실행 (09:01 이후)
-        if self._is_market_hours() and trades:
-            await self._execute_trades(trades)
 
     async def _analyze_overnight(self, decision: dict):
         """장외 뉴스 분석 + 전략 수립"""
