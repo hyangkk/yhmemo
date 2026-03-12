@@ -3,11 +3,15 @@
 import sys as _sys; _sys.stdout.reconfigure(line_buffering=True)  # GitHub Actions 로그 순서 보장
 """
 생각일기 이사회 에이전트
-- 최근 N시간 생각일기 항목 수집
-- 브리핑: 항목 수, 제목 목록, 주요 내용 요약
+- 매일 밤 10시(KST) 실행
+- 4개 구간 분석:
+  1. 오늘 글: 최근 24시간 작성 글
+  2. 어제 글: 24~48시간 전 작성 글
+  3. 그제 글: 48~72시간 전 작성 글
+  4. 과거 글: 최근 60개월 중 랜덤 1개
 - 이사회 멤버(Supabase에서 동적 로드)별 의견
 - 합의 사항 / 액션 아이템 도출
-- 텔레그램 발송 + Notion 이사회DB + Supabase 기록 저장
+- 슬랙/텔레그램 발송 + Notion 이사회DB + Supabase 기록 저장
 - 이사회 후 각 멤버의 personality 자동 업데이트
 - 텔레그램 커맨드: /생각일기 N시간 → 즉시 이사회 분석
 """
@@ -15,6 +19,7 @@ import sys as _sys; _sys.stdout.reconfigure(line_buffering=True)  # GitHub Actio
 import os
 import sys
 import json
+import random
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
@@ -184,6 +189,80 @@ def fetch_recent_pages(hours: int, database_id: str = "") -> list:
         sys.exit(1)
     return all_pages
 
+
+def fetch_pages_in_range(start_hours_ago: int, end_hours_ago: int, database_id: str) -> list:
+    """start_hours_ago ~ end_hours_ago 범위의 글을 조회 (예: 24~48이면 어제 글)"""
+    now_utc = datetime.now(timezone.utc)
+    after = (now_utc - timedelta(hours=end_hours_ago)).isoformat()
+    before = (now_utc - timedelta(hours=start_hours_ago)).isoformat()
+
+    filter_body = {
+        "filter": {
+            "and": [
+                {"timestamp": "created_time", "created_time": {"after": after}},
+                {"timestamp": "created_time", "created_time": {"on_or_before": before}},
+            ]
+        },
+        "sorts": [{"timestamp": "created_time", "direction": "descending"}],
+    }
+    all_pages = []
+    try:
+        while True:
+            req = urllib.request.Request(
+                f"https://api.notion.com/v1/databases/{database_id}/query",
+                data=json.dumps(filter_body).encode("utf-8"),
+                headers=notion_headers(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode())
+            all_pages.extend(data.get("results", []))
+            if not data.get("has_more"):
+                break
+            filter_body["start_cursor"] = data.get("next_cursor")
+    except urllib.error.HTTPError as e:
+        print(f"Notion API 오류 ({e.code}): {e.read().decode()}", file=sys.stderr)
+    return all_pages
+
+
+def fetch_random_old_page(database_id: str) -> list:
+    """최근 60개월(5년) 내 작성 글 중 랜덤 1개 추출 (최근 72시간 제외)"""
+    now_utc = datetime.now(timezone.utc)
+    after = (now_utc - timedelta(days=30 * 60)).isoformat()   # 60개월 전
+    before = (now_utc - timedelta(hours=72)).isoformat()       # 72시간 전
+
+    filter_body = {
+        "filter": {
+            "and": [
+                {"timestamp": "created_time", "created_time": {"after": after}},
+                {"timestamp": "created_time", "created_time": {"on_or_before": before}},
+            ]
+        },
+        "sorts": [{"timestamp": "created_time", "direction": "descending"}],
+        "page_size": 100,
+    }
+    all_pages = []
+    try:
+        while True:
+            req = urllib.request.Request(
+                f"https://api.notion.com/v1/databases/{database_id}/query",
+                data=json.dumps(filter_body).encode("utf-8"),
+                headers=notion_headers(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode())
+            all_pages.extend(data.get("results", []))
+            if not data.get("has_more"):
+                break
+            filter_body["start_cursor"] = data.get("next_cursor")
+    except urllib.error.HTTPError as e:
+        print(f"Notion API 오류 ({e.code}): {e.read().decode()}", file=sys.stderr)
+
+    if not all_pages:
+        return []
+    return [random.choice(all_pages)]
+
 def get_page_text(page_id: str) -> str:
     req = urllib.request.Request(
         f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100",
@@ -231,14 +310,31 @@ def collect_entries(pages: list) -> list:
 # Claude AI — 브리핑 + 이사회 의견 + 액션 아이템
 # ---------------------------------------------------------------------------
 
-def generate_board_report(entries: list, members: list) -> dict:
+def generate_board_report(sections: dict, members: list) -> dict:
+    """4개 구간(오늘/어제/그제/과거) 항목을 이사회 형식으로 분석.
+    sections = {"today": [...], "yesterday": [...], "day_before": [...], "random_old": [...]}
+    """
     client = anthropic.Anthropic()
 
+    # 구간별 텍스트 구성
+    section_labels = {
+        "today": "📌 오늘 글 (최근 24시간)",
+        "yesterday": "📎 어제 글 (24~48시간 전)",
+        "day_before": "📂 그제 글 (48~72시간 전)",
+        "random_old": "🎲 과거 글 (최근 60개월 중 랜덤)",
+    }
     entries_text = ""
-    for i, e in enumerate(entries, 1):
-        entries_text += f"\n\n[항목 {i}] {e['title']} ({e['created_kst']})\n"
-        if e["content"]:
-            entries_text += e["content"][:800]
+    for section_key in ["today", "yesterday", "day_before", "random_old"]:
+        entries = sections.get(section_key, [])
+        label = section_labels[section_key]
+        entries_text += f"\n\n=== {label} ==="
+        if not entries:
+            entries_text += "\n(해당 구간 글 없음)"
+        else:
+            for i, e in enumerate(entries, 1):
+                entries_text += f"\n\n[{i}] {e['title']} ({e['created_kst']})\n"
+                if e["content"]:
+                    entries_text += e["content"][:800]
 
     member_keys = [m["key"] for m in members]
     member_instructions = ""
@@ -256,25 +352,47 @@ def generate_board_report(entries: list, members: list) -> dict:
             persona += f"\n  (장기 기억: {meta_mem[-500:]})"
         member_instructions += f'  "{m["key"]}": {m["name"]} — {persona}\n'
 
-    keys_json = json.dumps(member_keys, ensure_ascii=False)
-
-    prompt = f"""다음은 생각일기의 최근 항목들입니다.
+    prompt = f"""다음은 생각일기를 4개 구간으로 나눈 것입니다.
 {entries_text}
 
 ---
 이사회 형식으로 분석해주세요. 반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 쓰지 마세요.
 
+분석 규칙:
+- "sections" 안에 각 구간별로 해당 글의 요약과 주요 내용을 작성
+- 글이 없는 구간은 summary를 "(해당 구간 글 없음)"으로 작성
+- 과거 글(random_old)은 현재 상황과 비교하여 변화/성장 포인트를 짚어줄 것
+- opinions에서 각 이사는 4개 구간을 종합하여 의견 제시
+
 이사회 멤버:
 {member_instructions}
 
 {{
-  "briefing": {{
-    "summary": "전체 내용을 2~3문장으로 핵심 요약",
-    "titles": ["항목1 제목", "항목2 제목"],
-    "key_points": ["주요 내용 1", "주요 내용 2", "주요 내용 3"]
+  "sections": {{
+    "today": {{
+      "summary": "오늘 글 핵심 요약 (1~2문장)",
+      "titles": ["제목1", "제목2"],
+      "key_points": ["주요 내용 1", "주요 내용 2"]
+    }},
+    "yesterday": {{
+      "summary": "어제 글 핵심 요약 (1~2문장)",
+      "titles": ["제목1"],
+      "key_points": ["주요 내용 1"]
+    }},
+    "day_before": {{
+      "summary": "그제 글 핵심 요약 (1~2문장)",
+      "titles": ["제목1"],
+      "key_points": ["주요 내용 1"]
+    }},
+    "random_old": {{
+      "summary": "과거 글 요약 + 현재와의 비교 (1~2문장)",
+      "titles": ["제목1"],
+      "key_points": ["과거와 현재의 변화 포인트"]
+    }}
   }},
+  "overall_summary": "3일간의 흐름 + 과거 글 대비 종합 요약 (2~3문장)",
   "opinions": {{
-    {', '.join(f'"{k}": "해당 이사 관점에서 1~2문장 의견"' for k in member_keys)}
+    {', '.join(f'"{k}": "해당 이사 관점에서 4개 구간을 종합한 1~2문장 의견"' for k in member_keys)}
   }},
   "consensus": "이사들이 공통으로 동의하는 핵심 관점 (없으면 빈 문자열)",
   "action_items": ["구체적인 제안/액션 아이템 1", "제안 2"]
@@ -282,7 +400,7 @@ def generate_board_report(entries: list, members: list) -> dict:
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -296,7 +414,13 @@ def generate_board_report(entries: list, members: list) -> dict:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return {"briefing": {"summary": raw, "titles": [], "key_points": []}, "opinions": {}, "consensus": "", "action_items": []}
+        return {
+            "sections": {},
+            "overall_summary": raw,
+            "opinions": {},
+            "consensus": "",
+            "action_items": [],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +555,24 @@ def update_member_personalities(members: list, report: dict, context_label: str 
 # 텔레그램 발송
 # ---------------------------------------------------------------------------
 
-def send_to_slack(report: dict, members: list, entry_count: int, run_every: int, now: datetime) -> bool:
+def _format_section_slack(section_data: dict, label: str) -> list:
+    """구간별 슬랙 mrkdwn 포맷"""
+    lines = [f"\n*{label}*"]
+    summary = section_data.get("summary", "")
+    if summary:
+        lines.append(summary)
+    titles = section_data.get("titles", [])
+    if titles:
+        for t in titles:
+            lines.append(f"  • {t}")
+    key_points = section_data.get("key_points", [])
+    if key_points:
+        for p in key_points:
+            lines.append(f"  · {p}")
+    return lines
+
+
+def send_to_slack(report: dict, members: list, entry_counts: dict, now: datetime) -> bool:
     """슬랙 명언-한마디 채널에 이사회 보고서 발송"""
     token = os.environ.get("SLACK_BOT_TOKEN", "")
     if not token:
@@ -440,30 +581,32 @@ def send_to_slack(report: dict, members: list, entry_count: int, run_every: int,
 
     CHANNEL_QUOTE = "C0AJUJTHJGL"  # 명언-한마디 채널
 
-    briefing = report.get("briefing", {})
+    sections = report.get("sections", {})
     opinions = report.get("opinions", {})
     consensus = report.get("consensus", "").strip()
     action_items = report.get("action_items", [])
+    overall = report.get("overall_summary", "")
 
     time_str = now.strftime("%m/%d %H:%M")
+    total = sum(entry_counts.values())
 
-    # 슬랙 mrkdwn 포맷으로 메시지 구성
     lines = [f"*🏛️ 생각일기 이사회 · {time_str} KST*"]
+    lines.append(f"_매일 밤 10시 · 총 {total}개 항목_")
 
-    lines.append(f"\n*📋 브리핑 (최근 {run_every}시간 · {entry_count}개 항목)*")
-    lines.append(briefing.get("summary", ""))
+    # 구간별 브리핑
+    section_labels = {
+        "today": f"📌 오늘 글 ({entry_counts.get('today', 0)}개)",
+        "yesterday": f"📎 어제 글 ({entry_counts.get('yesterday', 0)}개)",
+        "day_before": f"📂 그제 글 ({entry_counts.get('day_before', 0)}개)",
+        "random_old": f"🎲 과거 글 (랜덤 {entry_counts.get('random_old', 0)}개)",
+    }
+    for key in ["today", "yesterday", "day_before", "random_old"]:
+        sec = sections.get(key, {})
+        if sec and sec.get("summary") and sec["summary"] != "(해당 구간 글 없음)":
+            lines.extend(_format_section_slack(sec, section_labels[key]))
 
-    titles = briefing.get("titles", [])
-    if titles:
-        lines.append("\n_항목 목록_")
-        for t in titles:
-            lines.append(f"  • {t}")
-
-    key_points = briefing.get("key_points", [])
-    if key_points:
-        lines.append("\n_주요 내용_")
-        for p in key_points:
-            lines.append(f"  · {p}")
+    if overall:
+        lines.append(f"\n*📊 종합 요약*\n{overall}")
 
     lines.append("\n*💬 이사회 의견*")
     member_map = {m["key"]: m["name"] for m in members}
@@ -509,36 +652,43 @@ def send_to_slack(report: dict, members: list, entry_count: int, run_every: int,
         return False
 
 
-def send_to_telegram(report: dict, members: list, entry_count: int, run_every: int, now: datetime, reply_to: int = None) -> bool:
+def send_to_telegram(report: dict, members: list, entry_counts: dict, now: datetime, reply_to: int = None) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         print("경고: 텔레그램 환경변수 누락", file=sys.stderr)
         return False
 
-    briefing = report.get("briefing", {})
+    sections = report.get("sections", {})
     opinions = report.get("opinions", {})
     consensus = report.get("consensus", "").strip()
     action_items = report.get("action_items", [])
+    overall = report.get("overall_summary", "")
 
     time_str = now.strftime("%m/%d %H:%M")
+    total = sum(entry_counts.values())
     lines = [f"<b>🏛️ 생각일기 이사회 · {time_str} KST</b>"]
+    lines.append(f"<i>매일 밤 10시 · 총 {total}개 항목</i>")
 
-    # 브리핑
-    lines.append(f"\n<b>📋 브리핑 (최근 {run_every}시간 · {entry_count}개 항목)</b>")
-    lines.append(briefing.get("summary", ""))
+    # 구간별 브리핑
+    section_labels = {
+        "today": f"📌 오늘 글 ({entry_counts.get('today', 0)}개)",
+        "yesterday": f"📎 어제 글 ({entry_counts.get('yesterday', 0)}개)",
+        "day_before": f"📂 그제 글 ({entry_counts.get('day_before', 0)}개)",
+        "random_old": f"🎲 과거 글 (랜덤 {entry_counts.get('random_old', 0)}개)",
+    }
+    for key in ["today", "yesterday", "day_before", "random_old"]:
+        sec = sections.get(key, {})
+        if sec and sec.get("summary") and sec["summary"] != "(해당 구간 글 없음)":
+            lines.append(f"\n<b>{section_labels[key]}</b>")
+            lines.append(sec.get("summary", ""))
+            for t in sec.get("titles", []):
+                lines.append(f"  • {t}")
+            for p in sec.get("key_points", []):
+                lines.append(f"  · {p}")
 
-    titles = briefing.get("titles", [])
-    if titles:
-        lines.append("\n<i>항목 목록</i>")
-        for t in titles:
-            lines.append(f"  • {t}")
-
-    key_points = briefing.get("key_points", [])
-    if key_points:
-        lines.append("\n<i>주요 내용</i>")
-        for p in key_points:
-            lines.append(f"  · {p}")
+    if overall:
+        lines.append(f"\n<b>📊 종합 요약</b>\n{overall}")
 
     # 이사 의견
     lines.append("\n<b>💬 이사회 의견</b>")
@@ -548,7 +698,6 @@ def send_to_telegram(report: dict, members: list, entry_count: int, run_every: i
         if opinion:
             lines.append(f"\n<b>{name}</b>\n{opinion}")
 
-    # 합의 + 액션 아이템
     if consensus:
         lines.append(f"\n<b>🤝 합의 사항</b>\n{consensus}")
 
@@ -591,43 +740,48 @@ def send_to_telegram(report: dict, members: list, entry_count: int, run_every: i
 # Notion 이사회 DB 저장
 # ---------------------------------------------------------------------------
 
-def save_to_board_notion_db(report: dict, members: list, entry_count: int, run_every: int, now: datetime, db_id: str) -> bool:
+def save_to_board_notion_db(report: dict, members: list, entry_counts: dict, now: datetime, db_id: str) -> bool:
     if not db_id:
         return False
 
-    briefing = report.get("briefing", {})
+    sections = report.get("sections", {})
     opinions = report.get("opinions", {})
     consensus = report.get("consensus", "")
     action_items = report.get("action_items", [])
+    overall = report.get("overall_summary", "")
+    total = sum(entry_counts.values())
 
     title = f"이사회 보고 · {now.strftime('%Y/%m/%d %H:%M')} KST"
     children = [
         {"object": "block", "type": "callout", "callout": {
             "icon": {"type": "emoji", "emoji": "🏛️"},
             "color": "gray_background",
-            "rich_text": [{"type": "text", "text": {"content": f"최근 {run_every}시간 · {entry_count}개 항목 | {now.strftime('%Y-%m-%d %H:%M')} KST"}}],
+            "rich_text": [{"type": "text", "text": {"content": f"매일 밤 10시 · 총 {total}개 항목 | {now.strftime('%Y-%m-%d %H:%M')} KST"}}],
         }},
-        {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📋 브리핑"}}]}},
-        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": briefing.get("summary", "")}}]}},
     ]
 
-    titles = briefing.get("titles", [])
-    if titles:
-        children.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {
-            "rich_text": [{"type": "text", "text": {"content": "항목 목록"}, "annotations": {"bold": True}}]
-        }})
-        for t in titles:
-            children.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {
-                "rich_text": [{"type": "text", "text": {"content": t}}]
-            }})
+    # 구간별 브리핑
+    section_labels = {
+        "today": f"📌 오늘 글 ({entry_counts.get('today', 0)}개)",
+        "yesterday": f"📎 어제 글 ({entry_counts.get('yesterday', 0)}개)",
+        "day_before": f"📂 그제 글 ({entry_counts.get('day_before', 0)}개)",
+        "random_old": f"🎲 과거 글 (랜덤 {entry_counts.get('random_old', 0)}개)",
+    }
+    for key in ["today", "yesterday", "day_before", "random_old"]:
+        sec = sections.get(key, {})
+        if not sec or sec.get("summary") == "(해당 구간 글 없음)":
+            continue
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": section_labels[key]}}]}})
+        children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": sec.get("summary", "")}}]}})
+        for t in sec.get("titles", []):
+            children.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": t}}]}})
+        for p in sec.get("key_points", []):
+            children.append({"object": "block", "type": "numbered_list_item", "numbered_list_item": {"rich_text": [{"type": "text", "text": {"content": p}}]}})
 
-    key_points = briefing.get("key_points", [])
-    if key_points:
-        children.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": "주요 내용"}}]}})
-        for p in key_points:
-            children.append({"object": "block", "type": "numbered_list_item", "numbered_list_item": {
-                "rich_text": [{"type": "text", "text": {"content": p}}]
-            }})
+    if overall:
+        children.append({"object": "block", "type": "divider", "divider": {}})
+        children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "📊 종합 요약"}}]}})
+        children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": overall}}]}})
 
     children.append({"object": "block", "type": "divider", "divider": {}})
     children.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "💬 이사회 의견"}}]}})
@@ -681,17 +835,17 @@ def save_to_board_notion_db(report: dict, members: list, entry_count: int, run_e
 # Supabase board_reports 저장
 # ---------------------------------------------------------------------------
 
-def save_to_supabase(report: dict, entry_count: int, run_every: int, now: datetime) -> bool:
+def save_to_supabase(report: dict, entry_counts: dict, now: datetime) -> bool:
     opinions = report.get("opinions", {})
-    briefing = report.get("briefing", {})
+    total = sum(entry_counts.values())
     data = {
         "created_at": now.astimezone(timezone.utc).isoformat(),
-        "entry_count": entry_count,
-        "run_every_hours": run_every,
-        "summary": briefing.get("summary", ""),
-        # 동적 멤버 지원: 모든 의견/브리핑/액션 아이템을 JSONB로 저장
+        "entry_count": total,
+        "run_every_hours": 24,
+        "summary": report.get("overall_summary", ""),
+        # 동적 멤버 지원: 모든 의견/섹션/액션 아이템을 JSONB로 저장
         "opinions":     opinions,
-        "briefing":     briefing,
+        "briefing":     report.get("sections", {}),
         "action_items": report.get("action_items", []),
         # 기존 고정 컬럼 호환 유지 (기본 5인)
         "opinion_roi":          opinions.get("roi", ""),
@@ -711,7 +865,7 @@ def save_to_supabase(report: dict, entry_count: int, run_every: int, now: dateti
 # ---------------------------------------------------------------------------
 
 def main():
-    print("=== 생각일기 이사회 에이전트 시작 ===\n")
+    print("=== 생각일기 이사회 에이전트 시작 (매일 밤 10시) ===\n")
 
     if not os.environ.get("NOTION_API_KEY"):
         print("오류: NOTION_API_KEY가 없습니다.", file=sys.stderr)
@@ -720,7 +874,7 @@ def main():
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     settings = load_settings()
     diary_db_id = settings["diary_notion_database_id"]
-    print(f"설정: enabled={settings['board_enabled']}, run_every={settings['board_run_every_hours']}h, manual={is_manual}")
+    print(f"설정: enabled={settings['board_enabled']}, manual={is_manual}")
     print(f"  생각일기 DB: {diary_db_id or '(미설정)'}\n")
 
     # 멤버 로드
@@ -734,22 +888,35 @@ def main():
     is_command = command_hours > 0
 
     if is_command:
+        # 커맨드 모드: 기존 방식(단일 시간 범위)으로 실행
         run_every = command_hours
         print(f"[커맨드] /생각일기 {run_every}시간 요청 — 즉시 실행\n")
-        # 중복 실행 방지: 즉시 초기화
         _supabase_patch("/rest/v1/agent_settings?id=eq.1", {
             "board_command_hours": 0, "board_command_msg_id": 0
         })
+
+        print(f"[1/4] 최근 {run_every}시간 생각일기 조회 중...")
+        pages = fetch_recent_pages(hours=run_every, database_id=diary_db_id)
+        print(f"조회된 페이지: {len(pages)}개\n")
+        if not pages:
+            print("항목 없음. 발송 생략.")
+            return
+
+        print("[2/4] 내용 수집 중...")
+        entries = collect_entries(pages)
+        all_entries = entries
+        # 커맨드 모드에서는 전부 today로 처리
+        sections_data = {"today": entries, "yesterday": [], "day_before": [], "random_old": []}
+        entry_counts = {"today": len(entries), "yesterday": 0, "day_before": 0, "random_old": 0}
+
     else:
         # 스케줄 실행 체크
         if not settings["board_enabled"] and not is_manual:
             print("이사회 에이전트 비활성화 상태. 종료.")
             return
 
-        run_every = settings["board_run_every_hours"]
-        if run_every > 1 and not is_manual:
-            # 마지막 보고서 시각 기반으로 실행 여부 판단
-            # (GitHub Actions cron 지연에 강건함)
+        if not is_manual:
+            # 하루 1회 실행: 마지막 보고서 20시간 이내면 건너뜀
             last_reports = _supabase_get(
                 "/rest/v1/board_reports?select=created_at&order=created_at.desc&limit=1"
             )
@@ -758,51 +925,74 @@ def main():
                     last_reports[0]["created_at"].replace("Z", "+00:00")
                 )
                 elapsed_hours = (datetime.now(timezone.utc) - last_at).total_seconds() / 3600
-                # 10분 여유 (cron 실행 간 오차 허용)
-                if elapsed_hours < run_every - (10 / 60):
-                    print(f"마지막 보고서: {elapsed_hours:.1f}시간 전 — {run_every}시간 간격 미도달. 건너뜀.")
+                if elapsed_hours < 20:
+                    print(f"마지막 보고서: {elapsed_hours:.1f}시간 전 — 하루 간격 미도달. 건너뜀.")
                     return
                 print(f"마지막 보고서: {elapsed_hours:.1f}시간 전 — 실행 조건 충족.")
 
-    print(f"[1/4] 최근 {run_every}시간 생각일기 조회 중...")
-    pages = fetch_recent_pages(hours=run_every, database_id=diary_db_id)
-    actual_hours = run_every
-    print(f"조회된 페이지: {len(pages)}개\n")
+        # 4개 구간별 조회
+        print("[1/4] 4개 구간 생각일기 조회 중...")
 
-    # 최근 N시간 내 항목이 없으면, 24시간까지 범위를 넓혀서 재시도
-    if not pages and not is_command:
-        for fallback_hours in [6, 12, 24]:
-            if fallback_hours <= run_every:
-                continue
-            print(f"  → 범위 확장: 최근 {fallback_hours}시간으로 재조회...")
-            pages = fetch_recent_pages(hours=fallback_hours, database_id=diary_db_id)
-            if pages:
-                actual_hours = fallback_hours
-                print(f"  → {len(pages)}개 발견 (최근 {fallback_hours}시간)\n")
-                break
+        print("  📌 오늘 글 (0~24시간)...")
+        today_pages = fetch_recent_pages(hours=24, database_id=diary_db_id)
+        print(f"    → {len(today_pages)}개")
 
-    if not pages:
-        print(f"최근 24시간 내 새 항목 없음. 발송 생략.")
-        return
+        print("  📎 어제 글 (24~48시간)...")
+        yesterday_pages = fetch_pages_in_range(24, 48, diary_db_id)
+        print(f"    → {len(yesterday_pages)}개")
 
-    print("[2/4] 내용 수집 중...")
-    entries = collect_entries(pages)
-    print(f"수집 항목: {len(entries)}개\n")
+        print("  📂 그제 글 (48~72시간)...")
+        day_before_pages = fetch_pages_in_range(48, 72, diary_db_id)
+        print(f"    → {len(day_before_pages)}개")
+
+        print("  🎲 과거 글 (60개월 랜덤)...")
+        random_old_pages = fetch_random_old_page(diary_db_id)
+        print(f"    → {len(random_old_pages)}개\n")
+
+        total_pages = len(today_pages) + len(yesterday_pages) + len(day_before_pages) + len(random_old_pages)
+        if total_pages == 0:
+            print("모든 구간에서 항목 없음. 발송 생략.")
+            return
+
+        print("[2/4] 내용 수집 중...")
+        print("  📌 오늘 글:")
+        today_entries = collect_entries(today_pages) if today_pages else []
+        print("  📎 어제 글:")
+        yesterday_entries = collect_entries(yesterday_pages) if yesterday_pages else []
+        print("  📂 그제 글:")
+        day_before_entries = collect_entries(day_before_pages) if day_before_pages else []
+        print("  🎲 과거 글:")
+        random_old_entries = collect_entries(random_old_pages) if random_old_pages else []
+
+        sections_data = {
+            "today": today_entries,
+            "yesterday": yesterday_entries,
+            "day_before": day_before_entries,
+            "random_old": random_old_entries,
+        }
+        entry_counts = {
+            "today": len(today_entries),
+            "yesterday": len(yesterday_entries),
+            "day_before": len(day_before_entries),
+            "random_old": len(random_old_entries),
+        }
+        all_entries = today_entries + yesterday_entries + day_before_entries + random_old_entries
+        print(f"총 수집 항목: {len(all_entries)}개\n")
 
     print("[3/4] 이사회 보고서 생성 중...")
-    report = generate_board_report(entries, members)
+    report = generate_board_report(sections_data, members)
     now = datetime.now(KST)
 
     print("[4/4] 발송 및 저장 중...")
-    ok = send_to_slack(report, members, len(entries), actual_hours, now)
+    ok = send_to_slack(report, members, entry_counts, now)
 
     board_db_id = settings.get("board_notion_db_id", "")
     if board_db_id:
-        save_to_board_notion_db(report, members, len(entries), actual_hours, now, board_db_id)
+        save_to_board_notion_db(report, members, entry_counts, now, board_db_id)
     else:
         print("BOARD_NOTION_DATABASE_ID 미설정 — Notion 저장 생략")
 
-    save_to_supabase(report, len(entries), actual_hours, now)
+    save_to_supabase(report, entry_counts, now)
 
     print("\n[후처리] 이사 personality 업데이트 중...")
     update_member_personalities(members, report)
