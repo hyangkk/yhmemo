@@ -261,9 +261,9 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "daily_review"
             return context
 
-        # ── 모닝 브리핑 (6시) — 파트너가 6시에 보고 요청 ──
+        # ── 아침 종합 보고 (08:00) — 1일 1회 통합 보고 ──
 
-        if 6 <= hour <= 7 and self._state.get("last_morning_briefing") != today:
+        if hour >= 8 and self._state.get("last_morning_briefing") != today:
             context["action"] = "morning_briefing"
             return context
 
@@ -296,10 +296,7 @@ class ProactiveAgent(BaseAgent):
             context["slot_key"] = slot_key
             return context
 
-        # 2.5단계: AI 전략실 진행보고 (4시간마다, 비용 절감: 1시간 → 4시간)
-        if self._hours_since(self._state.get("last_reading_room_report", "")) >= 4.0:
-            context["action"] = "reading_room_report"
-            return context
+        # 2.5단계: AI 전략실 진행보고 — 아침 종합 보고에 통합됨 (개별 전송 비활성화)
 
         # 3단계: 슬롯 작업 완료 후 → 목표 스텝 실행
         next_action = self.planner.pick_next_action()
@@ -354,9 +351,7 @@ class ProactiveAgent(BaseAgent):
             context["action"] = "business_research"
             return context
 
-        if self._hours_since(self._state.get("last_report", "")) >= 6:
-            context["action"] = "progress_report"
-            return context
+        # progress_report — 아침 종합 보고에 통합됨 (개별 전송 비활성화)
 
         # ── Level 4: 자기수정 (6시간마다, 실패 패턴 있을 때만) ──
         if self._hours_since(self._state.get("last_self_improve", "")) >= 6:
@@ -1256,8 +1251,9 @@ JSON 응답:
     # ── 모닝 브리핑 ──────────────────────────────────
 
     async def _do_morning_briefing(self, ctx: dict):
-        """아침 종합 보고: 어제 밤새 뭘 했는지 + 오늘 계획"""
+        """08:00 1일 1회 종합 보고 — 아침 브리핑 + AI 전략실 + 시스템 상태 통합"""
         from core.tools import _weather, _crypto_price, _exchange_rate, _web_search
+        from core import agent_tracker as _at
 
         results = await asyncio.gather(
             _weather("서울"),
@@ -1276,8 +1272,8 @@ JSON 응답:
         goals_summary = self.planner.get_status_summary()
         proposal_stats = self.proposals.get_stats()
 
-        # 어제 밤새 실행 결과 종합 (핵심: 아침 보고용)
-        yesterday_checks = self.memory.get_today_checks()  # 아직 오늘이니 어제 데이터
+        # 어제 밤새 실행 결과 종합
+        yesterday_checks = self.memory.get_today_checks()
         achievement = self.memory.get_plan_achievement_rate()
         recent_evals = self.memory.get_recent_evaluations(15)
         grade_stats = self.memory.get_grade_stats()
@@ -1294,19 +1290,46 @@ JSON 응답:
             f"  - {i['insight']}" for i in recent_insights
         ) if recent_insights else "없음"
 
-        briefing = await self.ai_think(
-            system_prompt="""파트너에게 보내는 아침 종합 보고.
+        # ── AI 전략실 데이터 (reading_room_report 통합) ──
+        recent_slots = []
+        for key, val in self._state.items():
+            if key.startswith("slot_") and key.endswith("_result") and val:
+                recent_slots.append(val if isinstance(val, str) else str(val)[:100])
+        slots_text = "\n".join(recent_slots[-5:]) if recent_slots else "(없음)"
 
-핵심: "밤새 뭘 했고, 뭘 만들었고, 오늘 뭘 할 건지"
+        # ── 시스템 상태 데이터 (orchestration report 통합) ──
+        tracker_data = _at._load()
+        agent_statuses = []
+        for name, info in tracker_data.get("agents", {}).items():
+            status = info.get("status", "unknown")
+            last_hb = info.get("last_heartbeat", "")
+            agent_statuses.append(f"  {name}: {status} (hb: {last_hb[-5:] if last_hb else '?'})")
+        system_status = "\n".join(agent_statuses) if agent_statuses else "(에이전트 정보 없음)"
+
+        briefing = await self.ai_think(
+            system_prompt="""파트너에게 보내는 08:00 1일 1회 종합 보고.
+3개 보고서를 하나로 통합: 아침 브리핑 + AI 전략실 현황 + 시스템 상태.
 
 구조:
-1. 밤새 실행 결과 요약 (결과물 중심)
-2. 계획 달성률
-3. 핵심 깨달음 1-2개
-4. 오늘 목표와 계획 (시간대별 핵심만)
-5. 파트너에게 필요한 것 (API 키 등)
+## 1. 시스템 상태
+- 에이전트 가동 현황 (몇 개 정상/이상)
+- 이슈 있으면 간단히
 
-슬랙 마크다운, 20줄 이내.""",
+## 2. 밤새 실행 결과
+- 결과물 중심으로 요약
+- 계획 달성률
+
+## 3. AI 전략실 현황
+- 진행 중인 작업
+- 최근 슬롯 실행 결과
+
+## 4. 오늘 계획
+- 핵심 목표와 계획
+
+## 5. 시장 정보
+- 날씨/환율/코인 한 줄씩
+
+슬랙 마크다운, 25줄 이내. 간결하게.""",
             user_prompt=f"""날짜: {ctx['today']} ({ctx['weekday']})
 
 {chr(10).join(data_parts)}
@@ -1323,13 +1346,19 @@ JSON 응답:
 활성 목표:
 {goals_summary}
 
-제안 통계: {json.dumps(proposal_stats, ensure_ascii=False)}""",
+제안 통계: {json.dumps(proposal_stats, ensure_ascii=False)}
+
+최근 슬롯 실행 결과:
+{slots_text}
+
+에이전트 시스템 상태:
+{system_status}""",
         )
 
         if briefing:
             await self.slack.send_message(
                 SlackClient.CHANNEL_GENERAL,
-                f"☀️ *아침 종합 보고* ({ctx['today']} {ctx['weekday']})\n\n{briefing}",
+                f"📋 *08:00 종합 보고* ({ctx['today']} {ctx['weekday']})\n\n{briefing}",
             )
 
         # 어제 daily log 기록 (아직 안 했으면)

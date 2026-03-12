@@ -1,0 +1,61 @@
+name: Studio DB 셋업
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Studio 테이블 생성
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          SQL=$(cat supabase/migrations/20260311_studio_tables.sql)
+          PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.supabase.com/v1/projects/unuvbdqjgiypxfvlplpd/database/query")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY"
+          [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && echo "테이블 생성 완료" || exit 1
+
+      - name: RLS 비활성화 (MVP 단계)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          SQL="ALTER TABLE studio_sessions DISABLE ROW LEVEL SECURITY; ALTER TABLE studio_devices DISABLE ROW LEVEL SECURITY; ALTER TABLE studio_clips DISABLE ROW LEVEL SECURITY; ALTER TABLE studio_results DISABLE ROW LEVEL SECURITY;"
+          PAYLOAD=$(jq -n --arg q "$SQL" '{"query": $q}')
+          curl -s -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.supabase.com/v1/projects/unuvbdqjgiypxfvlplpd/database/query"
+          echo "RLS 비활성화 완료"
+
+      - name: Storage 버킷 생성
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          # 버킷 존재 확인
+          EXISTS=$(curl -s "$SUPABASE_URL/storage/v1/bucket/studio-clips" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            | jq -r '.name // empty')
+
+          if [ -z "$EXISTS" ]; then
+            curl -s -X POST "$SUPABASE_URL/storage/v1/bucket" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"id":"studio-clips","name":"studio-clips","public":true,"fileSizeLimit":524288000,"allowedMimeTypes":["video/*","audio/*"]}'
+            echo "studio-clips 버킷 생성 완료"
+          else
+            echo "studio-clips 버킷 이미 존재"
+          fi

@@ -1,0 +1,49 @@
+name: 사이트 접근 테스트
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: curl 테스트 (다양한 방법)
+        run: |
+          echo "=== 1. 기본 curl ==="
+          curl -sI -o /dev/null -w "HTTP %{http_code} | IP: %{remote_ip}\n" \
+            "https://www.yicare.or.kr/" || echo "FAIL"
+
+          echo "=== 2. User-Agent + 전체 헤더 ==="
+          curl -sv -o /tmp/resp1.html -w "\nHTTP %{http_code} | Size: %{size_download}\n" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            -H "Accept-Language: ko-KR,ko;q=0.9" \
+            -H "Accept-Encoding: gzip, deflate" \
+            -H "Connection: keep-alive" \
+            "https://www.yicare.or.kr/main/main.php?categoryid=25&menuid=01&groupid=00" 2>&1 | tail -30
+
+          echo "=== 3. HTTP (no SSL) ==="
+          curl -sv -o /tmp/resp2.html -w "\nHTTP %{http_code} | Size: %{size_download}\n" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "http://www.yicare.or.kr/main/main.php?categoryid=25&menuid=01&groupid=00" 2>&1 | tail -20
+
+          echo "=== 4. Python urllib ==="
+          python3 -c "
+import urllib.request, ssl
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+req = urllib.request.Request(
+    'https://www.yicare.or.kr/main/main.php?categoryid=25&menuid=01&groupid=00',
+    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+)
+try:
+    with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+        data = resp.read()
+        print(f'Status: {resp.status}, Size: {len(data)}B')
+        print(f'Headers: {dict(resp.headers)}')
+        print(f'Content preview: {data[:500]}')
+except Exception as e:
+    print(f'Error: {e}')
+"
+
+          echo "=== 5. HTML 앞부분 (있으면) ==="
+          head -c 1000 /tmp/resp1.html 2>/dev/null || echo "파일 없음"

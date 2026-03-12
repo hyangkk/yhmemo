@@ -431,6 +431,84 @@ def update_member_personalities(members: list, report: dict, context_label: str 
 # 텔레그램 발송
 # ---------------------------------------------------------------------------
 
+def send_to_slack(report: dict, members: list, entry_count: int, run_every: int, now: datetime) -> bool:
+    """슬랙 명언-한마디 채널에 이사회 보고서 발송"""
+    token = os.environ.get("SLACK_BOT_TOKEN", "")
+    if not token:
+        print("경고: SLACK_BOT_TOKEN 환경변수 누락 — 슬랙 발송 생략", file=sys.stderr)
+        return False
+
+    CHANNEL_QUOTE = "C0AJUJTHJGL"  # 명언-한마디 채널
+
+    briefing = report.get("briefing", {})
+    opinions = report.get("opinions", {})
+    consensus = report.get("consensus", "").strip()
+    action_items = report.get("action_items", [])
+
+    time_str = now.strftime("%m/%d %H:%M")
+
+    # 슬랙 mrkdwn 포맷으로 메시지 구성
+    lines = [f"*🏛️ 생각일기 이사회 · {time_str} KST*"]
+
+    lines.append(f"\n*📋 브리핑 (최근 {run_every}시간 · {entry_count}개 항목)*")
+    lines.append(briefing.get("summary", ""))
+
+    titles = briefing.get("titles", [])
+    if titles:
+        lines.append("\n_항목 목록_")
+        for t in titles:
+            lines.append(f"  • {t}")
+
+    key_points = briefing.get("key_points", [])
+    if key_points:
+        lines.append("\n_주요 내용_")
+        for p in key_points:
+            lines.append(f"  · {p}")
+
+    lines.append("\n*💬 이사회 의견*")
+    member_map = {m["key"]: m["name"] for m in members}
+    for key, name in member_map.items():
+        opinion = opinions.get(key, "").strip()
+        if opinion:
+            lines.append(f"\n*{name}*\n{opinion}")
+
+    if consensus:
+        lines.append(f"\n*🤝 합의 사항*\n{consensus}")
+
+    if action_items:
+        lines.append("\n*✅ 액션 아이템*")
+        for item in action_items:
+            lines.append(f"  • {item}")
+
+    message = "\n".join(lines).strip()
+
+    slack_payload = json.dumps({
+        "channel": CHANNEL_QUOTE,
+        "text": message,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage",
+        data=slack_payload,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                print("슬랙 명언-한마디 채널 발송 완료")
+                return True
+            print(f"슬랙 발송 실패: {result.get('error', result)}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"슬랙 발송 오류: {e}", file=sys.stderr)
+        return False
+
+
 def send_to_telegram(report: dict, members: list, entry_count: int, run_every: int, now: datetime, reply_to: int = None) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -716,8 +794,7 @@ def main():
     now = datetime.now(KST)
 
     print("[4/4] 발송 및 저장 중...")
-    reply_to = command_msg_id if is_command else None
-    ok = send_to_telegram(report, members, len(entries), actual_hours, now, reply_to=reply_to)
+    ok = send_to_slack(report, members, len(entries), actual_hours, now)
 
     board_db_id = settings.get("board_notion_db_id", "")
     if board_db_id:

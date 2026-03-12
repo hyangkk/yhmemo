@@ -1,12 +1,15 @@
 app = 'yhmbp14'
-primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
+primary_region = 'nrt'  # 도쿄 (Fly.io 한국 리전 미지원, 프록시로 우회)
 
 [build]
 
-# 봇은 웹서버가 아니므로 HTTP 서비스 비활성화
-# 대신 프로세스로 상시 실행
-[processes]
-  app = "python orchestrator.py"
+# 스튜디오 API (영상 편집)용 HTTP 서비스 - orchestrator에서 스레드로 8000번 포트 오픈
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 
 # 상태 파일(메모리, 스레드 등) 영속 저장용 볼륨
 [mounts]
@@ -17,6 +20,6 @@ primary_region = 'nrt'  # 도쿄 (한국에서 가장 가까운 리전)
   DAILY_AI_BUDGET_USD = "10"
 
 [vm]
-  memory = '512mb'
+  memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1

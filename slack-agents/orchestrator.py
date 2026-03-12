@@ -56,6 +56,7 @@ from agents.sentiment_agent import SentimentAgent
 from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
+from agents.bulletin_agent import BulletinAgent
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -190,6 +191,23 @@ async def main():
     budget = os.environ.get("DAILY_AI_BUDGET_USD", "10.0")
     logger.info(f"Initializing services... (AI budget: ${budget}/day)")
 
+    # 스튜디오 API 서버 (별도 스레드)
+    try:
+        from studio_api import start_studio_server
+        import time as _time
+        studio_thread = start_studio_server(port=8000)
+        _time.sleep(2)  # uvicorn 시작 대기
+        logger.info(f"Studio API: thread_alive={studio_thread.is_alive()}")
+        # 로컬 health check
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen("http://localhost:8000/health", timeout=3)
+            logger.info(f"Studio API health: {resp.read().decode()}")
+        except Exception as hc_err:
+            logger.warning(f"Studio API health check 실패: {hc_err}")
+    except Exception as e:
+        logger.warning(f"Studio API 서버 시작 실패 (무시): {e}")
+
     # Supabase
     supabase = create_client(config["SUPABASE_URL"], config["SUPABASE_SERVICE_ROLE_KEY"])
 
@@ -251,6 +269,7 @@ async def main():
     auto_trader = AutoTraderAgent(ls_client=ls_client, **common_kwargs)
     market_info = MarketInfoAgent(**common_kwargs)
     swing_trader = SwingTraderAgent(ls_client=ls_client, **common_kwargs)
+    bulletin = BulletinAgent(**common_kwargs)
 
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
@@ -260,7 +279,8 @@ async def main():
     # 기존 에이전트들 HR 등록
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "quote",
-                        "fortune", "message_bus", "auto_trader", "market_info"]:
+                        "fortune", "message_bus", "auto_trader", "market_info",
+                        "bulletin"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
@@ -430,6 +450,32 @@ async def main():
     slack.on_command("인사평가", cmd_hr_eval)
     slack.on_command("인사현황", cmd_hr_status)
     slack.on_command("연봉", cmd_salary)
+
+    # "!게시판" → 게시판 스크래핑 즉시 실행 / 새 게시판 등록
+    async def cmd_bulletin(args: str, user: str, channel: str, thread_ts: str = None):
+        parts = args.strip().split(maxsplit=1)
+        if not parts:
+            # 즉시 스크래핑 — 최근 게시글을 바로 보여줌
+            await _reply(channel, ":mag: 게시판 스크래핑 중...", thread_ts)
+            await bulletin.scrape_and_show(channel, thread_ts, max_posts=5)
+        elif parts[0] == "등록" and len(parts) > 1:
+            # !게시판 등록 이름 URL [parser_type]
+            reg_parts = parts[1].split()
+            if len(reg_parts) < 2:
+                await _reply(channel, "사용법: `!게시판 등록 사이트이름 URL [auto|table|list]`", thread_ts)
+                return
+            name = reg_parts[0]
+            url = reg_parts[1]
+            parser_type = reg_parts[2] if len(reg_parts) > 2 else "auto"
+            result = await bulletin._add_board(name=name, url=url, parser_type=parser_type)
+            if result.get("status") == "added":
+                await _reply(channel, f":white_check_mark: *{name}* 게시판이 등록되었습니다.\nURL: {url}\n파서: {parser_type}", thread_ts)
+            else:
+                await _reply(channel, f":x: 등록 실패: {result.get('message', '알 수 없는 오류')}", thread_ts)
+        else:
+            await _reply(channel, "사용법:\n• `!게시판` — 지금 스크래핑 실행\n• `!게시판 등록 이름 URL [auto|table|list]` — 새 게시판 등록", thread_ts)
+
+    slack.on_command("게시판", cmd_bulletin)
 
     # ── 주식 매매 명령어 ──────────────────────────────────
     async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
@@ -795,6 +841,7 @@ async def main():
 - hr_status: 인사현황, 연봉 조회, 에이전트 인사카드, "연봉 랭킹", "인사 현황 보여줘", "에이전트 연봉", "누가 제일 많이 받아?" hr_target 필드에 특정 에이전트명 (없으면 전체)
 - hr_salary: 연봉 조정, "연봉 올려줘", "연봉 깎아", hr_target(에이전트명), hr_amount(조정액, 만원), hr_reason(사유)
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
+- bulletin: 게시판 스크래핑, 공지사항 확인, 새 글 확인. "게시판 확인해줘", "공지사항 새 거 있어?", "문화센터 게시판 긁어줘", "새 공지 알려줘" 등
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
@@ -811,7 +858,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -930,6 +977,9 @@ async def main():
                     await _reply(channel, "매매 명령을 이해하지 못했어요. 예: `삼성전자 1주 시장가 매수해줘`", thread_ts)
                     result_text = "stock_trade 파싱 실패"
                     success = False
+            elif action == "bulletin":
+                await cmd_bulletin("", user, channel, thread_ts)
+                result_text = "게시판 스크래핑 실행"
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
@@ -1269,6 +1319,7 @@ async def main():
         "auto_trader": lambda: asyncio.create_task(auto_trader.start(), name="auto_trader"),
         "market_info": lambda: asyncio.create_task(market_info.start(), name="market_info"),
         "swing_trader": lambda: asyncio.create_task(swing_trader.start(), name="swing_trader"),
+        "bulletin": lambda: asyncio.create_task(bulletin.start(), name="bulletin"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
@@ -1347,41 +1398,11 @@ async def main():
         # 4.5. 계획 저장 (다음 리포트에서 이행 검증용)
         _save_planned_tasks(now_str, next_activities)
 
-        # 5. Slack 오케스트레이션 가동 리포트 (매 1시간마다 항상 전송)
+        # 5. 오케스트레이션 가동 리포트 — 아침 종합 보고(08:00)에 통합됨
+        #    개별 슬랙 전송 비활성화. 헬스체크 로직(재시작/heartbeat)은 그대로 유지.
         alive = sum(1 for t in agent_tasks.values() if not t.done())
         total = len(agent_tasks)
-
-        report_lines = [f"*📊 오케스트레이션 가동 리포트* ({now_str} KST) — {alive}/{total} 에이전트"]
-
-        if restarts:
-            report_lines.append(f"🔄 자동 재시작: *{', '.join(restarts)}*")
-        if issues:
-            for issue in issues:
-                report_lines.append(issue)
-
-        # 이전 계획 이행률 (있으면)
-        if fulfillment:
-            report_lines.append("")
-            for line in fulfillment:
-                report_lines.append(line)
-
-        report_lines.append("")
-        report_lines.append("*지난 1시간:*")
-        if past_activities:
-            for line in past_activities:
-                report_lines.append(f"• {line}")
-        else:
-            report_lines.append("• (활동 없음)")
-
-        report_lines.append("")
-        report_lines.append("*앞으로 1시간:*")
-        for line in next_activities:
-            report_lines.append(f"• {line}")
-
-        try:
-            await slack.send_message(SlackClient.CHANNEL_GENERAL, "\n".join(report_lines))
-        except Exception as e:
-            logger.error(f"[watchdog] Slack report failed: {e}")
+        logger.info(f"[watchdog] Health check: {alive}/{total} agents alive, issues={len(issues)}, restarts={restarts}")
 
         # 6. 매일 09:00 KST 자동 인사평가
         if now.strftime("%H:%M") == "09:00":

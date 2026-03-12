@@ -1,0 +1,267 @@
+'use client';
+
+import { useState, useEffect, useCallback, useRef, use } from 'react';
+import { useRouter } from 'next/navigation';
+import { useStudioSession } from '@/hooks/useStudioSession';
+import { supabase } from '@/lib/supabase';
+import CameraView from '@/components/studio/CameraView';
+
+export default function SessionRoomPage({ params }: { params: Promise<{ sessionId: string }> }) {
+  const { sessionId } = use(params);
+  const router = useRouter();
+  const {
+    session,
+    devices,
+    myDevice,
+    isHost,
+    loading,
+    error,
+    joinSession,
+    sendSignal,
+    updateDeviceStatus,
+  } = useStudioSession(sessionId);
+
+  const [recordingSignal, setRecordingSignal] = useState<'idle' | 'start' | 'stop'>('idle');
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploading, setUploading] = useState(false);
+  const [joined, setJoined] = useState(false);
+  const joiningRef = useRef(false);
+
+  // myDevice를 ref로 추적 (stale closure 방지)
+  const myDeviceRef = useRef(myDevice);
+  useEffect(() => { myDeviceRef.current = myDevice; }, [myDevice]);
+
+  // 세션에 자동 참여 (이중 호출 방지)
+  useEffect(() => {
+    if (sessionId && !joined && !joiningRef.current && !loading && session) {
+      joiningRef.current = true;
+      joinSession(sessionId).then((device) => {
+        if (device) setJoined(true);
+        joiningRef.current = false;
+      }).catch(() => { joiningRef.current = false; });
+    }
+  }, [sessionId, joined, loading, session, joinSession]);
+
+  // 외부 시그널 수신 (비호스트) - Broadcast + Realtime 세션 상태 폴백
+  useEffect(() => {
+    const handleSignal = (e: Event) => {
+      const signal = (e as CustomEvent).detail.signal;
+      setRecordingSignal(signal);
+    };
+    window.addEventListener('studio-signal', handleSignal);
+    return () => window.removeEventListener('studio-signal', handleSignal);
+  }, []);
+
+  // 세션 상태 변경 감지 (Broadcast 못 받았을 때 폴백)
+  useEffect(() => {
+    if (!session) return;
+    if (session.status === 'recording' && recordingSignal === 'idle') {
+      setRecordingSignal('start');
+    } else if (session.status === 'uploading' && recordingSignal === 'start') {
+      setRecordingSignal('stop');
+    }
+  }, [session?.status, recordingSignal]);
+
+  // 호스트: 녹화 시작 (시그널 설정을 먼저, 네트워크 작업은 best-effort)
+  const handleStartRecording = useCallback(async () => {
+    setRecordingSignal('start');
+    try { await sendSignal('start'); } catch {}
+    try { await updateDeviceStatus('recording'); } catch {}
+  }, [sendSignal, updateDeviceStatus]);
+
+  // 호스트: 녹화 종료 (시그널을 먼저 설정해서 CameraView가 즉시 녹화 중지)
+  const handleStopRecording = useCallback(async () => {
+    setRecordingSignal('stop');
+    try { await sendSignal('stop'); } catch {}
+  }, [sendSignal]);
+
+  // 녹화 완료 → 업로드 (signed URL로 Supabase Storage 직접 업로드)
+  const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
+    const device = myDeviceRef.current;
+    const goToResult = () => {
+      setUploading(false);
+      router.push(`/studio/${sessionId}/result`);
+    };
+
+    // device가 없거나 녹화된 데이터가 없으면 바로 결과 페이지로
+    if (!device || !sessionId || blob.size === 0) {
+      if (device) {
+        try { await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id); } catch {}
+      }
+      goToResult();
+      return;
+    }
+
+    setUploading(true);
+
+    // 디바이스 상태를 직접 업데이트
+    try {
+      await supabase.from('studio_devices').update({ status: 'uploading' }).eq('id', device.id);
+    } catch {}
+
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+
+    try {
+      // 1단계: 서버에서 signed upload URL 발급
+      const urlRes = await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phase: 'url', deviceId: device.id, ext }),
+      });
+
+      if (!urlRes.ok) {
+        throw new Error('signed URL 발급 실패');
+      }
+
+      const { signedUrl, token, storagePath } = await urlRes.json();
+
+      // 2단계: Supabase Storage에 직접 업로드 (Vercel body size 제한 우회)
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', signedUrl);
+      xhr.setRequestHeader('Content-Type', blob.type);
+      xhr.timeout = 120000; // 120초 타임아웃 (대용량 파일 대비)
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+
+      const onUploadDone = async (success: boolean) => {
+        if (success) {
+          // 3단계: 업로드 완료 → 서버에 메타데이터 기록
+          try {
+            await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                phase: 'confirm',
+                deviceId: device.id,
+                durationMs,
+                fileSize: blob.size,
+                storagePath,
+              }),
+            });
+          } catch {}
+        } else {
+          try {
+            await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
+          } catch {}
+        }
+        goToResult();
+      };
+
+      xhr.onload = () => onUploadDone(xhr.status >= 200 && xhr.status < 300);
+      xhr.onerror = () => onUploadDone(false);
+      xhr.ontimeout = () => onUploadDone(false);
+
+      xhr.send(blob);
+    } catch {
+      try {
+        await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
+      } catch {}
+      goToResult();
+    }
+  }, [sessionId, router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p>세션 로드 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !session) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-400 mb-4">{error || '세션을 찾을 수 없습니다'}</p>
+          <button
+            onClick={() => router.push('/studio')}
+            className="bg-gray-800 px-6 py-2 rounded-full"
+          >
+            돌아가기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen bg-black text-white flex flex-col">
+      {/* 상단 헤더 - 컴팩트 1줄 + 녹화 버튼 */}
+      <div className="flex-shrink-0 px-3 py-2 bg-gray-900/80 backdrop-blur-sm safe-area-top">
+        <div className="flex items-center justify-between gap-2">
+          {/* 왼쪽: 세션 정보 */}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs text-gray-400 font-mono">{session.code}</span>
+            <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">{devices.length}대</span>
+            {isHost && <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">호스트</span>}
+          </div>
+
+          {/* 오른쪽: 녹화 버튼 (호스트) / 상태 (비호스트) */}
+          {isHost && !uploading && (
+            recordingSignal !== 'start' ? (
+              <button
+                onClick={handleStartRecording}
+                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-4 py-2 rounded-full text-sm font-semibold transition"
+              >
+                <div className="w-2.5 h-2.5 bg-white rounded-full" />
+                녹화 시작
+              </button>
+            ) : (
+              <button
+                onClick={handleStopRecording}
+                className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-full text-sm font-semibold transition"
+              >
+                <div className="w-2.5 h-2.5 bg-red-500 rounded-sm animate-pulse" />
+                녹화 종료
+              </button>
+            )
+          )}
+          {!isHost && !uploading && recordingSignal === 'idle' && (
+            <span className="text-xs text-gray-500">대기 중...</span>
+          )}
+          {!isHost && recordingSignal === 'start' && (
+            <span className="flex items-center gap-1 text-xs text-red-400">
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              녹화 중
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 카메라 뷰 (전체 화면) */}
+      <div className="flex-1 relative">
+        {joined && !uploading && (
+          <CameraView
+            onRecordingComplete={handleRecordingComplete}
+            isHost={isHost}
+            externalRecordingSignal={recordingSignal}
+          />
+        )}
+
+        {/* 업로드 중 화면 (카메라 꺼짐) */}
+        {uploading && (
+          <div className="absolute inset-0 bg-black flex items-center justify-center">
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
+              <p className="text-lg">영상 업로드 중...</p>
+              <div className="w-48 h-2 bg-gray-700 rounded-full mx-auto overflow-hidden">
+                <div
+                  className="h-full bg-purple-500 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-gray-400">{uploadProgress}%</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
