@@ -5,6 +5,7 @@
 - 학교, 문화센터, 공공기관 등 다양한 웹 게시판을 주기적으로 스크래핑
 - 새 게시글 감지 시 슬랙으로 알림
 - Supabase에 모니터링할 게시판 목록과 수집된 게시글 저장
+- Playwright(headless 브라우저)를 사용하여 해외 IP 차단/JS 렌더링 사이트도 크롤링 가능
 
 자율 행동:
 - Observe: bulletin_boards 테이블에서 모니터링 대상 확인, 스크래핑 시간 판단
@@ -18,7 +19,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import http.cookiejar
@@ -43,6 +44,14 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
 }
+
+# Playwright 리소스 차단 패턴 (불필요한 리소스 로딩 방지)
+_PW_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+_PW_BLOCKED_URL_PATTERNS = [
+    "google-analytics", "googletagmanager", "doubleclick",
+    "adservice", "googlesyndication", "facebook.net",
+    "analytics",
+]
 
 
 class BulletinAgent(BaseAgent):
@@ -70,6 +79,10 @@ class BulletinAgent(BaseAgent):
         # 한국 프록시 설정 (해외 IP 차단 사이트 우회)
         # 형식: http://user:pass@host:port 또는 socks5://host:port
         self._proxy_url = os.environ.get("KOREAN_PROXY_URL", "")
+
+        # Playwright 브라우저 인스턴스 (싱글턴, 필요 시 생성)
+        self._pw = None
+        self._pw_browser = None
 
     async def start(self):
         """에이전트 시작 — 테이블 확인만 하고 자동 루프는 실행하지 않음 (수동 전용)"""
@@ -102,6 +115,7 @@ class BulletinAgent(BaseAgent):
                                     url TEXT NOT NULL,
                                     parser_type TEXT DEFAULT 'auto',
                                     css_selector TEXT DEFAULT '',
+                                    use_playwright BOOLEAN DEFAULT FALSE,
                                     active BOOLEAN DEFAULT TRUE,
                                     created_at TIMESTAMPTZ DEFAULT NOW(),
                                     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -111,6 +125,7 @@ class BulletinAgent(BaseAgent):
                                     board_id BIGINT REFERENCES bulletin_boards(id) ON DELETE CASCADE,
                                     title TEXT NOT NULL,
                                     url TEXT DEFAULT '',
+                                    content TEXT DEFAULT '',
                                     post_date TEXT DEFAULT '',
                                     hash TEXT NOT NULL UNIQUE,
                                     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -118,6 +133,15 @@ class BulletinAgent(BaseAgent):
                                 CREATE INDEX IF NOT EXISTS idx_bulletin_posts_hash ON bulletin_posts(hash);
                                 CREATE INDEX IF NOT EXISTS idx_bulletin_posts_board_id ON bulletin_posts(board_id);
                             """)
+                        # 기존 테이블에 새 컬럼 추가 (이미 있으면 무시)
+                        for col_sql in [
+                            "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS use_playwright BOOLEAN DEFAULT FALSE",
+                            "ALTER TABLE bulletin_posts ADD COLUMN IF NOT EXISTS content TEXT DEFAULT ''",
+                        ]:
+                            try:
+                                cur.execute(col_sql)
+                            except Exception:
+                                pass
                         conn.close()
                         logger.info("[bulletin] 테이블 생성 완료")
                     else:
@@ -335,17 +359,23 @@ class BulletinAgent(BaseAgent):
                 if posts:
                     # 최근 N개만 표시
                     display = posts[:max_posts]
-                    lines = [f"*:pushpin: [{board['name']}] 최근 게시글 (총 {len(posts)}건 중 {len(display)}건)*\n"]
+                    pw_label = " :globe_with_meridians:" if board.get("use_playwright") else ""
+                    lines = [f"*:pushpin: [{board['name']}]{pw_label} 최근 게시글 (총 {len(posts)}건 중 {len(display)}건)*\n"]
                     for p in display:
                         title = p["title"]
                         url = p.get("url", "")
                         date = p.get("date", "")
+                        content = p.get("content", "")
                         if url:
                             lines.append(f"• <{url}|{title}>")
                         else:
                             lines.append(f"• {title}")
                         if date:
                             lines[-1] += f"  ({date})"
+                        if content:
+                            preview = content.replace("\n", " ").strip()[:100]
+                            if preview:
+                                lines.append(f"  _{preview}{'...' if len(content) > 100 else ''}_")
                     lines.append(f"\n<{board['url']}|게시판 바로가기>")
                     await self._reply(channel, "\n".join(lines), thread_ts)
 
@@ -373,21 +403,181 @@ class BulletinAgent(BaseAgent):
                 else:
                     await self._reply(channel, f":x: [{board['name']}] 오류: {e}", thread_ts)
 
-    async def _scrape_board(self, board: dict) -> tuple[list[dict], str]:
-        """게시판 HTML을 파싱하여 게시글 목록 추출. (posts, debug_info) 반환"""
-        url = board["url"]
-        parser_type = board.get("parser_type", "auto")
-        debug_info = ""
+    # ── Playwright 브라우저 관리 ────────────────────────
+
+    async def _ensure_playwright(self):
+        """Playwright 브라우저 싱글턴 보장"""
+        if self._pw_browser and self._pw_browser.is_connected():
+            return
+        from playwright.async_api import async_playwright
+        self._pw = await async_playwright().start()
+        self._pw_browser = await self._pw.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+            ],
+        )
+        logger.info("[bulletin] Playwright 브라우저 시작됨")
+
+    async def _close_playwright(self):
+        """Playwright 브라우저 정리"""
+        if self._pw_browser:
+            await self._pw_browser.close()
+            self._pw_browser = None
+        if self._pw:
+            await self._pw.stop()
+            self._pw = None
+
+    async def _pw_fetch_html(self, url: str, wait_selector: str = None) -> str:
+        """Playwright로 URL에 접근하여 렌더링된 HTML 반환"""
+        await self._ensure_playwright()
+
+        context = await self._pw_browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            locale="ko-KR",
+        )
+        page = await context.new_page()
+
+        # 불필요한 리소스 차단 (빠른 로딩)
+        async def _route_handler(route):
+            req = route.request
+            if req.resource_type in _PW_BLOCKED_RESOURCE_TYPES:
+                await route.abort()
+                return
+            url_lower = req.url.lower()
+            if any(p in url_lower for p in _PW_BLOCKED_URL_PATTERNS):
+                await route.abort()
+                return
+            await route.continue_()
+        await page.route("**/*", _route_handler)
 
         try:
-            content, headers = await asyncio.to_thread(self._fetch_url, url)
-        except Exception as e:
-            logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
-            return [], f"HTTP 오류: {e}"
+            logger.info(f"[bulletin/pw] 접속 중: {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        # 인코딩 감지 및 처리
-        html = self._decode_html(content, headers)
-        logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신")
+            # 추가 대기: 특정 셀렉터가 나타날 때까지 또는 고정 대기
+            if wait_selector:
+                try:
+                    await page.wait_for_selector(wait_selector, timeout=10000)
+                except Exception:
+                    logger.info(f"[bulletin/pw] 셀렉터 '{wait_selector}' 대기 타임아웃, 계속 진행")
+            else:
+                await asyncio.sleep(3)  # JS 렌더링 대기
+
+            html = await page.content()
+            logger.info(f"[bulletin/pw] HTML 수신: {len(html)}자")
+            return html
+        finally:
+            await page.close()
+            await context.close()
+
+    async def _pw_scrape_post_content(self, url: str) -> str:
+        """Playwright로 개별 게시글 본문을 추출"""
+        await self._ensure_playwright()
+
+        context = await self._pw_browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            locale="ko-KR",
+        )
+        page = await context.new_page()
+
+        # 본문 크롤링 시 이미지는 허용하되 광고만 차단
+        async def _route_handler(route):
+            req = route.request
+            if req.resource_type in {"media", "font"}:
+                await route.abort()
+                return
+            url_lower = req.url.lower()
+            if any(p in url_lower for p in _PW_BLOCKED_URL_PATTERNS):
+                await route.abort()
+                return
+            await route.continue_()
+        await page.route("**/*", _route_handler)
+
+        try:
+            logger.info(f"[bulletin/pw] 게시글 접속: {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2)
+
+            # 본문 컨텐츠 추출 시도 (다양한 패턴)
+            content_selectors = [
+                "div.board_view_content",  # 공공기관 게시판 일반
+                "div.view_content",
+                "div.bbs_content",
+                "div.board-content",
+                "div.content_view",
+                "td.board_content",
+                "div#content",
+                "div.detail_content",
+                "div.sub_content",
+                "article",
+                "div.view_cont",
+                "div.bbsV_cont",
+            ]
+
+            content_text = ""
+            for sel in content_selectors:
+                try:
+                    el = await page.query_selector(sel)
+                    if el:
+                        text = await el.inner_text()
+                        if text and len(text.strip()) > 10:
+                            content_text = text.strip()
+                            logger.info(f"[bulletin/pw] 본문 추출 성공: {sel} ({len(content_text)}자)")
+                            break
+                except Exception:
+                    continue
+
+            if not content_text:
+                # 폴백: body 전체에서 추출
+                try:
+                    body = await page.query_selector("body")
+                    if body:
+                        content_text = (await body.inner_text()).strip()
+                        # 불필요한 네비게이션/메뉴 텍스트 제거 (앞뒤 500자 이상이면 중간만)
+                        if len(content_text) > 1000:
+                            content_text = content_text[:3000]
+                except Exception:
+                    pass
+
+            return content_text[:5000]  # 최대 5000자
+        finally:
+            await page.close()
+            await context.close()
+
+    # ── 게시판 스크래핑 ──────────────────────────────────
+
+    async def _scrape_board(self, board: dict) -> tuple[list[dict], str]:
+        """게시판 HTML을 파싱하여 게시글 목록 추출. (posts, debug_info) 반환
+        use_playwright=True인 게시판은 Playwright를 사용하여 렌더링된 HTML을 가져옴.
+        """
+        url = board["url"]
+        parser_type = board.get("parser_type", "auto")
+        use_playwright = board.get("use_playwright", False)
+        debug_info = ""
+
+        if use_playwright:
+            # Playwright로 렌더링된 HTML 가져오기
+            try:
+                css_sel = board.get("css_selector", "")
+                wait_sel = css_sel if css_sel else None
+                html = await self._pw_fetch_html(url, wait_selector=wait_sel)
+            except Exception as e:
+                logger.error(f"[bulletin] Playwright 스크래핑 실패 ({url}): {e}")
+                return [], f"Playwright 오류: {e}"
+        else:
+            # 기존 urllib 방식
+            try:
+                content, headers = await asyncio.to_thread(self._fetch_url, url)
+            except Exception as e:
+                logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
+                return [], f"HTTP 오류: {e}"
+            html = self._decode_html(content, headers)
+
+        logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신 (playwright={use_playwright})")
 
         # BeautifulSoup 파싱
         from bs4 import BeautifulSoup
@@ -407,6 +597,10 @@ class BulletinAgent(BaseAgent):
                 posts = self._parse_list_board(soup, base_url, board)
             if not posts:
                 posts = self._parse_any_links(soup, base_url, board)
+
+        # Playwright 사용 게시판은 각 게시글 본문도 추출
+        if use_playwright and posts:
+            await self._enrich_posts_with_content(posts)
 
         if not posts:
             # 디버그: HTML 구조 힌트
@@ -430,6 +624,21 @@ class BulletinAgent(BaseAgent):
                 debug_info += "링크 샘플:\n" + "\n".join(link_samples)
 
         return posts, debug_info
+
+    async def _enrich_posts_with_content(self, posts: list[dict], max_posts: int = 5):
+        """게시글 목록의 각 항목에 본문 내용을 추가 (최대 max_posts개)"""
+        for post in posts[:max_posts]:
+            post_url = post.get("url", "")
+            if not post_url:
+                continue
+            try:
+                content = await self._pw_scrape_post_content(post_url)
+                post["content"] = content
+                logger.info(f"[bulletin] 본문 추출: {post['title'][:30]}... ({len(content)}자)")
+                await asyncio.sleep(1)  # 서버 부하 방지
+            except Exception as e:
+                logger.warning(f"[bulletin] 본문 추출 실패 ({post_url}): {e}")
+                post["content"] = ""
 
     def _decode_html(self, raw: bytes, headers: dict) -> str:
         """응답 인코딩 자동 감지 (EUC-KR 사이트 대응)"""
@@ -753,6 +962,7 @@ class BulletinAgent(BaseAgent):
                         "board_id": board["id"],
                         "title": post["title"],
                         "url": post.get("url", ""),
+                        "content": post.get("content", "")[:5000],
                         "post_date": post.get("date", ""),
                         "hash": post["hash"],
                         "created_at": datetime.now(KST).isoformat(),
@@ -782,6 +992,7 @@ class BulletinAgent(BaseAgent):
             title = post["title"]
             url = post.get("url", "")
             date = post.get("date", "")
+            content = post.get("content", "")
 
             if url:
                 lines.append(f"• <{url}|{title}>")
@@ -789,6 +1000,11 @@ class BulletinAgent(BaseAgent):
                 lines.append(f"• {title}")
             if date:
                 lines[-1] += f"  ({date})"
+            # 본문 미리보기 (100자)
+            if content:
+                preview = content.replace("\n", " ").strip()[:100]
+                if preview:
+                    lines.append(f"  _{preview}{'...' if len(content) > 100 else ''}_")
 
         if remaining > 0:
             lines.append(f"\n_...외 {remaining}건 더_")
@@ -820,12 +1036,13 @@ class BulletinAgent(BaseAgent):
                 url=payload.get("url", ""),
                 parser_type=payload.get("parser_type", "auto"),
                 css_selector=payload.get("css_selector", ""),
+                use_playwright=payload.get("use_playwright", False),
             )
 
         return await super().handle_external_task(task)
 
     async def _add_board(self, name: str, url: str, parser_type: str = "auto",
-                         css_selector: str = "") -> dict:
+                         css_selector: str = "", use_playwright: bool = False) -> dict:
         """새 게시판을 Supabase에 등록"""
         def _sync_add():
             try:
@@ -834,6 +1051,7 @@ class BulletinAgent(BaseAgent):
                     "url": url,
                     "parser_type": parser_type,
                     "css_selector": css_selector,
+                    "use_playwright": use_playwright,
                     "active": True,
                     "created_at": datetime.now(KST).isoformat(),
                 }).execute()
