@@ -122,8 +122,8 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
         ? 'video/webm'
         : 'video/mp4';
 
-    // 모바일: 2Mbps, 데스크톱: 4Mbps로 비트레이트 제한 → 파일 크기 절감
-    const videoBitsPerSecond = mobile ? 2_000_000 : 4_000_000;
+    // 아이폰/맥북 표준에 근접한 비트레이트 (모바일 8Mbps, 데스크톱 12Mbps)
+    const videoBitsPerSecond = mobile ? 8_000_000 : 12_000_000;
     const recorder = new MediaRecorder(currentStream, { mimeType, videoBitsPerSecond });
 
     recorder.ondataavailable = (e) => {

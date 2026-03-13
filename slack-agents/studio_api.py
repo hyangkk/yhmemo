@@ -210,15 +210,16 @@ def _run_ffmpeg(args: list[str]):
         raise Exception(f"FFmpeg 오류: {result.stderr}")
 
 
-# iOS 호환 인코딩 옵션 (H.264 Baseline/Main + yuv420p)
+# iOS/macOS 호환 고품질 인코딩 (H.264 High + CRF 품질 모드)
 IOS_VIDEO_OPTS = [
     "-c:v", "libx264",
-    "-profile:v", "main",
-    "-level", "4.0",
+    "-profile:v", "high",
+    "-level", "4.1",
     "-pix_fmt", "yuv420p",
-    "-preset", "fast",
+    "-crf", "20",          # 고품질 (18=거의 무손실, 23=기본, 20=좋은 품질)
+    "-preset", "medium",   # 품질/속도 균형 (fast→medium으로 품질 개선)
 ]
-IOS_AUDIO_OPTS = ["-c:a", "aac", "-b:a", "128k"]
+IOS_AUDIO_OPTS = ["-c:a", "aac", "-b:a", "192k"]  # 192kbps AAC (표준 품질)
 IOS_CONTAINER_OPTS = ["-movflags", "+faststart"]
 
 
