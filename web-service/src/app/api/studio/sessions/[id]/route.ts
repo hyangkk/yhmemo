@@ -15,18 +15,23 @@ export async function GET(
     supabase.from('studio_sessions').select('*').eq('id', id).single(),
     supabase.from('studio_devices').select('*').eq('session_id', id).order('camera_index'),
     supabase.from('studio_clips').select('*').eq('session_id', id),
-    supabase.from('studio_results').select('*').eq('session_id', id).order('created_at', { ascending: false }).limit(1),
+    supabase.from('studio_results').select('*').eq('session_id', id).order('created_at', { ascending: false }),
   ]);
 
   if (sessionRes.error) {
     return NextResponse.json({ error: '세션을 찾을 수 없습니다' }, { status: 404 });
   }
 
+  // 최신 result (하위 호환) + 전체 results 배열
+  const allResults = resultsRes.data || [];
+  const latestResult = allResults[0] || null;
+
   const resp = NextResponse.json({
     session: sessionRes.data,
     devices: devicesRes.data || [],
     clips: clipsRes.data || [],
-    result: resultsRes.data?.[0] || null,
+    result: latestResult,
+    results: allResults,
   });
   resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   return resp;

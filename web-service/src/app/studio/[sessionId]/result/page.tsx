@@ -9,13 +9,27 @@ interface SessionData {
   devices: StudioDevice[];
   clips: StudioClip[];
   result: StudioResult | null;
+  results?: StudioResult[];
 }
+
+const MODE_LABELS: Record<string, string> = {
+  auto: '3초 교차편집',
+  director: 'AI 감독 모드',
+  split: '화면 분할',
+  pip: 'PIP',
+};
 
 function parseEditStep(result: StudioResult | null): { step: number; total: number; description: string } | null {
   if (!result || result.status !== 'processing') return null;
   const match = result.storage_path?.match(/^step:(\d+)\/(\d+):(.+)$/);
   if (!match) return null;
   return { step: parseInt(match[1]), total: parseInt(match[2]), description: match[3] };
+}
+
+function parseModeFromPath(path: string): string | null {
+  // result_{id}_{mode}.mp4 패턴에서 모드 추출
+  const match = path.match(/_([a-z]+)\.mp4$/);
+  return match ? match[1] : null;
 }
 
 export default function ResultPage({ params }: { params: Promise<{ sessionId: string }> }) {
@@ -25,9 +39,10 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [loading, setLoading] = useState(true);
   const [selectedClipIdx, setSelectedClipIdx] = useState(0);
   const [retrying, setRetrying] = useState(false);
+  const [editingMode, setEditingMode] = useState<string | null>(null);
   const [pollKey, setPollKey] = useState(0);
   const [editingElapsed, setEditingElapsed] = useState(0);
-  const [editingStartTime] = useState(() => Date.now());
+  const [editingStartTime, setEditingStartTime] = useState(() => Date.now());
 
   // 편집 중 경과 시간 타이머
   useEffect(() => {
@@ -42,37 +57,27 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
   useEffect(() => {
     const startTime = Date.now();
-
     const fetchSession = () => fetch(`/api/studio/sessions/${sessionId}?_t=${Date.now()}`, { cache: 'no-store' });
 
     const load = async () => {
       const res = await fetchSession();
-      if (res.ok) {
-        setData(await res.json());
-      }
+      if (res.ok) setData(await res.json());
       setLoading(false);
     };
     load();
 
-    // 세션 상태 폴링 (done + error가 아닌 한 계속)
     const interval = setInterval(async () => {
       const res = await fetchSession();
       if (res.ok) {
         const d: SessionData = await res.json();
         setData(d);
-
-        // done이고 결과가 완료이거나 에러면 폴링 중단
         if (d.session.status === 'done') {
           clearInterval(interval);
           return;
         }
-
-        // uploading 상태에서 30초 이상 지났는데 stuck된 디바이스가 있으면 강제 전환
         const elapsed = Date.now() - startTime;
         if (d.session.status === 'uploading' && elapsed > 30000) {
-          const stuckDevices = d.devices.filter(
-            dev => dev.status !== 'done' && dev.status !== 'error'
-          );
+          const stuckDevices = d.devices.filter(dev => dev.status !== 'done' && dev.status !== 'error');
           if (stuckDevices.length > 0) {
             await fetch(`/api/studio/sessions/${sessionId}/finalize`, { method: 'POST' });
           }
@@ -82,6 +87,30 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
     return () => clearInterval(interval);
   }, [sessionId, pollKey]);
+
+  const requestEdit = async (mode: string) => {
+    setEditingMode(mode);
+    setEditingElapsed(0);
+    setEditingStartTime(Date.now());
+    try {
+      const res = await fetch(`/api/studio/sessions/${sessionId}/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setData(prev => prev ? {
+          ...prev,
+          session: { ...prev.session, status: 'editing' },
+          result: d.result,
+        } : prev);
+        setPollKey(k => k + 1);
+      }
+    } finally {
+      setEditingMode(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -100,6 +129,15 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   }
 
   const { session, devices, clips } = data;
+  const allResults = data.results || (data.result ? [data.result] : []);
+  const doneResults = allResults.filter(r => r.status === 'done');
+  const processingResult = allResults.find(r => r.status === 'processing');
+  const latestResult = processingResult || doneResults[0] || allResults[0] || null;
+
+  // 이미 완료된 모드 목록
+  const completedModes = new Set(
+    doneResults.map(r => parseModeFromPath(r.storage_path)).filter(Boolean)
+  );
 
   const getDeviceName = (deviceId: string) => {
     return devices.find(d => d.id === deviceId)?.name || '카메라';
@@ -160,14 +198,16 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           );
         })()}
 
-        {/* 편집 상태 */}
+        {/* 편집 진행 중 */}
         {session.status === 'editing' && (() => {
-          const editStep = parseEditStep(data.result);
-          // storage_path에서 직접 step 정보 추출 (result.status와 무관하게)
-          const rawPath = data.result?.storage_path || '';
+          const editStep = parseEditStep(latestResult);
+          const rawPath = latestResult?.storage_path || '';
           const rawMatch = rawPath.match(/^step:(\d+)\/(\d+):(.+)$/);
           const directStep = rawMatch ? { step: parseInt(rawMatch[1]), total: parseInt(rawMatch[2]), description: rawMatch[3] } : null;
           const step = editStep || directStep;
+          // 현재 편집 중인 모드 표시
+          const modeMatch = rawPath.match(/^mode:(\w+)$/);
+          const currentMode = modeMatch ? MODE_LABELS[modeMatch[1]] || modeMatch[1] : null;
           return (
             <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 space-y-2">
               <div className="flex items-center gap-3">
@@ -175,6 +215,9 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">
                     영상 편집 중
+                    {currentMode && !step && (
+                      <span className="text-purple-300 ml-2">{currentMode}</span>
+                    )}
                     {step && (
                       <span className="text-purple-300 ml-2">
                         {step.step}/{step.total} · {step.description}
@@ -196,45 +239,55 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
               ) : (
                 <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
               )}
-              {/* 디버그: result 상태 */}
-              <p className="text-gray-700 text-[10px] font-mono">
-                result: {data.result ? `${data.result.status} | ${data.result.storage_path?.substring(0, 40)}` : 'null'}
-              </p>
             </div>
           );
         })()}
 
-        {session.status === 'done' && data.result?.status === 'done' && (
-          <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
-            <span className="text-xl">✅</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">
-                편집 완료
-                {data.result.duration_ms && (
-                  <span className="text-gray-400 font-normal ml-2">{formatDuration(data.result.duration_ms)}</span>
-                )}
-              </p>
-            </div>
-            <a
-              href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${data.result.storage_path}`}
-              download
-              className="bg-green-600 hover:bg-green-500 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
-            >
-              다운로드
-            </a>
+        {/* 편집 완료된 결과들 */}
+        {session.status === 'done' && doneResults.length > 0 && (
+          <div className="space-y-2">
+            {doneResults.map((result) => {
+              const mode = parseModeFromPath(result.storage_path);
+              const modeLabel = mode ? MODE_LABELS[mode] || mode : '편집 결과';
+              return (
+                <div key={result.id} className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
+                  <span className="text-lg">
+                    {mode === 'director' ? '🎬' : '✅'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">
+                      {modeLabel}
+                      {result.duration_ms && (
+                        <span className="text-gray-400 font-normal ml-2">{formatDuration(result.duration_ms)}</span>
+                      )}
+                    </p>
+                  </div>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${result.storage_path}`}
+                    download
+                    className="bg-green-600 hover:bg-green-500 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
+                  >
+                    다운로드
+                  </a>
+                </div>
+              );
+            })}
           </div>
         )}
-        {session.status === 'done' && !data.result && (
+
+        {session.status === 'done' && doneResults.length === 0 && !latestResult && (
           <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
             <span className="text-xl">✅</span>
             <p className="text-sm font-medium">촬영 완료 · 아래에서 클립을 다운로드하세요</p>
           </div>
         )}
-        {session.status === 'done' && data.result?.status === 'error' && (
+
+        {/* 편집 실패 */}
+        {session.status === 'done' && latestResult?.status === 'error' && doneResults.length === 0 && (
           <div className="bg-red-900/30 border border-red-500/30 rounded-xl p-3 space-y-2">
             <div className="flex items-center gap-3">
               <span className="text-xl">⚠️</span>
-              <p className="text-sm font-medium flex-1">편집 실패 · 클립은 개별 다운로드 가능</p>
+              <p className="text-sm font-medium flex-1">편집 실패 · 아래에서 다시 시도하세요</p>
               <button
                 disabled={retrying}
                 onClick={async () => {
@@ -242,8 +295,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   try {
                     const res = await fetch(`/api/studio/sessions/${sessionId}/retry`, { method: 'POST' });
                     if (res.ok) {
-                      const d = await res.json();
-                      setData(prev => prev ? { ...prev, session: { ...prev.session, status: 'editing' }, result: d.result } : prev);
+                      setData(prev => prev ? { ...prev, session: { ...prev.session, status: 'editing' } } : prev);
                       setPollKey(k => k + 1);
                     }
                   } finally {
@@ -253,6 +305,45 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
               >
                 {retrying ? '준비 중...' : '다시 시도'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 편집 모드 선택 (done 상태에서만 + 클립이 2개 이상일 때) */}
+        {session.status === 'done' && clips.length >= 2 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-gray-400">다른 모드로 편집</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('auto')}
+                className={`p-3 rounded-xl text-left transition ${
+                  completedModes.has('auto')
+                    ? 'bg-gray-800 border border-gray-700'
+                    : 'bg-purple-900/30 border border-purple-500/30 hover:bg-purple-900/50'
+                } disabled:opacity-50`}
+              >
+                <p className="text-sm font-semibold">🔄 3초 교차편집</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">3초마다 카메라 전환</p>
+                {completedModes.has('auto') && (
+                  <p className="text-[10px] text-green-500 mt-1">완료됨</p>
+                )}
+              </button>
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('director')}
+                className={`p-3 rounded-xl text-left transition ${
+                  completedModes.has('director')
+                    ? 'bg-gray-800 border border-gray-700'
+                    : 'bg-orange-900/30 border border-orange-500/30 hover:bg-orange-900/50'
+                } disabled:opacity-50`}
+              >
+                <p className="text-sm font-semibold">🎬 AI 감독 모드</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">메인 카메라 + 리액션 컷</p>
+                {completedModes.has('director') && (
+                  <p className="text-[10px] text-green-500 mt-1">완료됨</p>
+                )}
               </button>
             </div>
           </div>
