@@ -62,6 +62,25 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     }
   }, [session?.status, recordingSignal]);
 
+  // 세션 상태 주기적 폴링 (Realtime 누락 대비)
+  useEffect(() => {
+    if (!sessionId || uploading) return;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/studio/sessions/${sessionId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const status = data.session?.status;
+        if (!status) return;
+        // 세션이 uploading 이후 단계인데 아직 녹화 중이면 강제 stop
+        if ((status === 'uploading' || status === 'editing' || status === 'done') && recordingSignal === 'start') {
+          setRecordingSignal('stop');
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [sessionId, uploading, recordingSignal]);
+
   // 호스트: 녹화 시작 (시그널 설정을 먼저, 네트워크 작업은 best-effort)
   const handleStartRecording = useCallback(async () => {
     setRecordingSignal('start');
