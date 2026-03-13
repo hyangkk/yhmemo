@@ -22,12 +22,14 @@ export async function GET(
     return NextResponse.json({ error: '세션을 찾을 수 없습니다' }, { status: 404 });
   }
 
-  return NextResponse.json({
+  const resp = NextResponse.json({
     session: sessionRes.data,
     devices: devicesRes.data || [],
     clips: clipsRes.data || [],
     result: resultsRes.data?.[0] || null,
   });
+  resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  return resp;
 }
 
 // PATCH: 세션 상태 업데이트
