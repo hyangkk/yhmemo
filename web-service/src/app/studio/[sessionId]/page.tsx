@@ -99,7 +99,6 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
     const goToResult = () => {
-      setUploading(false);
       router.push(`/studio/${sessionId}/result`);
     };
 
