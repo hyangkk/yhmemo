@@ -580,7 +580,10 @@ class SlackClient:
         saved_ts = self._load_last_ts()
         for ch_id in poll_channels:
             if ch_id in saved_ts:
-                self._last_ts[ch_id] = saved_ts[ch_id]
+                # Slack API는 소수점 6자리까지만 인식 — 정규화
+                raw = saved_ts[ch_id]
+                dot = raw.find(".")
+                self._last_ts[ch_id] = raw[:dot + 7] if dot >= 0 else raw
             else:
                 self._last_ts[ch_id] = f"{time.time() - 60:.6f}"  # 1분 전
         self._poll_channels = poll_channels
