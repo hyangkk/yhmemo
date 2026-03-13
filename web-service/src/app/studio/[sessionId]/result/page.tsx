@@ -11,12 +11,21 @@ interface SessionData {
   result: StudioResult | null;
 }
 
+function parseEditStep(result: StudioResult | null): { step: number; total: number; description: string } | null {
+  if (!result || result.status !== 'processing') return null;
+  const match = result.storage_path?.match(/^step:(\d+)\/(\d+):(.+)$/);
+  if (!match) return null;
+  return { step: parseInt(match[1]), total: parseInt(match[2]), description: match[3] };
+}
+
 export default function ResultPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
   const router = useRouter();
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedClipIdx, setSelectedClipIdx] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [pollKey, setPollKey] = useState(0);
 
   useEffect(() => {
     const startTime = Date.now();
@@ -30,13 +39,14 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     };
     load();
 
-    // 세션 상태가 done으로 바뀔 때까지 폴링
+    // 세션 상태 폴링 (done + error가 아닌 한 계속)
     const interval = setInterval(async () => {
       const res = await fetch(`/api/studio/sessions/${sessionId}`);
       if (res.ok) {
         const d: SessionData = await res.json();
         setData(d);
 
+        // done이고 결과가 완료이거나 에러면 폴링 중단
         if (d.session.status === 'done') {
           clearInterval(interval);
           return;
@@ -49,7 +59,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
             dev => dev.status !== 'done' && dev.status !== 'error'
           );
           if (stuckDevices.length > 0) {
-            // stuck 디바이스를 error로 변경하고 세션을 done으로 전환
             await fetch(`/api/studio/sessions/${sessionId}/finalize`, { method: 'POST' });
           }
         }
@@ -57,7 +66,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [sessionId]);
+  }, [sessionId, pollKey]);
 
   if (loading) {
     return (
@@ -135,16 +144,36 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         })()}
 
         {/* 편집 상태 */}
-        {session.status === 'editing' && (
-          <div className="bg-purple-900/30 border border-purple-500/30 rounded-2xl p-6 text-center space-y-3">
-            <div className="w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mx-auto" />
-            <h2 className="text-lg font-semibold">영상 편집 중</h2>
-            <p className="text-gray-400 text-sm">
-              AI가 다각도 영상을 분석하고 최적의 컷을 조합하고 있습니다.<br />
-              완료되면 알림을 보내드립니다.
-            </p>
-          </div>
-        )}
+        {session.status === 'editing' && (() => {
+          const editStep = parseEditStep(data.result);
+          return (
+            <div className="bg-purple-900/30 border border-purple-500/30 rounded-2xl p-6 text-center space-y-4">
+              <div className="w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mx-auto" />
+              <h2 className="text-lg font-semibold">영상 편집 중</h2>
+              {editStep ? (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-purple-300 font-medium">
+                      {editStep.step}/{editStep.total} 단계: {editStep.description}
+                    </p>
+                    <div className="w-full h-2 bg-purple-900/50 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-purple-500 rounded-full transition-all duration-500"
+                        style={{ width: `${(editStep.step / editStep.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
+                </>
+              ) : (
+                <p className="text-gray-400 text-sm">
+                  AI가 다각도 영상을 분석하고 최적의 컷을 조합하고 있습니다.<br />
+                  완료되면 자동으로 전환됩니다.
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {session.status === 'done' && data.result?.status === 'done' && (
           <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-4">
@@ -174,10 +203,29 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
         {session.status === 'done' && data.result?.status === 'error' && (
-          <div className="bg-red-900/30 border border-red-500/30 rounded-2xl p-6 text-center space-y-3">
+          <div className="bg-red-900/30 border border-red-500/30 rounded-2xl p-6 text-center space-y-4">
             <div className="text-4xl">⚠️</div>
             <h2 className="text-lg font-semibold">편집 중 오류 발생</h2>
             <p className="text-gray-400 text-sm">영상 편집에 실패했습니다. 각 클립은 아래에서 개별 다운로드 가능합니다.</p>
+            <button
+              disabled={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                try {
+                  const res = await fetch(`/api/studio/sessions/${sessionId}/retry`, { method: 'POST' });
+                  if (res.ok) {
+                    const d = await res.json();
+                    setData(prev => prev ? { ...prev, session: { ...prev.session, status: 'editing' }, result: d.result } : prev);
+                    setPollKey(k => k + 1);
+                  }
+                } finally {
+                  setRetrying(false);
+                }
+              }}
+              className="inline-block bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed px-6 py-3 rounded-xl font-semibold transition"
+            >
+              {retrying ? '재시도 준비 중...' : '다시 편집 시도하기'}
+            </button>
           </div>
         )}
 

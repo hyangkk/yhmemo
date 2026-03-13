@@ -91,14 +91,25 @@ async def get_edit_status(result_id: str):
     return result.data
 
 
+def _update_edit_step(sb, result_id: str, step: int, total: int, description: str):
+    """편집 진행 단계를 DB에 기록 (프론트엔드 폴링용)"""
+    sb.table("studio_results").update({
+        "storage_path": f"step:{step}/{total}:{description}",
+    }).eq("id", result_id).execute()
+    logger.info(f"[studio] 편집 진행: {step}/{total} - {description}")
+
+
 async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str):
     """FFmpeg로 영상 편집"""
     sb = _get_supabase()
     work_dir = DATA_DIR / session_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    total_steps = 4
+
     try:
         # 1. 클립 다운로드
+        _update_edit_step(sb, result_id, 1, total_steps, "클립 다운로드 중")
         supabase_url = os.environ["SUPABASE_URL"]
         local_files = []
         async with httpx.AsyncClient(timeout=120) as client:
@@ -114,7 +125,11 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         if not local_files:
             raise Exception("다운로드된 클립이 없습니다")
 
-        # 2. FFmpeg 편집
+        # 2. 영상 분석
+        _update_edit_step(sb, result_id, 2, total_steps, "영상 분석 중")
+
+        # 3. FFmpeg 편집
+        _update_edit_step(sb, result_id, 3, total_steps, "영상 편집 중")
         output_path = work_dir / f"result_{result_id}.mp4"
 
         if len(local_files) == 1:
@@ -127,7 +142,8 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         else:
             _edit_auto_cut(local_files, str(output_path))
 
-        # 3. 업로드
+        # 4. 결과 업로드
+        _update_edit_step(sb, result_id, 4, total_steps, "결과 업로드 중")
         result_storage_path = f"{session_id}/result_{result_id}.mp4"
         with open(output_path, "rb") as f:
             sb.storage.from_("studio-clips").upload(
