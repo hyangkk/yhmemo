@@ -383,6 +383,7 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         segments = []
         seg_start = 0.0
         current_cam = best_cam_per_sec[0]
+        last_forced_idx = 0  # 라운드로빈용 인덱스
 
         for sec in range(1, max_len):
             alive = _alive_cams(sec)
@@ -403,9 +404,10 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
                 segments.append((current_cam, seg_start, float(sec)))
                 seg_start = float(sec)
                 if force_switch and preferred_cam == current_cam:
-                    # 다음 가용 카메라로 전환
+                    # 라운드로빈: 모든 카메라를 순환 (항상 다음 카메라)
                     others = [c for c in alive if c != current_cam]
-                    current_cam = others[0] if others else current_cam
+                    last_forced_idx = (last_forced_idx + 1) % len(others) if others else 0
+                    current_cam = others[last_forced_idx] if others else current_cam
                 else:
                     current_cam = preferred_cam if preferred_cam in alive else (alive[0] if alive else current_cam)
 
@@ -524,6 +526,7 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
     segments: list[tuple[int, float, float]] = []
     t = 0.0
     on_main = True
+    last_side_idx = 0  # 사이드 카메라 라운드로빈용
 
     while t < max_dur - 0.3:
         alive = _alive(t)
@@ -564,14 +567,10 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
                 on_main = True
                 continue
 
-            # 가장 활발한 사이드 카메라 선택
-            side_cam = side_cams[0]
-            best_level = -200.0
-            for cam in side_cams:
-                lvl = all_levels[cam][sec_idx]
-                if lvl > best_level:
-                    best_level = lvl
-                    side_cam = cam
+            # 사이드 카메라 라운드로빈 순환 (모든 사이드 카메라 골고루 사용)
+            side_cam = side_cams[last_side_idx % len(side_cams)]
+            best_level = all_levels[side_cam][sec_idx]
+            last_side_idx += 1
 
             cutaway_dur = 1.0
             if best_level > avg_levels[side_cam] + 5:
