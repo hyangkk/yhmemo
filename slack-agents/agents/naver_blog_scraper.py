@@ -679,7 +679,7 @@ class NaverBlogScraper:
 
     async def _extract_ordered_blocks(self, content_el) -> list[dict]:
         """본문 내 텍스트와 이미지를 원래 순서대로 추출.
-        반환: [{"type": "text", "value": "..."}, {"type": "image", "value": "url"}, ...]
+        반환: [{"type": "text", "value": "...", "rich_text": [...]}, {"type": "image", "value": "url"}, ...]
         """
         blocks = []
         try:
@@ -699,20 +699,21 @@ class NaverBlogScraper:
                                 blocks.append({"type": "image", "value": src})
                     # 텍스트 컴포넌트
                     elif "se-text" in comp_type:
+                        rich = await self._extract_rich_text(comp)
                         text = (await comp.inner_text()).strip()
                         if text:
-                            blocks.append({"type": "text", "value": text})
+                            blocks.append({"type": "text", "value": text, "rich_text": rich})
                     # 인용구
                     elif "se-quotation" in comp_type:
+                        rich = await self._extract_rich_text(comp)
                         text = (await comp.inner_text()).strip()
                         if text:
-                            blocks.append({"type": "quote", "value": text})
+                            blocks.append({"type": "quote", "value": text, "rich_text": rich})
                     # 구분선
                     elif "se-horizontalLine" in comp_type:
                         blocks.append({"type": "divider", "value": ""})
                     # 기타: 텍스트가 있으면 추출
                     else:
-                        # 이미지부터 확인
                         imgs = await comp.query_selector_all("img")
                         for img in imgs:
                             src = await self._get_img_src(img)
@@ -720,7 +721,8 @@ class NaverBlogScraper:
                                 blocks.append({"type": "image", "value": src})
                         text = (await comp.inner_text()).strip()
                         if text:
-                            blocks.append({"type": "text", "value": text})
+                            rich = await self._extract_rich_text(comp)
+                            blocks.append({"type": "text", "value": text, "rich_text": rich})
                 if blocks:
                     return blocks
 
@@ -728,27 +730,65 @@ class NaverBlogScraper:
             children = await content_el.query_selector_all(":scope > *")
             for child in children:
                 tag = await child.evaluate("el => el.tagName.toLowerCase()")
-                # img 태그
                 if tag == "img":
                     src = await self._get_img_src(child)
                     if src:
                         blocks.append({"type": "image", "value": src})
                     continue
-                # 자식 중 img가 있으면 추출
                 imgs = await child.query_selector_all("img")
                 for img in imgs:
                     src = await self._get_img_src(img)
                     if src:
                         blocks.append({"type": "image", "value": src})
-                # 텍스트
                 text = (await child.inner_text()).strip()
                 if text:
-                    blocks.append({"type": "text", "value": text})
+                    rich = await self._extract_rich_text(child)
+                    blocks.append({"type": "text", "value": text, "rich_text": rich})
 
         except Exception as e:
             logger.warning(f"[NaverBlog] ordered_blocks 추출 실패: {e}")
 
         return blocks
+
+    async def _extract_rich_text(self, element) -> list[dict]:
+        """요소에서 텍스트와 하이퍼링크를 rich_text 배열로 추출.
+        반환: [{"text": "일반텍스트"}, {"text": "링크텍스트", "url": "https://..."}]
+        """
+        try:
+            # JS로 직접 텍스트 노드와 링크를 순서대로 추출
+            rich_text = await element.evaluate("""el => {
+                const result = [];
+                function walk(node) {
+                    if (node.nodeType === 3) { // TEXT_NODE
+                        const t = node.textContent;
+                        if (t) result.push({text: t});
+                    } else if (node.tagName === 'A') {
+                        const href = node.href || node.getAttribute('href') || '';
+                        const t = node.innerText || node.textContent || '';
+                        if (t && href && href.startsWith('http')) {
+                            result.push({text: t, url: href});
+                        } else if (t) {
+                            result.push({text: t});
+                        }
+                    } else if (node.tagName === 'BR') {
+                        result.push({text: '\\n'});
+                    } else {
+                        for (const child of node.childNodes) {
+                            walk(child);
+                        }
+                    }
+                }
+                walk(el);
+                return result;
+            }""")
+            return rich_text if rich_text else []
+        except Exception:
+            # 폴백: 순수 텍스트
+            try:
+                text = (await element.inner_text()).strip()
+                return [{"text": text}] if text else []
+            except Exception:
+                return []
 
     async def _get_img_src(self, img) -> Optional[str]:
         """img 요소에서 유효한 src URL 추출 (필터링 포함)"""
@@ -834,23 +874,44 @@ class NaverBlogScraper:
             blocks.append(NotionClient.block_divider())
 
         # ordered_blocks가 있으면 원래 순서대로 변환
+        # 연속 텍스트 블록은 \n으로 합쳐서 하나의 paragraph로 (이중 줄바꿈 방지)
         ordered = result.get("ordered_blocks", [])
         if ordered:
-            for ob in ordered:
+            # 연속 텍스트 블록을 그룹으로 묶기
+            i = 0
+            while i < len(ordered):
+                ob = ordered[i]
                 if ob["type"] == "text":
-                    # 노션 paragraph는 2000자 제한 → 긴 텍스트는 분할
-                    text = ob["value"]
-                    while text:
-                        chunk = text[:2000]
-                        blocks.append(NotionClient.block_paragraph(chunk))
-                        text = text[2000:]
+                    # 연속된 text 블록들의 rich_text를 합치기
+                    merged_rich: list[dict] = []
+                    while i < len(ordered) and ordered[i]["type"] == "text":
+                        cur = ordered[i]
+                        if merged_rich:
+                            # 이전 텍스트와 구분을 위해 줄바꿈 추가
+                            merged_rich.append({"text": "\n"})
+                        rich = cur.get("rich_text", [])
+                        if rich:
+                            merged_rich.extend(rich)
+                        else:
+                            merged_rich.append({"text": cur["value"]})
+                        i += 1
+                    # rich_text 전체 길이 체크 후 블록 생성
+                    blocks.append(NotionClient.block_paragraph_rich(merged_rich))
                 elif ob["type"] == "image":
                     blocks.append(NotionClient.block_image(ob["value"]))
+                    i += 1
                 elif ob["type"] == "quote":
-                    text = ob["value"][:2000]
-                    blocks.append(NotionClient.block_quote(text))
+                    rich = ob.get("rich_text", [])
+                    if rich:
+                        blocks.append(NotionClient.block_quote_rich(rich))
+                    else:
+                        blocks.append(NotionClient.block_quote(ob["value"][:2000]))
+                    i += 1
                 elif ob["type"] == "divider":
                     blocks.append(NotionClient.block_divider())
+                    i += 1
+                else:
+                    i += 1
         else:
             # ordered_blocks가 없으면 content + images 순서로 폴백
             content = result.get("content", "")

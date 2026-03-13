@@ -207,6 +207,49 @@ class NotionClient:
         return block
 
     @staticmethod
+    def block_paragraph_rich(rich_text_items: list[dict]) -> dict:
+        """rich_text 배열(하이퍼링크 포함)로 paragraph 블록 생성.
+        rich_text_items: [{"text": "일반텍스트"}, {"text": "링크", "url": "https://..."}]
+        """
+        notion_rich = []
+        for item in rich_text_items:
+            t = item.get("text", "")
+            if not t:
+                continue
+            # 2000자 제한 처리
+            t = t[:2000]
+            rt: dict = {"type": "text", "text": {"content": t}}
+            if item.get("url"):
+                rt["text"]["link"] = {"url": item["url"]}
+            notion_rich.append(rt)
+        if not notion_rich:
+            notion_rich = [{"type": "text", "text": {"content": ""}}]
+        return {
+            "type": "paragraph",
+            "paragraph": {"rich_text": notion_rich},
+        }
+
+    @staticmethod
+    def block_quote_rich(rich_text_items: list[dict]) -> dict:
+        """rich_text 배열(하이퍼링크 포함)로 quote 블록 생성."""
+        notion_rich = []
+        for item in rich_text_items:
+            t = item.get("text", "")
+            if not t:
+                continue
+            t = t[:2000]
+            rt: dict = {"type": "text", "text": {"content": t}}
+            if item.get("url"):
+                rt["text"]["link"] = {"url": item["url"]}
+            notion_rich.append(rt)
+        if not notion_rich:
+            notion_rich = [{"type": "text", "text": {"content": ""}}]
+        return {
+            "type": "quote",
+            "quote": {"rich_text": notion_rich},
+        }
+
+    @staticmethod
     def block_quote(text: str) -> dict:
         """인용문 블록"""
         return {
