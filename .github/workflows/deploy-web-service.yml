@@ -29,8 +29,10 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_lQMdwq03iCqUN9tTdDFl2VGe
           VERCEL_PROJECT_ID: prj_wjDCoxByxtMZNs8NW4LmoPk8fd0F
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           cd web-service
+          export BUILD_NUM=$(printf "%04d" $BUILD_NUM)
           vercel pull --yes --environment=production --token=$VERCEL_TOKEN
           vercel build --prod --token=$VERCEL_TOKEN
           vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
