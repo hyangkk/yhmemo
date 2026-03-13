@@ -14,6 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Playwright 브라우저 설치 (Chromium만)
 RUN playwright install --with-deps chromium
 
+# 빌드 시 git commit SHA 주입
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=${BUILD_SHA}
+
 # 소스 코드 복사
 COPY . .
 

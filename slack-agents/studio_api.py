@@ -50,7 +50,8 @@ class EditRequest(BaseModel):
 @app.get("/health")
 async def health():
     ffmpeg_ok = _check_ffmpeg()
-    return {"status": "ok", "service": "studio", "ffmpeg": ffmpeg_ok}
+    build_sha = os.environ.get("BUILD_SHA", "dev")
+    return {"status": "ok", "service": "studio", "ffmpeg": ffmpeg_ok, "build_sha": build_sha}
 
 
 @app.post("/edit")
