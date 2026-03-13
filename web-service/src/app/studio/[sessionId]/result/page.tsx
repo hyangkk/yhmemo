@@ -43,8 +43,10 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   useEffect(() => {
     const startTime = Date.now();
 
+    const fetchSession = () => fetch(`/api/studio/sessions/${sessionId}?_t=${Date.now()}`, { cache: 'no-store' });
+
     const load = async () => {
-      const res = await fetch(`/api/studio/sessions/${sessionId}`, { cache: 'no-store' });
+      const res = await fetchSession();
       if (res.ok) {
         setData(await res.json());
       }
@@ -54,7 +56,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
     // 세션 상태 폴링 (done + error가 아닌 한 계속)
     const interval = setInterval(async () => {
-      const res = await fetch(`/api/studio/sessions/${sessionId}`, { cache: 'no-store' });
+      const res = await fetchSession();
       if (res.ok) {
         const d: SessionData = await res.json();
         setData(d);
