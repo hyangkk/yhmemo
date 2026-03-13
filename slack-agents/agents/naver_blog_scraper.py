@@ -53,9 +53,9 @@ class NaverBlogScraper:
     ]
 
     # 페이지 로딩 타임아웃 (ms)
-    PAGE_TIMEOUT = 60000
-    IFRAME_TIMEOUT = 30000
-    SELECTOR_TIMEOUT = 10000
+    PAGE_TIMEOUT = 30000
+    IFRAME_TIMEOUT = 15000
+    SELECTOR_TIMEOUT = 8000
 
     def __init__(self):
         self._browser = None
@@ -237,23 +237,18 @@ class NaverBlogScraper:
 
         # mainFrame iframe 찾기
         iframe = page.frame("mainFrame")
+        if not iframe:
+            # iframe이 JS로 동적 생성될 수 있으므로 잠시 대기 후 재시도
+            logger.info("[NaverBlog] mainFrame 없음, 2초 대기 후 재시도")
+            await asyncio.sleep(2)
+            iframe = page.frame("mainFrame")
+
         if iframe:
             content_frame = iframe
             try:
                 await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
             except Exception as e:
-                logger.warning(f"[NaverBlog] iframe domcontentloaded 대기 타임아웃: {e}")
-        else:
-            # iframe이 JS로 동적 생성될 수 있으므로 잠시 대기 후 재시도
-            logger.info("[NaverBlog] mainFrame 없음, 3초 대기 후 재시도")
-            await asyncio.sleep(3)
-            iframe = page.frame("mainFrame")
-            if iframe:
-                content_frame = iframe
-                try:
-                    await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
-                except Exception:
-                    pass
+                logger.warning(f"[NaverBlog] iframe domcontentloaded 대기 타임아웃, 계속 진행: {e}")
 
         return content_frame
 
@@ -300,11 +295,8 @@ class NaverBlogScraper:
             logger.info(f"[NaverBlog] 접속 중: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
 
-            # networkidle 대기 (최대 15초) - JS 렌더링 완료 대기
-            try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
+            # 고정 대기 (네이버 JS 렌더링 시간 확보, networkidle 대신)
+            await asyncio.sleep(3)
 
             content_frame = await self._get_content_frame(page)
             content_el = await self._find_content_element(content_frame)
@@ -346,10 +338,7 @@ class NaverBlogScraper:
             logger.info(f"[NaverBlog] PostView 직접 접속: {postview_url}")
             await page.goto(postview_url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
 
-            try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
+            await asyncio.sleep(3)
 
             content_frame = await self._get_content_frame(page)
             content_el = await self._find_content_element(content_frame)
