@@ -121,7 +121,7 @@ export default function StudioPage() {
                 <span>#{version.front}</span>
               ) : (
                 <span>
-                  F.{version.front} · S.{version.server}
+                  front {version.front} · server {version.server}
                 </span>
               )}
             </p>
