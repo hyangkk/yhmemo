@@ -106,15 +106,20 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
     work_dir = DATA_DIR / session_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    total_steps = 4
+    n_clips = len(clips)
+    # 총 단계: 클립별 다운로드(N) + 클립별 분석(N) + 세그먼트 계산(1) + 인코딩(1) + 업로드(1)
+    total_steps = n_clips + n_clips + 3
 
     try:
-        # 1. 클립 다운로드
-        _update_edit_step(sb, result_id, 1, total_steps, "클립 다운로드 중")
+        # 1~N. 클립 개별 다운로드
         supabase_url = os.environ["SUPABASE_URL"]
         local_files = []
+        sorted_clips = sorted(clips, key=lambda c: c.get("device_id", ""))
         async with httpx.AsyncClient(timeout=120) as client:
-            for clip in sorted(clips, key=lambda c: c.get("device_id", "")):
+            for i, clip in enumerate(sorted_clips):
+                step = i + 1
+                _update_edit_step(sb, result_id, step, total_steps,
+                                  f"클립 다운로드 중 ({i+1}/{n_clips})")
                 url = f"{supabase_url}/storage/v1/object/public/studio-clips/{clip['storage_path']}"
                 resp = await client.get(url)
                 if resp.status_code != 200:
@@ -126,27 +131,48 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         if not local_files:
             raise Exception("다운로드된 클립이 없습니다")
 
-        # 2. 영상 분석
-        _update_edit_step(sb, result_id, 2, total_steps, "영상 분석 중")
+        # N+1 ~ 2N. 클립별 영상 분석
+        def on_analyze(clip_idx: int):
+            step = n_clips + clip_idx + 1
+            _update_edit_step(sb, result_id, step, total_steps,
+                              f"오디오 분석 중 ({clip_idx+1}/{n_clips})")
 
-        # 3. FFmpeg 편집
-        _update_edit_step(sb, result_id, 3, total_steps, "영상 편집 중")
+        # 2N+1. 세그먼트 계산
+        def on_segments():
+            step = n_clips * 2 + 1
+            _update_edit_step(sb, result_id, step, total_steps, "편집 구간 계산 중")
+
+        # 2N+2. FFmpeg 인코딩
+        def on_encode():
+            step = n_clips * 2 + 2
+            _update_edit_step(sb, result_id, step, total_steps, "FFmpeg 인코딩 중")
+
         output_path = work_dir / f"result_{result_id}.mp4"
 
+        progress_cb = {"on_analyze": on_analyze, "on_segments": on_segments, "on_encode": on_encode}
+
         if len(local_files) == 1:
-            # 세로 영상도 가로(1280x720) 프레임에 맞춤 (pillarbox)
+            on_analyze(0)
+            on_segments()
+            on_encode()
             _run_ffmpeg(["-i", local_files[0],
                         "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
                         + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [str(output_path)])
         elif mode == "split":
+            on_analyze(0)
+            on_segments()
+            on_encode()
             _edit_split_screen(local_files, str(output_path))
         elif mode == "pip":
+            on_analyze(0)
+            on_segments()
+            on_encode()
             _edit_pip(local_files, str(output_path))
         else:
-            _edit_auto_cut(local_files, str(output_path))
+            _edit_auto_cut(local_files, str(output_path), progress=progress_cb)
 
-        # 4. 결과 업로드
-        _update_edit_step(sb, result_id, 4, total_steps, "결과 업로드 중")
+        # 마지막 단계: 결과 업로드
+        _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
         result_storage_path = f"{session_id}/result_{result_id}.mp4"
         with open(output_path, "rb") as f:
             sb.storage.from_("studio-clips").upload(
@@ -242,11 +268,16 @@ def _build_round_robin_segments(n: int, total_dur: float, interval: float = 3.0)
     return segments
 
 
-def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
+def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progress: dict | None = None):
     """자동 컷편집: 3초 간격으로 카메라 전환, 오디오 분석 가능 시 스마트 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     min_dur = min(durations) if durations else 0
     if min_dur <= 0:
+        if progress:
+            for i in range(len(files)):
+                progress["on_analyze"](i)
+            progress["on_segments"]()
+            progress["on_encode"]()
         _simple_concat(files, output)
         return
 
@@ -256,7 +287,9 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
     # 오디오 분석 시도
     audio_ok = False
     all_levels: list[list[float]] = []
-    for f in files:
+    for i, f in enumerate(files):
+        if progress:
+            progress["on_analyze"](i)
         levels = _analyze_audio_levels(f)
         all_levels.append(levels)
         print(f"[studio] 오디오 분석: {f} → {len(levels)}개 샘플", flush=True)
@@ -311,13 +344,21 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
         # 오디오 분석 실패 → 고정 간격 라운드로빈
         segments = _build_round_robin_segments(n, min_dur, interval)
 
+    if progress:
+        progress["on_segments"]()
+
     if not segments:
+        if progress:
+            progress["on_encode"]()
         _simple_concat(files, output)
         return
 
     print(f"[studio] 자동 편집: {len(segments)}개 세그먼트 (카메라 {n}대, 총 {min_dur:.1f}초)", flush=True)
     for i, (cam, s, e) in enumerate(segments):
         print(f"[studio]   세그먼트 {i}: 카메라{cam} {s:.1f}~{e:.1f}초", flush=True)
+
+    if progress:
+        progress["on_encode"]()
 
     # 출력 해상도 (가로 기준)
     out_w, out_h = 1280, 720
