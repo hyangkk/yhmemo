@@ -253,7 +253,10 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs text-gray-400 font-mono">{session.code}</span>
             <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">{devices.length}대</span>
-            {isHost && <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">호스트</span>}
+            {isHost
+              ? <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">호스트 카메라</span>
+              : <span className="text-xs bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full">서브 카메라</span>
+            }
           </div>
 
           {/* 오른쪽: 녹화 버튼 (호스트) / 상태 (비호스트) */}
