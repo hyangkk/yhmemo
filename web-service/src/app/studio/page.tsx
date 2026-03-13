@@ -63,7 +63,7 @@ export default function StudioPage() {
               placeholder="촬영 제목 (선택)"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="flex-1 bg-gray-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-purple-500"
+              className="flex-1 min-w-0 bg-gray-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-purple-500"
             />
             <button
               onClick={createSession}
@@ -91,7 +91,7 @@ export default function StudioPage() {
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
               maxLength={2}
-              className="flex-1 bg-gray-800 rounded-xl px-3 py-2.5 text-white text-center text-2xl tracking-[0.3em] font-mono placeholder-gray-500 placeholder:text-sm placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-w-0 bg-gray-800 rounded-xl px-3 py-2.5 text-white text-center text-lg tracking-[0.2em] font-mono placeholder-gray-500 placeholder:text-sm placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               onClick={joinSession}
