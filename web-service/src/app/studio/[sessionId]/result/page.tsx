@@ -107,16 +107,16 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   return (
     <div className="min-h-screen bg-black text-white">
       {/* 상태 헤더 */}
-      <div className="px-4 py-4 bg-gray-900 border-b border-gray-800">
-        <div className="max-w-2xl mx-auto">
-          <h1 className="text-xl font-bold">{session.title}</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            {devices.length}대 카메라 · {clips.length}개 클립
-          </p>
+      <div className="px-4 py-2.5 bg-gray-900 border-b border-gray-800">
+        <div className="max-w-2xl mx-auto flex items-baseline gap-2">
+          <h1 className="text-lg font-bold">{session.title}</h1>
+          <span className="text-gray-500 text-xs">
+            {devices.length}대 · {clips.length}클립
+          </span>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto p-4 space-y-6">
+      <div className="max-w-2xl mx-auto p-3 space-y-3">
         {/* 업로드 대기 중 */}
         {session.status === 'uploading' && (() => {
           const doneCount = devices.filter(d => d.status === 'done').length;
@@ -124,21 +124,23 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           const errorCount = devices.filter(d => d.status === 'error').length;
           const allFinished = devices.every(d => d.status === 'done' || d.status === 'error');
           return (
-            <div className="bg-blue-900/30 border border-blue-500/30 rounded-2xl p-6 text-center space-y-3">
+            <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-3 flex items-center gap-3">
               {!allFinished && (
-                <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto" />
+                <div className="w-6 h-6 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
               )}
-              <h2 className="text-lg font-semibold">
-                {allFinished ? '업로드 완료' : '영상 업로드 중'}
-              </h2>
-              <p className="text-gray-400 text-sm">
-                {doneCount}/{devices.length}대 카메라 업로드 완료
-                {waitingCount > 0 && ` · ${waitingCount}대 대기중`}
-                {allFinished && errorCount > 0 && ` · ${errorCount}대 실패`}
-              </p>
-              {allFinished && clips.length > 0 && (
-                <p className="text-gray-500 text-xs">편집 준비 중...</p>
-              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">
+                  {allFinished ? '업로드 완료' : '영상 업로드 중'}
+                  <span className="text-gray-400 font-normal ml-2">
+                    {doneCount}/{devices.length}대
+                    {waitingCount > 0 && ` · ${waitingCount}대 대기`}
+                    {allFinished && errorCount > 0 && ` · ${errorCount}대 실패`}
+                  </span>
+                </p>
+                {allFinished && clips.length > 0 && (
+                  <p className="text-gray-500 text-xs mt-0.5">편집 준비 중...</p>
+                )}
+              </div>
             </div>
           );
         })()}
@@ -147,137 +149,123 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {session.status === 'editing' && (() => {
           const editStep = parseEditStep(data.result);
           return (
-            <div className="bg-purple-900/30 border border-purple-500/30 rounded-2xl p-6 text-center space-y-4">
-              <div className="w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mx-auto" />
-              <h2 className="text-lg font-semibold">영상 편집 중</h2>
+            <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">
+                    영상 편집 중
+                    {editStep && (
+                      <span className="text-purple-300 ml-2">
+                        {editStep.step}/{editStep.total} · {editStep.description}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
               {editStep ? (
-                <>
-                  <div className="space-y-2">
-                    <p className="text-purple-300 font-medium">
-                      {editStep.step}/{editStep.total} 단계: {editStep.description}
-                    </p>
-                    <div className="w-full h-2 bg-purple-900/50 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-purple-500 rounded-full transition-all duration-500"
-                        style={{ width: `${(editStep.step / editStep.total) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
-                </>
+                <div className="w-full h-1.5 bg-purple-900/50 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full transition-all duration-500"
+                    style={{ width: `${(editStep.step / editStep.total) * 100}%` }}
+                  />
+                </div>
               ) : (
-                <p className="text-gray-400 text-sm">
-                  AI가 다각도 영상을 분석하고 최적의 컷을 조합하고 있습니다.<br />
-                  완료되면 자동으로 전환됩니다.
-                </p>
+                <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
               )}
             </div>
           );
         })()}
 
         {session.status === 'done' && data.result?.status === 'done' && (
-          <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-4">
-            <div className="text-4xl">✅</div>
-            <h2 className="text-lg font-semibold">편집 완료!</h2>
-            {data.result.duration_ms && (
-              <p className="text-gray-400 text-sm">
-                편집 영상 길이: {formatDuration(data.result.duration_ms)}
+          <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
+            <span className="text-xl">✅</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">
+                편집 완료
+                {data.result.duration_ms && (
+                  <span className="text-gray-400 font-normal ml-2">{formatDuration(data.result.duration_ms)}</span>
+                )}
               </p>
-            )}
+            </div>
             <a
               href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${data.result.storage_path}`}
               download
-              className="inline-block bg-green-600 hover:bg-green-500 px-6 py-3 rounded-xl font-semibold transition"
+              className="bg-green-600 hover:bg-green-500 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
             >
-              편집 영상 다운로드
+              다운로드
             </a>
           </div>
         )}
         {session.status === 'done' && !data.result && (
-          <div className="bg-green-900/30 border border-green-500/30 rounded-2xl p-6 text-center space-y-3">
-            <div className="text-4xl">✅</div>
-            <h2 className="text-lg font-semibold">촬영 완료!</h2>
-            <p className="text-gray-400 text-sm">
-              아래에서 각 카메라의 클립을 개별 다운로드할 수 있습니다.
-            </p>
+          <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
+            <span className="text-xl">✅</span>
+            <p className="text-sm font-medium">촬영 완료 · 아래에서 클립을 다운로드하세요</p>
           </div>
         )}
         {session.status === 'done' && data.result?.status === 'error' && (
-          <div className="bg-red-900/30 border border-red-500/30 rounded-2xl p-6 text-center space-y-4">
-            <div className="text-4xl">⚠️</div>
-            <h2 className="text-lg font-semibold">편집 중 오류 발생</h2>
-            <p className="text-gray-400 text-sm">영상 편집에 실패했습니다. 각 클립은 아래에서 개별 다운로드 가능합니다.</p>
-            <button
-              disabled={retrying}
-              onClick={async () => {
-                setRetrying(true);
-                try {
-                  const res = await fetch(`/api/studio/sessions/${sessionId}/retry`, { method: 'POST' });
-                  if (res.ok) {
-                    const d = await res.json();
-                    setData(prev => prev ? { ...prev, session: { ...prev.session, status: 'editing' }, result: d.result } : prev);
-                    setPollKey(k => k + 1);
+          <div className="bg-red-900/30 border border-red-500/30 rounded-xl p-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">⚠️</span>
+              <p className="text-sm font-medium flex-1">편집 실패 · 클립은 개별 다운로드 가능</p>
+              <button
+                disabled={retrying}
+                onClick={async () => {
+                  setRetrying(true);
+                  try {
+                    const res = await fetch(`/api/studio/sessions/${sessionId}/retry`, { method: 'POST' });
+                    if (res.ok) {
+                      const d = await res.json();
+                      setData(prev => prev ? { ...prev, session: { ...prev.session, status: 'editing' }, result: d.result } : prev);
+                      setPollKey(k => k + 1);
+                    }
+                  } finally {
+                    setRetrying(false);
                   }
-                } finally {
-                  setRetrying(false);
-                }
-              }}
-              className="inline-block bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed px-6 py-3 rounded-xl font-semibold transition"
-            >
-              {retrying ? '재시도 준비 중...' : '다시 편집 시도하기'}
-            </button>
+                }}
+                className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
+              >
+                {retrying ? '준비 중...' : '다시 시도'}
+              </button>
+            </div>
           </div>
         )}
 
-        {/* 업로드된 클립 목록 */}
+        {/* 촬영된 클립 */}
         <div>
-          <h2 className="text-lg font-semibold mb-3">촬영된 클립</h2>
-          <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-gray-400 mb-1.5">촬영된 클립</h2>
+          <div className="space-y-1">
             {clips.map((clip, idx) => (
-              <button
+              <div
                 key={clip.id}
-                onClick={() => setSelectedClipIdx(idx)}
-                className={`w-full flex items-center gap-4 p-4 rounded-xl transition text-left ${
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition ${
                   selectedClipIdx === idx ? 'bg-purple-600/20 border border-purple-500/30' : 'bg-gray-900 hover:bg-gray-800'
                 }`}
+                onClick={() => setSelectedClipIdx(idx)}
               >
-                <div className="w-10 h-10 bg-gray-700 rounded-lg flex items-center justify-center text-lg">
-                  🎥
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">{getDeviceName(clip.device_id)}</p>
-                  <p className="text-sm text-gray-400">
-                    {formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}
-                  </p>
-                </div>
+                <span className="text-base">🎥</span>
+                <span className="flex-1 text-sm font-medium min-w-0 truncate">{getDeviceName(clip.device_id)}</span>
+                <span className="text-xs text-gray-500">{formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}</span>
                 <a
                   href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
                   download
                   onClick={(e) => e.stopPropagation()}
-                  className="text-blue-400 hover:text-blue-300 text-sm underline"
+                  className="text-blue-400 hover:text-blue-300 text-xs"
                 >
-                  다운로드
+                  저장
                 </a>
-              </button>
+              </div>
             ))}
           </div>
         </div>
 
-        {/* 네비게이션 버튼 */}
-        <div className="pt-4 space-y-3">
-          <button
-            onClick={() => router.push('/studio')}
-            className="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-xl font-semibold transition"
-          >
-            새 촬영 시작
-          </button>
-          <button
-            onClick={() => router.push('/studio')}
-            className="w-full bg-gray-800 hover:bg-gray-700 py-3 rounded-xl font-semibold transition"
-          >
-            홈으로 돌아가기
-          </button>
-        </div>
+        {/* 하단 버튼 */}
+        <button
+          onClick={() => router.push('/studio')}
+          className="w-full bg-gray-800 hover:bg-gray-700 py-2.5 rounded-xl text-sm font-semibold transition"
+        >
+          새 촬영 시작
+        </button>
       </div>
     </div>
   );
