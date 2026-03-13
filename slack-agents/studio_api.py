@@ -158,6 +158,8 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             _run_ffmpeg(["-i", local_files[0],
                         "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
                         + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [str(output_path)])
+        elif mode == "director":
+            _edit_ai_director(local_files, str(output_path), progress=progress_cb)
         elif mode == "split":
             on_analyze(0)
             on_segments()
@@ -173,7 +175,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
-        result_storage_path = f"{session_id}/result_{result_id}.mp4"
+        result_storage_path = f"{session_id}/result_{result_id}_{mode}.mp4"
         with open(output_path, "rb") as f:
             sb.storage.from_("studio-clips").upload(
                 result_storage_path, f.read(),
@@ -426,6 +428,145 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
                 IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
 
 
+def _edit_ai_director(files: list[str], output: str, progress: dict | None = None):
+    """AI 감독 모드: 메인 카메라 중심 + 리액션 컷어웨이 (3~5초 주기)"""
+    durations = [_get_duration(f) or 0 for f in files]
+    print(f"[studio] AI감독 durations: {durations}", flush=True)
+    min_dur = min(durations) if durations else 0
+
+    if min_dur <= 0 or len(files) < 2:
+        if progress:
+            for i in range(len(files)):
+                progress["on_analyze"](i)
+            progress["on_segments"]()
+            progress["on_encode"]()
+        _simple_concat(files, output)
+        return
+
+    n = len(files)
+
+    # 오디오 분석
+    all_levels: list[list[float]] = []
+    for i, f in enumerate(files):
+        if progress:
+            progress["on_analyze"](i)
+        levels = _analyze_audio_levels(f)
+        all_levels.append(levels)
+        print(f"[studio] AI감독 오디오: {f} → {len(levels)}샘플", flush=True)
+
+    min_samples = min(len(l) for l in all_levels)
+    max_len = min(int(min_dur), min_samples)
+
+    for i in range(n):
+        all_levels[i] = all_levels[i][:max_len]
+
+    # 메인 카메라 결정 (평균 오디오가 가장 큰 카메라 = 화자)
+    def _avg_active(levels: list[float]) -> float:
+        active = [l for l in levels if l > -80]
+        return sum(active) / len(active) if active else -100.0
+
+    avg_levels = [_avg_active(l) for l in all_levels]
+    main_cam = avg_levels.index(max(avg_levels))
+    print(f"[studio] AI감독 메인카메라: {main_cam} (avg={avg_levels})", flush=True)
+
+    if progress:
+        progress["on_segments"]()
+
+    # 세그먼트 구성: 메인(2~3.5초) → 컷어웨이(0.8~1.5초) → 메인 → ...
+    segments: list[tuple[int, float, float]] = []
+    t = 0.0
+    on_main = True
+
+    while t < min_dur - 0.3:
+        if on_main:
+            # 메인 카메라 구간 (2.0~3.5초)
+            # 사이드 카메라에 오디오 스파이크가 있으면 그 시점에 전환
+            base_dur = 2.5
+            best_cut = min(t + base_dur, min_dur)
+
+            # 2~4초 구간에서 사이드 카메라 반응 탐색
+            search_start = int(t) + 2
+            search_end = min(int(t) + 5, max_len)
+            best_spike = -200.0
+            for sec in range(search_start, search_end):
+                for cam in range(n):
+                    if cam == main_cam:
+                        continue
+                    # 사이드 카메라의 오디오가 자기 평균보다 높은 순간 (리액션)
+                    spike = all_levels[cam][sec] - avg_levels[cam]
+                    if spike > best_spike and spike > 2.0:  # 2dB 이상 스파이크
+                        best_spike = spike
+                        best_cut = float(sec)
+
+            segments.append((main_cam, t, best_cut))
+            t = best_cut
+            on_main = False
+        else:
+            # 컷어웨이 구간 (0.8~1.5초)
+            sec_idx = min(int(t), max_len - 1)
+
+            # 가장 활발한 사이드 카메라 선택
+            side_cam = (main_cam + 1) % n
+            best_level = -200.0
+            for cam in range(n):
+                if cam == main_cam:
+                    continue
+                lvl = all_levels[cam][sec_idx] if sec_idx < len(all_levels[cam]) else -100
+                if lvl > best_level:
+                    best_level = lvl
+                    side_cam = cam
+
+            cutaway_dur = 1.0
+            # 리액션이 강하면 약간 더 길게 (최대 1.5초)
+            if best_level > avg_levels[side_cam] + 5:
+                cutaway_dur = 1.5
+
+            end_t = min(t + cutaway_dur, min_dur)
+            segments.append((side_cam, t, end_t))
+            t = end_t
+            on_main = True
+
+    # 남은 시간 처리
+    if t < min_dur:
+        segments.append((main_cam, t, min_dur))
+
+    if not segments:
+        if progress:
+            progress["on_encode"]()
+        _simple_concat(files, output)
+        return
+
+    print(f"[studio] AI감독: {len(segments)}개 세그먼트 (메인=카메라{main_cam})", flush=True)
+    for i, (cam, s, e) in enumerate(segments):
+        tag = "메인" if cam == main_cam else "컷어웨이"
+        print(f"[studio]   [{tag}] 카메라{cam} {s:.1f}~{e:.1f}초 ({e-s:.1f}s)", flush=True)
+
+    if progress:
+        progress["on_encode"]()
+
+    # FFmpeg filter_complex 빌드 (auto_cut과 동일 구조)
+    out_w, out_h = 1280, 720
+    parts = []
+    concat_in = []
+    for i, (cam, start, end) in enumerate(segments):
+        dur = end - start
+        parts.append(
+            f"[{cam}:v]trim=start={start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
+            f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black[v{i}];"
+        )
+        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS[a{i}];")
+        concat_in.append(f"[v{i}][a{i}]")
+
+    fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
+    inp = []
+    for f in files:
+        inp.extend(["-i", f])
+
+    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "[outa]"] +
+                IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
+
+
 def _edit_split_screen(files: list[str], output: str):
     """화면 분할 (세로 영상은 pillarbox 처리)"""
     n = len(files)
@@ -520,25 +661,43 @@ def start_studio_server(port: int = 8000):
                 if not sessions.data:
                     continue
 
+                from datetime import datetime, timezone, timedelta
                 for sess in sessions.data:
                     sid = sess["id"]
                     # 이미 처리 중인 result가 있는지 확인
-                    existing = sb.table("studio_results").select("id,status,created_at").eq("session_id", sid).execute()
+                    existing = sb.table("studio_results").select("id,status,created_at,storage_path").eq("session_id", sid).execute()
                     processing = [r for r in (existing.data or []) if r["status"] == "processing"]
                     if processing:
-                        # 5분 이상 stuck된 processing은 error로 전환
-                        from datetime import datetime, timezone, timedelta
+                        handled = False
                         for r in processing:
+                            sp = r.get("storage_path", "")
                             created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
-                            if datetime.now(timezone.utc) - created > timedelta(minutes=5):
-                                print(f"[studio] 세션 {sid}: result {r['id']} 5분 초과, error 처리", flush=True)
-                                sb.table("studio_results").update({"status": "error"}).eq("id", r["id"]).execute()
-                            else:
-                                continue
-                        # 아직 유효한 processing이 남아있으면 skip
+                            age = datetime.now(timezone.utc) - created
+
+                            if sp.startswith("step:"):
+                                # 이미 편집 진행 중 → stuck 체크만
+                                if age > timedelta(minutes=5):
+                                    print(f"[studio] 세션 {sid}: result {r['id']} 5분 초과, error 처리", flush=True)
+                                    sb.table("studio_results").update({"status": "error"}).eq("id", r["id"]).execute()
+                                else:
+                                    handled = True
+                            elif sp.startswith("mode:") or sp == "":
+                                # 새로 생성된 result (아직 편집 시작 안됨) → 편집 시작
+                                mode = sp.split(":", 1)[1] if sp.startswith("mode:") else "auto"
+                                clips = sb.table("studio_clips").select("*").eq("session_id", sid).execute()
+                                if clips.data:
+                                    print(f"[studio] 세션 {sid}: 편집 시작 (모드={mode}, {len(clips.data)}개 클립)", flush=True)
+                                    asyncio.run(process_edit(sid, r["id"], clips.data, mode))
+                                    print(f"[studio] 세션 {sid}: 편집 완료 (모드={mode})", flush=True)
+                                handled = True
+                                break
+                        if handled:
+                            continue
+                        # stuck 처리 후 아직 processing 남았는지 재확인
                         still_processing = sb.table("studio_results").select("id").eq("session_id", sid).eq("status", "processing").execute()
                         if still_processing.data:
                             continue
+
                     if existing.data and any(r["status"] == "done" for r in existing.data):
                         # 결과는 있는데 세션이 아직 editing → done으로 전환
                         sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
@@ -551,18 +710,16 @@ def start_studio_server(port: int = 8000):
                         sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
                         continue
 
-                    # 편집 시작
-                    print(f"[studio] 세션 {sid}: 편집 시작 ({len(clips.data)}개 클립)", flush=True)
+                    # 편집 시작 (기본 auto 모드)
+                    print(f"[studio] 세션 {sid}: 편집 시작 (auto, {len(clips.data)}개 클립)", flush=True)
                     result = sb.table("studio_results").insert({
                         "session_id": sid,
-                        "storage_path": "",
+                        "storage_path": "mode:auto",
                         "status": "processing",
                     }).execute()
                     result_id = result.data[0]["id"]
-
-                    # 동기적으로 편집 실행 (폴링 스레드에서)
                     asyncio.run(process_edit(sid, result_id, clips.data, "auto"))
-                    print(f"[studio] 세션 {sid}: 편집 완료", flush=True)
+                    print(f"[studio] 세션 {sid}: 편집 완료 (auto)", flush=True)
 
             except Exception as e:
                 print(f"[studio] 폴링 오류: {e}", flush=True)
