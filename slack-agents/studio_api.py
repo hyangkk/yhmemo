@@ -202,7 +202,8 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
 
 def _run_ffmpeg(args: list[str]):
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    print(f"[studio] FFmpeg 실행: {' '.join(cmd[:10])}...", flush=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         raise Exception(f"FFmpeg 오류: {result.stderr}")
 
@@ -220,15 +221,53 @@ IOS_CONTAINER_OPTS = ["-movflags", "+faststart"]
 
 
 def _get_duration(path: str) -> float | None:
+    """영상 길이 조회 (webm 등 컨테이너에 duration 없는 경우도 처리)"""
+    # 1차: format=duration (mp4 등 대부분 컨테이너)
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
              "-of", "csv=p=0", path],
             capture_output=True, text=True, timeout=30,
         )
-        return float(result.stdout.strip())
+        val = result.stdout.strip()
+        if val and val != "N/A":
+            dur = float(val)
+            if dur > 0:
+                return dur
     except (ValueError, subprocess.TimeoutExpired):
-        return None
+        pass
+
+    # 2차: stream duration (webm/matroska에서 스트림 레벨 duration)
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        val = result.stdout.strip()
+        if val and val != "N/A":
+            dur = float(val)
+            if dur > 0:
+                return dur
+    except (ValueError, subprocess.TimeoutExpired):
+        pass
+
+    # 3차: 패킷 기반 duration 계산 (가장 느리지만 확실)
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "packet=pts_time",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=60,
+        )
+        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip() and l.strip() != "N/A"]
+        if lines:
+            return float(lines[-1])
+    except (ValueError, subprocess.TimeoutExpired, IndexError):
+        pass
+
+    return None
 
 
 def _analyze_audio_levels(filepath: str, interval: float = 1.0) -> list[float]:
@@ -271,8 +310,10 @@ def _build_round_robin_segments(n: int, total_dur: float, interval: float = 3.0)
 def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progress: dict | None = None):
     """자동 컷편집: 3초 간격으로 카메라 전환, 오디오 분석 가능 시 스마트 전환"""
     durations = [_get_duration(f) or 0 for f in files]
+    print(f"[studio] 클립 durations: {durations}", flush=True)
     min_dur = min(durations) if durations else 0
     if min_dur <= 0:
+        print(f"[studio] duration 감지 실패, 단순 이어붙이기 fallback", flush=True)
         if progress:
             for i in range(len(files)):
                 progress["on_analyze"](i)
