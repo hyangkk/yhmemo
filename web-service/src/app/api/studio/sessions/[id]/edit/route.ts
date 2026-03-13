@@ -7,7 +7,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { mode } = await req.json();
+  const { mode, audio_mode } = await req.json();
 
   if (!mode || !['auto', 'director', 'split', 'pip'].includes(mode)) {
     return NextResponse.json({ error: '잘못된 편집 모드' }, { status: 400 });
@@ -30,7 +30,7 @@ export async function POST(
     .from('studio_results')
     .insert({
       session_id: id,
-      storage_path: `mode:${mode}`,
+      storage_path: `mode:${mode}${audio_mode === 'best' ? ':audio=best' : ''}`,
       status: 'processing',
     })
     .select()

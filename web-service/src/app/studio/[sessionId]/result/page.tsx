@@ -43,6 +43,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [editingElapsed, setEditingElapsed] = useState(0);
   const [editingStartTime, setEditingStartTime] = useState(() => Date.now());
   const [finalizeCalled, setFinalizeCalled] = useState(false);
+  const [audioMode, setAudioMode] = useState<'each' | 'best'>('each');
 
   // 편집 중 경과 시간 타이머
   useEffect(() => {
@@ -112,7 +113,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
       const res = await fetch(`/api/studio/sessions/${sessionId}/edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, audio_mode: audioMode }),
       });
       if (res.ok) {
         const d = await res.json();
@@ -330,6 +331,35 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {/* 편집 모드 선택 (done 상태에서만 + 클립이 2개 이상일 때) */}
         {session.status === 'done' && clips.length >= 2 && (
           <div className="space-y-2">
+            {/* 음성 설정 */}
+            <div>
+              <h2 className="text-sm font-semibold text-gray-400 mb-1.5">음성 설정</h2>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setAudioMode('each')}
+                  className={`p-2.5 rounded-xl text-left transition border ${
+                    audioMode === 'each'
+                      ? 'bg-blue-900/40 border-blue-500/50'
+                      : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
+                  }`}
+                >
+                  <p className="text-sm font-semibold">🎙️ 각 영상 음성</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">화면에 맞는 카메라 음성</p>
+                </button>
+                <button
+                  onClick={() => setAudioMode('best')}
+                  className={`p-2.5 rounded-xl text-left transition border ${
+                    audioMode === 'best'
+                      ? 'bg-blue-900/40 border-blue-500/50'
+                      : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
+                  }`}
+                >
+                  <p className="text-sm font-semibold">🔊 최적 음성 하나</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">가장 좋은 마이크 음성만</p>
+                </button>
+              </div>
+            </div>
+
             <h2 className="text-sm font-semibold text-gray-400">다른 모드로 편집</h2>
             <div className="grid grid-cols-2 gap-2">
               <button
