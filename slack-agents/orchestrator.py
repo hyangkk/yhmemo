@@ -57,6 +57,7 @@ from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
+from agents.naver_blog_scraper import get_scraper as get_blog_scraper
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -477,6 +478,31 @@ async def main():
 
     slack.on_command("게시판", cmd_bulletin)
 
+    # "!블로그" → 네이버 블로그 글 스크래핑
+    async def cmd_blog(args: str, user: str, channel: str, thread_ts: str = None):
+        """!블로그 URL - 네이버 블로그 글 크롤링"""
+        url = args.strip()
+        if not url:
+            await _reply(channel, "사용법: `!블로그 https://blog.naver.com/블로그ID/글번호`", thread_ts)
+            return
+
+        # URL 여러 개 지원 (공백 구분)
+        urls = url.split()
+
+        await _reply(channel, f":mag: 네이버 블로그 크롤링 중... ({len(urls)}건)", thread_ts)
+
+        try:
+            scraper = await get_blog_scraper()
+            for u in urls:
+                result = await scraper.scrape(u)
+                msg = scraper.format_for_slack(result)
+                await _reply(channel, msg, thread_ts)
+        except Exception as e:
+            logger.error(f"[Blog] 스크래핑 오류: {e}", exc_info=True)
+            await _reply(channel, f":x: 블로그 스크래핑 중 오류 발생: {e}", thread_ts)
+
+    slack.on_command("블로그", cmd_blog)
+
     # ── 주식 매매 명령어 ──────────────────────────────────
     async def cmd_buy(args: str, user: str, channel: str, thread_ts: str = None):
         """!매수 종목코드 수량 [가격] - LS증권 매수 주문"""
@@ -845,6 +871,7 @@ async def main():
 - hr_salary: 연봉 조정, "연봉 올려줘", "연봉 깎아", hr_target(에이전트명), hr_amount(조정액, 만원), hr_reason(사유)
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
 - bulletin: 게시판 스크래핑, 공지사항 확인, 새 글 확인. "게시판 확인해줘", "공지사항 새 거 있어?", "문화센터 게시판 긁어줘", "새 공지 알려줘" 등
+- naver_blog: 네이버 블로그 글 크롤링/스크래핑. "이 블로그 글 읽어줘", "블로그 내용 가져와", "네이버 블로그 크롤링해줘" 등. 메시지에 blog.naver.com URL이 포함되어 있으면 이 인텐트. blog_urls 필드에 URL 목록을 넣으세요.
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
@@ -861,7 +888,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -872,6 +899,7 @@ async def main():
   "hr_target": "에이전트명 (hr_status/hr_salary일 때만)",
   "hr_amount": 0,
   "hr_reason": "사유 (hr_salary일 때만)",
+  "blog_urls": ["URL1", "URL2"],
   "clarify_question": "의도 확인용 질문 (clarify일 때만)",
   "ack": "지금 이 맥락에 딱 맞는 자연스러운 착수 한마디 (15자 이내, 기계적이지 않게)"
 }}""",
@@ -983,6 +1011,20 @@ async def main():
             elif action == "bulletin":
                 await cmd_bulletin("", user, channel, thread_ts)
                 result_text = "게시판 스크래핑 실행"
+            elif action == "naver_blog":
+                blog_urls = parsed.get("blog_urls", [])
+                if not blog_urls:
+                    # 메시지에서 URL 직접 추출 시도
+                    import re as _re
+                    found = _re.findall(r'https?://(?:m\.)?blog\.naver\.com/\S+', text)
+                    blog_urls = found if found else []
+                if blog_urls:
+                    await cmd_blog(" ".join(blog_urls), user, channel, thread_ts)
+                    result_text = f"네이버 블로그 스크래핑 {len(blog_urls)}건"
+                else:
+                    await _reply(channel, "블로그 URL을 찾지 못했어요. URL을 함께 보내주세요.\n예: `이 블로그 글 읽어줘 https://blog.naver.com/xxx/123`", thread_ts)
+                    result_text = "naver_blog URL 없음"
+                    success = False
             elif action == "dev":
                 # 실제 개발 실행: Claude Code CLI 호출
                 dev_task = parsed.get("dev_task", "").strip() or (query or "").strip()
