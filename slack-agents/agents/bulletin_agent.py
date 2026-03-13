@@ -456,6 +456,7 @@ class BulletinAgent(BaseAgent):
                     headers={
                         "Authorization": f"Bearer {key}",
                         "Content-Type": "application/json",
+                        "User-Agent": "YhmemoBot/1.0",
                     },
                     method="POST",
                 )
