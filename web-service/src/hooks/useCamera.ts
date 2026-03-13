@@ -22,8 +22,15 @@ interface UseCameraReturn {
   switchCamera: () => Promise<void>;
 }
 
+// 모바일 기기 감지
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
 export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
-  const { facingMode: initialFacing = 'environment', width = 1920, height = 1080 } = options;
+  const mobile = isMobileDevice();
+  const { facingMode: initialFacing = 'environment', width = mobile ? 1280 : 1920, height = mobile ? 720 : 1080 } = options;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -115,7 +122,9 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
         ? 'video/webm'
         : 'video/mp4';
 
-    const recorder = new MediaRecorder(currentStream, { mimeType });
+    // 모바일: 2Mbps, 데스크톱: 4Mbps로 비트레이트 제한 → 파일 크기 절감
+    const videoBitsPerSecond = mobile ? 2_000_000 : 4_000_000;
+    const recorder = new MediaRecorder(currentStream, { mimeType, videoBitsPerSecond });
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
