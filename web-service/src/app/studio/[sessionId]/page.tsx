@@ -23,6 +23,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
   const [recordingSignal, setRecordingSignal] = useState<'idle' | 'start' | 'stop'>('idle');
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadSize, setUploadSize] = useState<number>(0);
   const [uploading, setUploading] = useState(false);
   const [joined, setJoined] = useState(false);
   const joiningRef = useRef(false);
@@ -112,6 +113,8 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     }
 
     setUploading(true);
+    setUploadSize(blob.size);
+    setUploadProgress(0);
 
     // 디바이스 상태를 직접 업데이트
     try {
@@ -276,7 +279,14 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
-              <p className="text-gray-400">{uploadProgress}%</p>
+              <p className="text-gray-400">
+                {uploadProgress}%
+                {uploadSize > 0 && (
+                  <span className="text-gray-600 ml-2">
+                    ({(uploadSize / (1024 * 1024)).toFixed(1)}MB)
+                  </span>
+                )}
+              </p>
             </div>
           </div>
         )}
