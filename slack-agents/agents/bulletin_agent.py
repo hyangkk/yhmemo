@@ -573,9 +573,13 @@ class BulletinAgent(BaseAgent):
             try:
                 content, headers = await asyncio.to_thread(self._fetch_url, url)
                 html = self._decode_html(content, headers)
-                # 빈 응답이면 Playwright 폴백
-                if not html or len(html.strip()) < 100:
-                    raise RuntimeError("빈 응답 — Playwright 폴백")
+                # 빈 응답 또는 에러 페이지이면 Playwright 폴백
+                _error_patterns = ["bad request", "403 forbidden", "access denied",
+                                   "502 bad gateway", "서버 오류", "접근이 거부"]
+                _html_lower = html.lower() if html else ""
+                if (not html or len(html.strip()) < 100
+                        or any(ep in _html_lower for ep in _error_patterns)):
+                    raise RuntimeError(f"에러 페이지 감지 ({len(html)}자) — Playwright 폴백")
             except Exception as e:
                 logger.warning(f"[bulletin] HTTP 실패, Playwright 폴백 시도 ({url}): {e}")
                 try:
@@ -607,6 +611,34 @@ class BulletinAgent(BaseAgent):
                 posts = self._parse_list_board(soup, base_url, board)
             if not posts:
                 posts = self._parse_any_links(soup, base_url, board)
+
+        # urllib로 파싱했는데 게시글이 없고, Playwright 아직 안 써봤으면 폴백 시도
+        if not posts and not use_playwright:
+            logger.info(f"[bulletin] {board['name']}: urllib 파싱 결과 없음, Playwright 폴백 시도")
+            try:
+                css_sel = board.get("css_selector", "")
+                wait_sel = css_sel if css_sel else None
+                pw_html = await self._pw_fetch_html(url, wait_selector=wait_sel)
+                pw_soup = BeautifulSoup(pw_html, "html.parser")
+
+                if parser_type == "table":
+                    posts = self._parse_table_board(pw_soup, base_url, board)
+                elif parser_type == "list":
+                    posts = self._parse_list_board(pw_soup, base_url, board)
+                else:
+                    posts = self._parse_table_board(pw_soup, base_url, board)
+                    if not posts:
+                        posts = self._parse_list_board(pw_soup, base_url, board)
+                    if not posts:
+                        posts = self._parse_any_links(pw_soup, base_url, board)
+
+                if posts:
+                    use_playwright = True
+                    soup = pw_soup  # 디버그 정보도 업데이트
+                    html = pw_html
+                    logger.info(f"[bulletin] {board['name']}: Playwright 폴백 성공 ({len(posts)}건)")
+            except Exception as e:
+                logger.warning(f"[bulletin] {board['name']}: Playwright 폴백 실패: {e}")
 
         # Playwright 사용 게시판은 각 게시글 본문도 추출
         if use_playwright and posts:
