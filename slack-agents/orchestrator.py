@@ -57,6 +57,7 @@ from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
+from agents.innovation_agent import InnovationAgent
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -270,6 +271,7 @@ async def main():
     market_info = MarketInfoAgent(**common_kwargs)
     swing_trader = SwingTraderAgent(ls_client=ls_client, **common_kwargs)
     bulletin = BulletinAgent(**common_kwargs)
+    innovation = InnovationAgent(**common_kwargs)
 
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
@@ -280,7 +282,7 @@ async def main():
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
-                        "bulletin"]:
+                        "bulletin", "innovation"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
@@ -359,6 +361,14 @@ async def main():
     # "!생각일기" → 생각일기 한 마디 즉시 실행
     async def cmd_diary_quote(args: str, user: str, channel: str, thread_ts: str = None):
         err = await diary_quote.run_once(channel=channel, thread_ts=thread_ts)
+        if err:
+            await _reply(channel, err, thread_ts)
+
+    # "!혁신 [주제]" → 혁신 사업 아이템 즉시 리서치
+    async def cmd_innovation(args: str, user: str, channel: str, thread_ts: str = None):
+        topic = args.strip() if args.strip() else None
+        await _reply(channel, ":bulb: 혁신 사업 아이템 리서치 중...", thread_ts)
+        err = await innovation.run_once(channel=channel, thread_ts=thread_ts, topic=topic)
         if err:
             await _reply(channel, err, thread_ts)
 
@@ -450,6 +460,7 @@ async def main():
     slack.on_command("인사평가", cmd_hr_eval)
     slack.on_command("인사현황", cmd_hr_status)
     slack.on_command("연봉", cmd_salary)
+    slack.on_command("혁신", cmd_innovation)
 
     # "!게시판" → 게시판 스크래핑 즉시 실행 / 새 게시판 등록
     async def cmd_bulletin(args: str, user: str, channel: str, thread_ts: str = None):
@@ -839,6 +850,7 @@ async def main():
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
 - diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
+- innovation: 혁신 사업 아이템, 사업 아이디어, 비즈니스 아이디어, 사업개발, 창업 아이템, 스타트업 아이디어, 뷰자데, AI 사업, "혁신 아이템 찾아줘", "사업 아이디어 알려줘", "창업 아이템 추천". innovation_topic에 특정 주제 (없으면 자동 선택)
 - fortune: 운세 보기, 오늘의 운세
 - hr_eval: 인사평가 실행, 에이전트 평가, 성과 평가, "인사평가 해줘", "에이전트들 평가해봐"
 - hr_status: 인사현황, 연봉 조회, 에이전트 인사카드, "연봉 랭킹", "인사 현황 보여줘", "에이전트 연봉", "누가 제일 많이 받아?" hr_target 필드에 특정 에이전트명 (없으면 전체)
@@ -861,7 +873,8 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|innovation|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|chat|dev|clarify|ignore",
+  "innovation_topic": "특정 주제 (innovation일 때만, 없으면 빈 문자열)",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -936,6 +949,10 @@ async def main():
             elif action == "diary_quote":
                 await cmd_diary_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "생각일기 한마디 전송 완료"
+            elif action == "innovation":
+                topic = parsed.get("innovation_topic", "").strip()
+                await cmd_innovation(args=topic, user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "혁신 사업 아이템 리서치 완료"
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
@@ -1323,6 +1340,7 @@ async def main():
         "market_info": lambda: asyncio.create_task(market_info.start(), name="market_info"),
         "swing_trader": lambda: asyncio.create_task(swing_trader.start(), name="swing_trader"),
         "bulletin": lambda: asyncio.create_task(bulletin.start(), name="bulletin"),
+        "innovation": lambda: asyncio.create_task(innovation.start(), name="innovation"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
