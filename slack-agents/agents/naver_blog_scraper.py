@@ -16,20 +16,21 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from typing import Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# 불필요한 리소스 타입 (차단하여 로딩 속도 개선)
-_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
-# 차단할 URL 패턴 (광고/트래커)
+# 글 목록 조회 시만 차단 (본문 크롤링은 이미지 필요하므로 차단 안 함)
+_BLOCKED_RESOURCE_TYPES_LIST = {"image", "media", "font", "stylesheet"}
 _BLOCKED_URL_PATTERNS = [
     "google-analytics", "googletagmanager", "doubleclick",
     "adservice", "googlesyndication", "facebook.net",
     "connect.facebook", "analytics", "ad.naver", "adimg",
 ]
+# 본문 크롤링 시 차단할 리소스 (광고/트래커만, 이미지는 허용)
+_BLOCKED_RESOURCE_TYPES_POST = {"media", "font"}
 
 
 class NaverBlogScraper:
@@ -54,7 +55,7 @@ class NaverBlogScraper:
     # 페이지 로딩 타임아웃 (ms)
     PAGE_TIMEOUT = 60000
     IFRAME_TIMEOUT = 30000
-    SELECTOR_TIMEOUT = 8000
+    SELECTOR_TIMEOUT = 10000
 
     def __init__(self):
         self._browser = None
@@ -94,10 +95,22 @@ class NaverBlogScraper:
 
     @staticmethod
     def _normalize_url(url: str) -> str:
-        """모바일 URL을 PC 버전으로 변환"""
+        """모바일 URL을 PC 버전으로 변환, 불필요한 쿼리 파라미터 제거"""
         url = url.replace("m.blog.naver.com", "blog.naver.com")
         if not url.startswith("http"):
             url = "https://" + url
+        # fromRss, trackingCode 등 불필요한 쿼리 파라미터 제거
+        parsed = urlparse(url)
+        if parsed.query:
+            qs = parse_qs(parsed.query)
+            # 제거할 파라미터
+            for remove_key in ["fromRss", "trackingCode"]:
+                qs.pop(remove_key, None)
+            if qs:
+                clean_query = urlencode(qs, doseq=True)
+                url = parsed._replace(query=clean_query).geturl()
+            else:
+                url = parsed._replace(query="").geturl()
         return url
 
     @staticmethod
@@ -111,8 +124,11 @@ class NaverBlogScraper:
         m = re.search(r"blog\.naver\.com/([^/\?\s]+)", url)
         return m.group(1) if m else ""
 
-    async def _create_context(self, block_resources: bool = False):
-        """브라우저 컨텍스트 생성 (리소스 차단 옵션)"""
+    async def _create_context(self, block_mode: str = "none"):
+        """
+        브라우저 컨텍스트 생성
+        block_mode: "none" (차단 없음), "list" (목록용 - 이미지/CSS 차단), "post" (글용 - 광고만 차단)
+        """
         context = await self._browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -123,23 +139,32 @@ class NaverBlogScraper:
         )
         page = await context.new_page()
 
-        if block_resources:
-            await page.route("**/*", self._route_handler)
+        if block_mode == "list":
+            async def list_handler(route):
+                req = route.request
+                if req.resource_type in _BLOCKED_RESOURCE_TYPES_LIST:
+                    await route.abort()
+                    return
+                url_lower = req.url.lower()
+                if any(p in url_lower for p in _BLOCKED_URL_PATTERNS):
+                    await route.abort()
+                    return
+                await route.continue_()
+            await page.route("**/*", list_handler)
+        elif block_mode == "post":
+            async def post_handler(route):
+                req = route.request
+                if req.resource_type in _BLOCKED_RESOURCE_TYPES_POST:
+                    await route.abort()
+                    return
+                url_lower = req.url.lower()
+                if any(p in url_lower for p in _BLOCKED_URL_PATTERNS):
+                    await route.abort()
+                    return
+                await route.continue_()
+            await page.route("**/*", post_handler)
 
         return context, page
-
-    @staticmethod
-    async def _route_handler(route):
-        """불필요한 리소스 차단 핸들러"""
-        req = route.request
-        if req.resource_type in _BLOCKED_RESOURCE_TYPES:
-            await route.abort()
-            return
-        url_lower = req.url.lower()
-        if any(p in url_lower for p in _BLOCKED_URL_PATTERNS):
-            await route.abort()
-            return
-        await route.continue_()
 
     async def scrape(self, url: str, max_posts: int = 5) -> dict:
         """
@@ -174,7 +199,12 @@ class NaverBlogScraper:
         last_error = None
         for attempt in range(max_retries):
             try:
-                return await self._scrape_blog_post(url)
+                result = await self._scrape_blog_post(url)
+                # 본문이 비어있으면 PostView.naver 직접 접근으로 재시도
+                if result.get("success") and not result.get("content") and attempt < max_retries - 1:
+                    logger.warning(f"[NaverBlog] 본문 비어있음, PostView.naver로 재시도 (시도 {attempt + 1})")
+                    result = await self._scrape_blog_post_direct(url)
+                return result
             except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
@@ -183,45 +213,91 @@ class NaverBlogScraper:
                     await asyncio.sleep(wait)
         raise last_error
 
-    async def _scrape_blog_post(self, url: str) -> dict:
-        """실제 블로그 글 스크래핑"""
-        context, page = await self._create_context(block_resources=False)
+    def _to_postview_naver_url(self, url: str) -> Optional[str]:
+        """blog.naver.com/ID/글번호 → PostView.naver?blogId=ID&logNo=글번호 변환"""
+        m = re.search(r"blog\.naver\.com/([^/\?]+)/(\d+)", url)
+        if m:
+            blog_id, log_no = m.group(1), m.group(2)
+            return f"https://blog.naver.com/PostView.naver?blogId={blog_id}&logNo={log_no}"
+        return None
 
-        try:
-            direct_url = self._to_postview_url(url)
-            logger.info(f"[NaverBlog] 접속 중: {direct_url}")
+    async def _get_content_frame(self, page):
+        """페이지에서 콘텐츠 프레임 찾기 (iframe 또는 메인 페이지)"""
+        content_frame = page
 
-            await page.goto(direct_url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
-
-            # iframe이 있으면 iframe 안으로 진입
-            content_frame = page
+        # mainFrame iframe 찾기
+        iframe = page.frame("mainFrame")
+        if iframe:
+            content_frame = iframe
+            try:
+                await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
+            except Exception as e:
+                logger.warning(f"[NaverBlog] iframe domcontentloaded 대기 타임아웃: {e}")
+        else:
+            # iframe이 JS로 동적 생성될 수 있으므로 잠시 대기 후 재시도
+            logger.info("[NaverBlog] mainFrame 없음, 3초 대기 후 재시도")
+            await asyncio.sleep(3)
             iframe = page.frame("mainFrame")
             if iframe:
                 content_frame = iframe
-                await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
-
-            # 본문 영역 로드 대기 (여러 셀렉터 시도)
-            content_selectors = [
-                "div.se-main-container",       # 스마트에디터 3 (최신)
-                "div.__se_component_area",      # 스마트에디터 2
-                "div#postViewArea",             # 구버전
-                "div.post-view",                # 또 다른 구버전
-                "div#post-view",
-            ]
-
-            content_el = None
-            for sel in content_selectors:
                 try:
-                    await content_frame.wait_for_selector(sel, timeout=self.SELECTOR_TIMEOUT)
-                    content_el = await content_frame.query_selector(sel)
-                    if content_el:
-                        break
+                    await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
                 except Exception:
-                    continue
+                    pass
 
-            if not content_el:
-                logger.warning("[NaverBlog] 알려진 본문 셀렉터를 찾지 못함, body에서 시도")
-                content_el = await content_frame.query_selector("body")
+        return content_frame
+
+    async def _find_content_element(self, content_frame):
+        """본문 컨텐츠 요소 찾기"""
+        content_selectors = [
+            "div.se-main-container",       # 스마트에디터 3 (최신)
+            "div.__se_component_area",      # 스마트에디터 2
+            "div#postViewArea",             # 구버전
+            "div.post-view",                # 또 다른 구버전
+            "div#post-view",
+            "div.post_ct",                  # 일부 테마
+            "div#content-area",             # 콘텐츠 영역
+        ]
+
+        # 먼저 셀렉터 중 하나가 나타날 때까지 대기
+        combined_selector = ", ".join(content_selectors)
+        try:
+            await content_frame.wait_for_selector(combined_selector, timeout=self.SELECTOR_TIMEOUT)
+        except Exception:
+            logger.debug("[NaverBlog] 복합 셀렉터 대기 타임아웃")
+
+        # 개별적으로 찾기
+        for sel in content_selectors:
+            try:
+                el = await content_frame.query_selector(sel)
+                if el:
+                    # 텍스트가 있는지 빠르게 확인
+                    text = await el.inner_text()
+                    if text and len(text.strip()) > 10:
+                        logger.info(f"[NaverBlog] 본문 셀렉터 발견: {sel} (텍스트 {len(text)}자)")
+                        return el
+            except Exception:
+                continue
+
+        logger.warning("[NaverBlog] 알려진 본문 셀렉터를 찾지 못함, body에서 시도")
+        return await content_frame.query_selector("body")
+
+    async def _scrape_blog_post(self, url: str) -> dict:
+        """블로그 글 스크래핑 (기본 방식: 원래 URL로 접속)"""
+        context, page = await self._create_context(block_mode="post")
+
+        try:
+            logger.info(f"[NaverBlog] 접속 중: {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
+
+            # networkidle 대기 (최대 15초) - JS 렌더링 완료 대기
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+
+            content_frame = await self._get_content_frame(page)
+            content_el = await self._find_content_element(content_frame)
 
             title = await self._extract_title(content_frame)
             content_text = ""
@@ -230,6 +306,53 @@ class NaverBlogScraper:
             images = await self._extract_images(content_frame, content_el)
             date = await self._extract_date(content_frame)
             author = await self._extract_author(content_frame, url)
+
+            logger.info(f"[NaverBlog] 추출 결과: 제목={title[:30]}, 본문={len(content_text)}자, 이미지={len(images)}장")
+
+            return {
+                "success": True,
+                "title": title,
+                "content": content_text,
+                "images": images,
+                "date": date,
+                "author": author,
+                "url": url,
+            }
+
+        finally:
+            await page.close()
+            await context.close()
+
+    async def _scrape_blog_post_direct(self, url: str) -> dict:
+        """PostView.naver URL로 직접 접근하여 스크래핑 (폴백)"""
+        postview_url = self._to_postview_naver_url(url)
+        if not postview_url:
+            logger.warning("[NaverBlog] PostView URL 변환 실패, 원래 URL 사용")
+            postview_url = url
+
+        context, page = await self._create_context(block_mode="post")
+
+        try:
+            logger.info(f"[NaverBlog] PostView 직접 접속: {postview_url}")
+            await page.goto(postview_url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
+
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+
+            content_frame = await self._get_content_frame(page)
+            content_el = await self._find_content_element(content_frame)
+
+            title = await self._extract_title(content_frame)
+            content_text = ""
+            if content_el:
+                content_text = await self._extract_text(content_el)
+            images = await self._extract_images(content_frame, content_el)
+            date = await self._extract_date(content_frame)
+            author = await self._extract_author(content_frame, url)
+
+            logger.info(f"[NaverBlog] [PostView] 추출 결과: 제목={title[:30]}, 본문={len(content_text)}자, 이미지={len(images)}장")
 
             return {
                 "success": True,
@@ -280,7 +403,6 @@ class NaverBlogScraper:
                     xml_text = await resp.text()
 
             root = ET.fromstring(xml_text)
-            # RSS 2.0 형식: channel > item
             channel = root.find("channel")
             if channel is None:
                 return []
@@ -291,6 +413,8 @@ class NaverBlogScraper:
                 link = item.findtext("link", "").strip()
                 pub_date = item.findtext("pubDate", "").strip()
                 if title and link:
+                    # RSS 링크에서 불필요한 파라미터 제거
+                    link = self._normalize_url(link)
                     posts.append({"title": title, "url": link, "date": pub_date})
 
             return posts
@@ -307,10 +431,9 @@ class NaverBlogScraper:
 
     async def _scrape_blog_home_playwright(self, url: str, blog_id: str, max_posts: int = 5) -> dict:
         """Playwright로 블로그 홈에서 최신 글 목록 추출"""
-        context, page = await self._create_context(block_resources=True)
+        context, page = await self._create_context(block_mode="list")
 
         try:
-            # PostList 페이지로 접속
             list_url = f"https://blog.naver.com/PostList.naver?blogId={blog_id}&categoryNo=0&from=postList"
             logger.info(f"[NaverBlog] 블로그 홈 접속: {list_url}")
 
@@ -318,34 +441,24 @@ class NaverBlogScraper:
                 await page.goto(list_url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
             except Exception as e:
                 logger.warning(f"[NaverBlog] PostList 로딩 실패, 블로그 홈으로 재시도: {e}")
-                # PostList 실패 시 블로그 홈으로 직접 접속
                 home_url = f"https://blog.naver.com/{blog_id}"
                 await page.goto(home_url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
 
-            # iframe 진입
-            content_frame = page
-            iframe = page.frame("mainFrame")
-            if iframe:
-                content_frame = iframe
-                try:
-                    await content_frame.wait_for_load_state("domcontentloaded", timeout=self.IFRAME_TIMEOUT)
-                except Exception as e:
-                    logger.warning(f"[NaverBlog] iframe 로드 대기 타임아웃, 계속 진행: {e}")
+            content_frame = await self._get_content_frame(page)
 
-            # 글 목록에서 포스트 링크 추출
             posts = []
 
             # 방법 1: CSS 셀렉터로 추출
             post_selectors = [
-                "a.pcol2",                          # 제목 링크 (리스트뷰)
-                "span.ell a",                        # 제목 링크 (간략뷰)
-                "a.link__iGhdOl",                    # 최신 스킨
-                "div.post-item a",                   # 카드형
-                "table.board-list a",                # 테이블형
-                ".blog2_post a.sp_blog2",            # 블로그2 스킨
-                "div.area_list_title a",             # 리스트 타이틀
-                "div.wrap_postlist a.url",            # 포스트리스트
-                "div.blog2_series a",                # 시리즈형
+                "a.pcol2",
+                "span.ell a",
+                "a.link__iGhdOl",
+                "div.post-item a",
+                "table.board-list a",
+                ".blog2_post a.sp_blog2",
+                "div.area_list_title a",
+                "div.wrap_postlist a.url",
+                "div.blog2_series a",
             ]
 
             for sel in post_selectors:
@@ -392,7 +505,6 @@ class NaverBlogScraper:
             if not posts:
                 try:
                     html = await content_frame.content()
-                    # blog.naver.com/블로그ID/글번호 패턴
                     matches = re.findall(
                         r'href="(https?://blog\.naver\.com/' + re.escape(blog_id) + r'/(\d+))"',
                         html
@@ -402,7 +514,6 @@ class NaverBlogScraper:
                         if full_url not in seen:
                             seen.add(full_url)
                             posts.append({"title": f"글 #{post_no}", "url": full_url})
-                    # PostView.naver 패턴도 시도
                     if not posts:
                         pv_matches = re.findall(
                             r'href="(/PostView\.naver\?blogId=' + re.escape(blog_id) + r'[^"]*logNo=(\d+)[^"]*)"',
@@ -457,7 +568,10 @@ class NaverBlogScraper:
                 if el:
                     text = (await el.inner_text()).strip()
                     if text:
-                        return text
+                        # " : 네이버블로그" / " : 네이버 블로그" 접미사 제거
+                        text = self._clean_title(text)
+                        if text:
+                            return text
             except Exception:
                 continue
 
@@ -465,11 +579,20 @@ class NaverBlogScraper:
         try:
             page_title = await frame.title() if hasattr(frame, 'title') else ""
             if page_title:
-                return re.sub(r"\s*[:\-]\s*네이버\s*블로그.*$", "", page_title).strip()
+                return self._clean_title(page_title)
         except Exception:
             pass
 
         return "(제목 없음)"
+
+    @staticmethod
+    def _clean_title(title: str) -> str:
+        """제목에서 네이버 블로그 접미사 제거"""
+        # "제목 : 네이버 블로그", "제목 : 네이버블로그" 등 제거
+        title = re.sub(r"\s*[:\-]\s*네이버\s*블로그.*$", "", title).strip()
+        # "제목 .. : 네이버블로그" 패턴도 처리
+        title = re.sub(r"\s*\.{2,}\s*$", "", title).strip()
+        return title
 
     async def _extract_text(self, element) -> str:
         """본문 텍스트 추출 — HTML 태그 제거하고 깔끔하게"""
@@ -477,7 +600,21 @@ class NaverBlogScraper:
             text = await element.inner_text()
             lines = [line.strip() for line in text.split("\n")]
             lines = [line for line in lines if line]
-            return "\n".join(lines)
+            result = "\n".join(lines)
+            # 네이버 블로그 공통 불필요 텍스트 제거
+            noise_patterns = [
+                r"^공감\d*$",
+                r"^댓글\d*$",
+                r"^이 블로그.*검색$",
+                r"^맨 위로$",
+                r"^블로그 메뉴$",
+                r"^프롤로그$",
+            ]
+            cleaned_lines = []
+            for line in result.split("\n"):
+                if not any(re.match(p, line) for p in noise_patterns):
+                    cleaned_lines.append(line)
+            return "\n".join(cleaned_lines)
         except Exception as e:
             logger.warning(f"[NaverBlog] 텍스트 추출 실패: {e}")
             return ""
@@ -490,24 +627,42 @@ class NaverBlogScraper:
             img_elements = await target.query_selector_all("img")
 
             for img in img_elements:
-                src = await img.get_attribute("data-lazy-src")
-                if not src:
-                    src = await img.get_attribute("src")
+                # 여러 이미지 속성 시도 (지연 로딩 대응)
+                src = None
+                for attr in ["data-lazy-src", "data-src", "src"]:
+                    src = await img.get_attribute(attr)
+                    if src and src.startswith("http"):
+                        break
+                    if src and src.startswith("//"):
+                        src = "https:" + src
+                        break
+
                 if not src:
                     continue
 
+                # 아이콘/UI 이미지 제외
                 if any(skip in src for skip in [
                     "static.nid.naver", "ssl.pstatic.net/static",
                     "blogpfthumb", "favicon", "btn_", "ico_",
-                    "widget", "banner", "ad_",
+                    "widget", "banner", "ad_", "blank.gif",
+                    "transparent", "spacer",
                 ]):
                     continue
 
-                if "pstatic.net" in src or "blogpfthumb" not in src:
-                    if src.startswith("//"):
-                        src = "https:" + src
-                    if src.startswith("http"):
-                        images.append(src)
+                # 크기가 너무 작은 이미지 제외 (아이콘일 가능성)
+                width = await img.get_attribute("width")
+                height = await img.get_attribute("height")
+                if width and height:
+                    try:
+                        if int(width) < 50 or int(height) < 50:
+                            continue
+                    except ValueError:
+                        pass
+
+                if src.startswith("//"):
+                    src = "https:" + src
+                if src.startswith("http"):
+                    images.append(src)
 
         except Exception as e:
             logger.warning(f"[NaverBlog] 이미지 추출 실패: {e}")
@@ -529,6 +684,8 @@ class NaverBlogScraper:
             "p.date",
             "span.blog_date",
             "span.se_date",
+            "span.se-date",                # SE3 최신
+            "div.blog_date",
         ]
         for sel in date_selectors:
             try:
@@ -567,7 +724,6 @@ class NaverBlogScraper:
         """스크래핑 결과를 슬랙 메시지로 포맷팅"""
         if not result.get("success"):
             error = result.get("error", "알 수 없는 오류")
-            # 사용자 친화적 에러 메시지
             if "Timeout" in error:
                 friendly = "페이지 로딩이 너무 오래 걸려요. 잠시 후 다시 시도해주세요."
             elif "net::" in error.lower():
@@ -608,6 +764,8 @@ class NaverBlogScraper:
             content = content[:2000] + "...\n_(본문이 길어서 일부만 표시)_"
         if content:
             parts.append(content)
+        else:
+            parts.append("_(본문을 가져오지 못했습니다)_")
 
         images = result.get("images", [])
         if images:
