@@ -757,6 +757,7 @@ class NaverBlogScraper:
             # JS로 직접 텍스트 노드와 링크를 순서대로 추출
             rich_text = await element.evaluate("""el => {
                 const result = [];
+                const BLOCK_TAGS = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'TR']);
                 function walk(node) {
                     if (node.nodeType === 3) { // TEXT_NODE
                         const t = node.textContent;
@@ -772,6 +773,17 @@ class NaverBlogScraper:
                         }
                     } else if (node.tagName === 'BR') {
                         result.push({text: '\\n'});
+                    } else if (BLOCK_TAGS.has(node.tagName)) {
+                        // 블록 요소 앞에 줄바꿈 추가 (첫 번째가 아닐 때)
+                        if (result.length > 0) {
+                            const last = result[result.length - 1];
+                            if (last && last.text && !last.text.endsWith('\\n')) {
+                                result.push({text: '\\n'});
+                            }
+                        }
+                        for (const child of node.childNodes) {
+                            walk(child);
+                        }
                     } else {
                         for (const child of node.childNodes) {
                             walk(child);
