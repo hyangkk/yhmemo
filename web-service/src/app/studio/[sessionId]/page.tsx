@@ -89,11 +89,18 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     try { await updateDeviceStatus('recording'); } catch {}
   }, [sendSignal, updateDeviceStatus]);
 
-  // 호스트: 녹화 종료 (시그널을 먼저 설정해서 CameraView가 즉시 녹화 중지)
+  // 호스트: 녹화 종료 (확인 후 전체 카메라 종료)
   const handleStopRecording = useCallback(async () => {
+    if (!window.confirm('녹화를 종료하시겠습니까?\n모든 카메라의 녹화가 종료됩니다.')) return;
     setRecordingSignal('stop');
     try { await sendSignal('stop'); } catch {}
   }, [sendSignal]);
+
+  // 게스트: 내 카메라만 녹화 종료 (다른 카메라는 계속 녹화)
+  const handleGuestStopRecording = useCallback(() => {
+    if (!window.confirm('내 카메라 녹화를 종료하시겠습니까?\n다른 카메라는 계속 녹화됩니다.')) return;
+    setRecordingSignal('stop');
+  }, []);
 
   // 녹화 완료 → 업로드 (signed URL로 Supabase Storage 직접 업로드)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
@@ -247,11 +254,14 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           {!isHost && !uploading && recordingSignal === 'idle' && (
             <span className="text-xs text-gray-500">대기 중...</span>
           )}
-          {!isHost && recordingSignal === 'start' && (
-            <span className="flex items-center gap-1 text-xs text-red-400">
-              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              녹화 중
-            </span>
+          {!isHost && !uploading && recordingSignal === 'start' && (
+            <button
+              onClick={handleGuestStopRecording}
+              className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-full text-sm font-semibold transition"
+            >
+              <div className="w-2.5 h-2.5 bg-red-500 rounded-sm animate-pulse" />
+              녹화 종료
+            </button>
           )}
         </div>
       </div>

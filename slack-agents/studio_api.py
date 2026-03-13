@@ -313,8 +313,8 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
     """자동 컷편집: 3초 간격으로 카메라 전환, 오디오 분석 가능 시 스마트 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     print(f"[studio] 클립 durations: {durations}", flush=True)
-    min_dur = min(durations) if durations else 0
-    if min_dur <= 0:
+    max_dur = max(durations) if durations else 0
+    if max_dur <= 0:
         print(f"[studio] duration 감지 실패, 단순 이어붙이기 fallback", flush=True)
         if progress:
             for i in range(len(files)):
@@ -325,7 +325,6 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         return
 
     n = len(files)
-    total_secs = int(min_dur)
 
     # 오디오 분석 시도
     audio_ok = False
@@ -338,25 +337,34 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         print(f"[studio] 오디오 분석: {f} → {len(levels)}개 샘플", flush=True)
 
     # 오디오 데이터가 충분한지 확인 (최소 3초 이상)
-    min_samples = min(len(l) for l in all_levels)
-    if min_samples >= 3:
+    max_samples = max(len(l) for l in all_levels)
+    if max_samples >= 3:
         audio_ok = True
-        print(f"[studio] 오디오 분석 성공: {min_samples}개 샘플, 스마트 전환 사용", flush=True)
+        print(f"[studio] 오디오 분석 성공: {max_samples}개 샘플, 스마트 전환 사용", flush=True)
     else:
-        print(f"[studio] 오디오 분석 부족({min_samples}개 샘플), 라운드로빈 전환 사용", flush=True)
+        print(f"[studio] 오디오 분석 부족({max_samples}개 샘플), 라운드로빈 전환 사용", flush=True)
+
+    # 초별 가용 카메라 (해당 시점에 영상이 있는 카메라만)
+    total_secs = int(max_dur)
+    def _alive_cams(sec: float) -> list[int]:
+        return [i for i in range(n) if durations[i] > sec]
 
     if audio_ok:
-        # 오디오 기반 세그먼트 생성
-        max_len = min(total_secs, min_samples)
+        max_len = min(total_secs, max_samples)
+        # 짧은 클립의 오디오는 -100으로 패딩
         for i in range(n):
-            all_levels[i] = all_levels[i][:max_len]
+            while len(all_levels[i]) < max_len:
+                all_levels[i].append(-100.0)
 
-        # 초별로 가장 소리가 큰 카메라 선택
+        # 초별로 가용 카메라 중 가장 소리가 큰 카메라 선택
         best_cam_per_sec = []
         for sec in range(max_len):
-            best = 0
-            best_level = all_levels[0][sec]
-            for cam in range(1, n):
+            alive = _alive_cams(sec)
+            if not alive:
+                alive = list(range(n))
+            best = alive[0]
+            best_level = all_levels[best][sec]
+            for cam in alive[1:]:
                 if all_levels[cam][sec] > best_level:
                     best_level = all_levels[cam][sec]
                     best = cam
@@ -367,25 +375,49 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         current_cam = best_cam_per_sec[0]
 
         for sec in range(1, max_len):
+            alive = _alive_cams(sec)
             elapsed = sec - seg_start
             preferred_cam = best_cam_per_sec[sec]
 
+            # 현재 카메라의 영상이 끝났으면 강제 전환
+            if current_cam not in alive and alive:
+                segments.append((current_cam, seg_start, float(sec)))
+                seg_start = float(sec)
+                current_cam = preferred_cam if preferred_cam in alive else alive[0]
+                continue
+
             should_switch = preferred_cam != current_cam and elapsed >= interval
-            force_switch = elapsed >= interval and n > 1
+            force_switch = elapsed >= interval and len(alive) > 1
 
             if should_switch or force_switch:
                 segments.append((current_cam, seg_start, float(sec)))
                 seg_start = float(sec)
                 if force_switch and preferred_cam == current_cam:
-                    current_cam = (current_cam + 1) % n
+                    # 다음 가용 카메라로 전환
+                    others = [c for c in alive if c != current_cam]
+                    current_cam = others[0] if others else current_cam
                 else:
-                    current_cam = preferred_cam
+                    current_cam = preferred_cam if preferred_cam in alive else (alive[0] if alive else current_cam)
 
-        if seg_start < min_dur:
-            segments.append((current_cam, seg_start, min_dur))
+        if seg_start < max_dur:
+            segments.append((current_cam, seg_start, max_dur))
     else:
-        # 오디오 분석 실패 → 고정 간격 라운드로빈
-        segments = _build_round_robin_segments(n, min_dur, interval)
+        # 오디오 분석 실패 → 가용 카메라만으로 라운드로빈
+        segments = []
+        t = 0.0
+        cam_idx = 0
+        while t < max_dur:
+            alive = _alive_cams(t)
+            if not alive:
+                break
+            cam = alive[cam_idx % len(alive)]
+            end = min(t + interval, max_dur)
+            # 이 카메라의 영상이 구간 중간에 끝나면 그 시점까지만
+            if durations[cam] < end:
+                end = durations[cam]
+            segments.append((cam, t, end))
+            t = end
+            cam_idx += 1
 
     if progress:
         progress["on_segments"]()
@@ -396,7 +428,7 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         _simple_concat(files, output)
         return
 
-    print(f"[studio] 자동 편집: {len(segments)}개 세그먼트 (카메라 {n}대, 총 {min_dur:.1f}초)", flush=True)
+    print(f"[studio] 자동 편집: {len(segments)}개 세그먼트 (카메라 {n}대, 총 {max_dur:.1f}초)", flush=True)
     for i, (cam, s, e) in enumerate(segments):
         print(f"[studio]   세그먼트 {i}: 카메라{cam} {s:.1f}~{e:.1f}초", flush=True)
 
@@ -432,9 +464,9 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
     """AI 감독 모드: 메인 카메라 중심 + 리액션 컷어웨이 (3~5초 주기)"""
     durations = [_get_duration(f) or 0 for f in files]
     print(f"[studio] AI감독 durations: {durations}", flush=True)
-    min_dur = min(durations) if durations else 0
+    max_dur = max(durations) if durations else 0
 
-    if min_dur <= 0 or len(files) < 2:
+    if max_dur <= 0 or len(files) < 2:
         if progress:
             for i in range(len(files)):
                 progress["on_analyze"](i)
@@ -445,6 +477,10 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
 
     n = len(files)
 
+    # 가용 카메라 (해당 시점에 영상이 있는 카메라만)
+    def _alive(sec: float) -> list[int]:
+        return [i for i in range(n) if durations[i] > sec]
+
     # 오디오 분석
     all_levels: list[list[float]] = []
     for i, f in enumerate(files):
@@ -454,18 +490,20 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
         all_levels.append(levels)
         print(f"[studio] AI감독 오디오: {f} → {len(levels)}샘플", flush=True)
 
-    min_samples = min(len(l) for l in all_levels)
-    max_len = min(int(min_dur), min_samples)
+    max_samples = max(len(l) for l in all_levels)
+    max_len = min(int(max_dur), max_samples)
 
+    # 짧은 클립 오디오 패딩
     for i in range(n):
-        all_levels[i] = all_levels[i][:max_len]
+        while len(all_levels[i]) < max_len:
+            all_levels[i].append(-100.0)
 
     # 메인 카메라 결정 (평균 오디오가 가장 큰 카메라 = 화자)
-    def _avg_active(levels: list[float]) -> float:
-        active = [l for l in levels if l > -80]
+    def _avg_active(levels: list[float], dur: float) -> float:
+        active = [l for l in levels[:int(dur)] if l > -80]
         return sum(active) / len(active) if active else -100.0
 
-    avg_levels = [_avg_active(l) for l in all_levels]
+    avg_levels = [_avg_active(all_levels[i], durations[i]) for i in range(n)]
     main_cam = avg_levels.index(max(avg_levels))
     print(f"[studio] AI감독 메인카메라: {main_cam} (avg={avg_levels})", flush=True)
 
@@ -477,58 +515,72 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
     t = 0.0
     on_main = True
 
-    while t < min_dur - 0.3:
-        if on_main:
-            # 메인 카메라 구간 (2.0~3.5초)
-            # 사이드 카메라에 오디오 스파이크가 있으면 그 시점에 전환
-            base_dur = 2.5
-            best_cut = min(t + base_dur, min_dur)
+    while t < max_dur - 0.3:
+        alive = _alive(t)
+        if not alive:
+            break
 
-            # 2~4초 구간에서 사이드 카메라 반응 탐색
+        # 메인 카메라가 끝났으면 가용 카메라 중 첫 번째를 메인으로
+        active_main = main_cam if main_cam in alive else alive[0]
+
+        if on_main:
+            base_dur = 2.5
+            best_cut = min(t + base_dur, max_dur)
+
+            # 사이드 카메라 반응 탐색 (가용한 사이드 카메라만)
+            side_cams = [c for c in alive if c != active_main]
             search_start = int(t) + 2
             search_end = min(int(t) + 5, max_len)
             best_spike = -200.0
             for sec in range(search_start, search_end):
-                for cam in range(n):
-                    if cam == main_cam:
-                        continue
-                    # 사이드 카메라의 오디오가 자기 평균보다 높은 순간 (리액션)
+                for cam in side_cams:
                     spike = all_levels[cam][sec] - avg_levels[cam]
-                    if spike > best_spike and spike > 2.0:  # 2dB 이상 스파이크
+                    if spike > best_spike and spike > 2.0:
                         best_spike = spike
                         best_cut = float(sec)
 
-            segments.append((main_cam, t, best_cut))
+            # 메인 카메라 영상이 구간 중간에 끝나면 그 시점까지만
+            if durations[active_main] < best_cut:
+                best_cut = durations[active_main]
+
+            segments.append((active_main, t, best_cut))
             t = best_cut
-            on_main = False
+            on_main = not side_cams  # 사이드 카메라가 없으면 계속 메인
         else:
-            # 컷어웨이 구간 (0.8~1.5초)
             sec_idx = min(int(t), max_len - 1)
+            side_cams = [c for c in alive if c != active_main]
+
+            if not side_cams:
+                on_main = True
+                continue
 
             # 가장 활발한 사이드 카메라 선택
-            side_cam = (main_cam + 1) % n
+            side_cam = side_cams[0]
             best_level = -200.0
-            for cam in range(n):
-                if cam == main_cam:
-                    continue
-                lvl = all_levels[cam][sec_idx] if sec_idx < len(all_levels[cam]) else -100
+            for cam in side_cams:
+                lvl = all_levels[cam][sec_idx]
                 if lvl > best_level:
                     best_level = lvl
                     side_cam = cam
 
             cutaway_dur = 1.0
-            # 리액션이 강하면 약간 더 길게 (최대 1.5초)
             if best_level > avg_levels[side_cam] + 5:
                 cutaway_dur = 1.5
 
-            end_t = min(t + cutaway_dur, min_dur)
+            end_t = min(t + cutaway_dur, max_dur)
+            if durations[side_cam] < end_t:
+                end_t = durations[side_cam]
+
             segments.append((side_cam, t, end_t))
             t = end_t
             on_main = True
 
     # 남은 시간 처리
-    if t < min_dur:
-        segments.append((main_cam, t, min_dur))
+    if t < max_dur:
+        alive = _alive(t)
+        if alive:
+            cam = main_cam if main_cam in alive else alive[0]
+            segments.append((cam, t, max_dur))
 
     if not segments:
         if progress:
