@@ -936,7 +936,7 @@ class BulletinAgent(BaseAgent):
                         if board_view_match:
                             post_no = board_view_match.group(1)
                             # 현재 게시판 URL에 no=... &board=view 추가
-                            board_url_parsed = urlparse(url)
+                            board_url_parsed = urlparse(board["url"])
                             base_params = board_url_parsed.query
                             href = f"{board_url_parsed.scheme}://{board_url_parsed.netloc}{board_url_parsed.path}?{base_params}&no={post_no}&board=view"
                         else:
