@@ -441,7 +441,7 @@ class SlackClient:
         channels = [self.CHANNEL_GENERAL, self.CHANNEL_INVEST]
 
         for ch_id in channels:
-            self._last_ts[ch_id] = str(time.time())
+            self._last_ts[ch_id] = f"{time.time():.6f}"
 
         logger.info(f"Polling channels: {channels}")
 
@@ -582,7 +582,7 @@ class SlackClient:
             if ch_id in saved_ts:
                 self._last_ts[ch_id] = saved_ts[ch_id]
             else:
-                self._last_ts[ch_id] = str(time.time() - 60)  # 1분 전
+                self._last_ts[ch_id] = f"{time.time() - 60:.6f}"  # 1분 전
         self._poll_channels = poll_channels
 
         # 활성 스레드 복원
