@@ -111,6 +111,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {/* 업로드 대기 중 */}
         {session.status === 'uploading' && (() => {
           const doneCount = devices.filter(d => d.status === 'done').length;
+          const waitingCount = devices.filter(d => d.status !== 'done' && d.status !== 'error').length;
           const errorCount = devices.filter(d => d.status === 'error').length;
           const allFinished = devices.every(d => d.status === 'done' || d.status === 'error');
           return (
@@ -123,7 +124,8 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
               </h2>
               <p className="text-gray-400 text-sm">
                 {doneCount}/{devices.length}대 카메라 업로드 완료
-                {errorCount > 0 && ` · ${errorCount}대 실패`}
+                {waitingCount > 0 && ` · ${waitingCount}대 대기중`}
+                {allFinished && errorCount > 0 && ` · ${errorCount}대 실패`}
               </p>
               {allFinished && clips.length > 0 && (
                 <p className="text-gray-500 text-xs">편집 준비 중...</p>
