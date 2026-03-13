@@ -6,7 +6,7 @@
   1. 오늘: 최근 24시간 작성 글
   2. 어제: 24~48시간 전 작성 글
   3. 그제: 48~72시간 전 작성 글
-  4. 과거: 최근 5년(60개월) 중 랜덤 1개
+  4. 과거: 최근 2년(24개월) 중 랜덤 1개
 - Claude AI로 각 구간별 요약 + 종합 분석 생성
 - 슬랙 '명언-한마디' 채널에 전송
 """
@@ -71,7 +71,7 @@ class DiaryDailyAlertAgent(BaseAgent):
         day_before_pages = await self._fetch_pages_in_range(48, 72)
         logger.info(f"  그제 글: {len(day_before_pages)}개")
 
-        # 4. 과거 랜덤 (72시간 이전 ~ 5년 이내)
+        # 4. 과거 랜덤 (72시간 이전 ~ 2년 이내)
         random_old_pages = await self._fetch_random_old()
         logger.info(f"  과거 랜덤: {len(random_old_pages)}개")
 
@@ -105,7 +105,7 @@ class DiaryDailyAlertAgent(BaseAgent):
             "today": "📌 오늘 글 (최근 24시간)",
             "yesterday": "📎 어제 글 (24~48시간 전)",
             "day_before": "📂 그제 글 (48~72시간 전)",
-            "random_old": "🎲 과거 글 (5년간 랜덤)",
+            "random_old": "🎲 과거 글 (2년간 랜덤)",
         }
 
         entries_text = ""
@@ -245,9 +245,9 @@ class DiaryDailyAlertAgent(BaseAgent):
             return []
 
     async def _fetch_random_old(self) -> list:
-        """72시간 이전 ~ 5년(60개월) 이내 랜덤 1개"""
+        """72시간 이전 ~ 2년(24개월) 이내 랜덤 1개"""
         now_utc = datetime.now(timezone.utc)
-        after = (now_utc - timedelta(days=30 * 60)).isoformat()
+        after = (now_utc - timedelta(days=30 * 24)).isoformat()
         before = (now_utc - timedelta(hours=72)).isoformat()
 
         filter_dict = {
