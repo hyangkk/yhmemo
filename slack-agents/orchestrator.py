@@ -460,21 +460,39 @@ async def main():
             await _reply(channel, ":mag: 게시판 스크래핑 중...", thread_ts)
             await bulletin.scrape_and_show(channel, thread_ts, max_posts=5)
         elif parts[0] == "등록" and len(parts) > 1:
-            # !게시판 등록 이름 URL [parser_type]
+            # !게시판 등록 이름 URL [parser_type] [playwright]
             reg_parts = parts[1].split()
             if len(reg_parts) < 2:
-                await _reply(channel, "사용법: `!게시판 등록 사이트이름 URL [auto|table|list]`", thread_ts)
+                await _reply(channel, (
+                    "사용법: `!게시판 등록 사이트이름 URL [auto|table|list] [playwright]`\n"
+                    "• `playwright` 옵션: 해외IP 차단/JS 렌더링 사이트용 (Playwright 브라우저 사용)"
+                ), thread_ts)
                 return
             name = reg_parts[0]
             url = reg_parts[1]
-            parser_type = reg_parts[2] if len(reg_parts) > 2 else "auto"
-            result = await bulletin._add_board(name=name, url=url, parser_type=parser_type)
+            parser_type = "auto"
+            use_playwright = False
+            for opt in reg_parts[2:]:
+                if opt.lower() in ("playwright", "pw", "브라우저"):
+                    use_playwright = True
+                elif opt in ("auto", "table", "list"):
+                    parser_type = opt
+            result = await bulletin._add_board(
+                name=name, url=url, parser_type=parser_type,
+                use_playwright=use_playwright,
+            )
             if result.get("status") == "added":
-                await _reply(channel, f":white_check_mark: *{name}* 게시판이 등록되었습니다.\nURL: {url}\n파서: {parser_type}", thread_ts)
+                pw_label = " (Playwright 사용)" if use_playwright else ""
+                await _reply(channel, f":white_check_mark: *{name}* 게시판이 등록되었습니다.{pw_label}\nURL: {url}\n파서: {parser_type}", thread_ts)
             else:
                 await _reply(channel, f":x: 등록 실패: {result.get('message', '알 수 없는 오류')}", thread_ts)
         else:
-            await _reply(channel, "사용법:\n• `!게시판` — 지금 스크래핑 실행\n• `!게시판 등록 이름 URL [auto|table|list]` — 새 게시판 등록", thread_ts)
+            await _reply(channel, (
+                "사용법:\n"
+                "• `!게시판` — 지금 스크래핑 실행\n"
+                "• `!게시판 등록 이름 URL [auto|table|list] [playwright]` — 새 게시판 등록\n"
+                "  - `playwright`: 해외IP 차단/JS 렌더링 사이트에 사용"
+            ), thread_ts)
 
     slack.on_command("게시판", cmd_bulletin)
 
