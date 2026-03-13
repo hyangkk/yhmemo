@@ -90,6 +90,11 @@ class BulletinAgent(BaseAgent):
             "SUPABASE_PROXY_URL",
             "https://unuvbdqjgiypxfvlplpd.supabase.co/functions/v1/kr-proxy",
         )
+        # Cloudflare Worker 프록시 (서울 POP) — 한국 IP 우회용 최우선
+        self._cf_proxy_url = os.environ.get(
+            "CF_PROXY_URL",
+            "https://kr-proxy.yhmemo-kr.workers.dev",
+        )
         self._vercel_proxy_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
         # Playwright 브라우저 인스턴스 (싱글턴, 필요 시 생성)
@@ -419,7 +424,7 @@ class BulletinAgent(BaseAgent):
 
     async def _fetch_via_proxy(self, url: str) -> str:
         """프록시를 통해 한국 전용 사이트 HTML 가져오기.
-        Vercel 프록시 → Supabase Edge Function 순으로 시도.
+        Cloudflare Worker → Vercel 프록시 → Supabase Edge Function 순으로 시도.
         """
         import json
         key = self._vercel_proxy_key
@@ -427,8 +432,9 @@ class BulletinAgent(BaseAgent):
         if not key:
             raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음 — 프록시 인증 불가")
 
-        # 시도할 프록시 URL 목록
+        # 시도할 프록시 URL 목록 (Cloudflare Worker 최우선 — 서울 POP)
         proxy_urls = [
+            ("Cloudflare", self._cf_proxy_url),
             ("Vercel", self._vercel_proxy_url),
             ("Supabase", self._supabase_proxy_url),
         ]
@@ -674,16 +680,16 @@ class BulletinAgent(BaseAgent):
                 logger.warning(f"[bulletin] 1단계(urllib) 실패: {e}")
                 html = ""
 
-            # 2단계: Vercel 서울 프록시
+            # 2단계: 프록시 체인 (Cloudflare → Vercel → Supabase)
             if not html or _is_error_page(html):
                 try:
                     html = await self._fetch_via_proxy(url)
                     if _is_error_page(html):
                         raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
                     used_vercel_proxy = True
-                    logger.info(f"[bulletin] 2단계(Vercel 프록시) 성공: {len(html)}자")
+                    logger.info(f"[bulletin] 2단계(프록시) 성공: {len(html)}자")
                 except Exception as e:
-                    logger.warning(f"[bulletin] 2단계(Vercel 프록시) 실패: {e}")
+                    logger.warning(f"[bulletin] 2단계(프록시) 실패: {e}")
 
             # 3단계: Playwright 폴백
             if not html or _is_error_page(html):

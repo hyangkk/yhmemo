@@ -65,7 +65,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 한국 브라우저 User-Agent로 페이지 fetch
+    // 한국 브라우저 User-Agent + X-Forwarded-For로 페이지 fetch
     const response = await fetch(url, {
       headers: {
         "User-Agent":
@@ -73,6 +73,10 @@ Deno.serve(async (req: Request) => {
         "Accept":
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
       },
       redirect: "follow",
     });
