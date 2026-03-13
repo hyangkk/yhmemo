@@ -786,12 +786,46 @@ class BulletinAgent(BaseAgent):
         """게시글 목록의 각 항목에 본문 내용을 추가 (최대 max_posts개)"""
         from bs4 import BeautifulSoup as BS4
 
-        # 본문 추출용 셀렉터 목록
+        # 본문 추출용 셀렉터 목록 (우선순위순)
         _content_sels = [
+            "table.boardView1 td",  # yicare.or.kr 등 한국 공공기관 게시판
             "div.board_view_content", "div.view_content", "div.bbs_content",
             "div.board-content", "div.content_view", "td.board_content",
             "div#content", "div.detail_content", "article", "div.view_cont",
         ]
+
+        def _extract_content(soup_obj):
+            """BeautifulSoup 객체에서 본문 텍스트 추출"""
+            content_text = ""
+
+            # boardView1 테이블의 "내용" th에 대응하는 td 찾기 (yicare.or.kr 패턴)
+            view_table = soup_obj.select_one("table.boardView1")
+            if view_table:
+                for th in view_table.find_all("th"):
+                    if "내용" in th.get_text(strip=True):
+                        td = th.find_next_sibling("td")
+                        if td:
+                            # 이미지 URL 추출
+                            imgs = td.find_all("img")
+                            text = td.get_text(separator="\n", strip=True)
+                            # script 태그 내용 제거
+                            text = re.sub(r'imageMapResize\(\);?', '', text).strip()
+                            if text and len(text) > 5:
+                                content_text = text
+                            elif imgs:
+                                content_text = f"[이미지 {len(imgs)}장]"
+                            break
+                if content_text:
+                    return content_text
+
+            # 일반 셀렉터로 시도
+            for sel in _content_sels:
+                el = soup_obj.select_one(sel)
+                if el and len(el.get_text(strip=True)) > 10:
+                    content_text = el.get_text(separator="\n", strip=True)
+                    break
+
+            return content_text
 
         for post in posts[:max_posts]:
             post_url = post.get("url", "")
@@ -799,15 +833,10 @@ class BulletinAgent(BaseAgent):
                 continue
             try:
                 if use_vercel:
-                    # Vercel 프록시로 HTML 가져와서 BeautifulSoup 파싱
+                    # 프록시로 HTML 가져와서 BeautifulSoup 파싱
                     html = await self._fetch_via_proxy(post_url)
                     soup = BS4(html, "html.parser")
-                    content_text = ""
-                    for sel in _content_sels:
-                        el = soup.select_one(sel)
-                        if el and len(el.get_text(strip=True)) > 10:
-                            content_text = el.get_text(separator="\n", strip=True)
-                            break
+                    content_text = _extract_content(soup)
                     if not content_text:
                         body = soup.find("body")
                         if body:
