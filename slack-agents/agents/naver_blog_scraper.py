@@ -96,6 +96,16 @@ class NaverBlogScraper:
     @staticmethod
     def _normalize_url(url: str) -> str:
         """모바일 URL을 PC 버전으로 변환, 불필요한 쿼리 파라미터 제거"""
+        # 슬랙이 URL을 <https://...> 또는 <https://...|표시텍스트>로 감싸는 경우 처리
+        url = url.strip()
+        if url.startswith("<") and url.endswith(">"):
+            url = url[1:-1]
+        # 슬랙 링크 형식: <URL|표시텍스트> → URL만 추출
+        if "|" in url:
+            url = url.split("|")[0]
+        # 이중 래핑 제거: https://<https://...> 또는 <https://blog...>
+        url = re.sub(r"^https?://<(https?://)", r"\1", url)
+        url = url.strip("<>")
         url = url.replace("m.blog.naver.com", "blog.naver.com")
         if not url.startswith("http"):
             url = "https://" + url
