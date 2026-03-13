@@ -43,28 +43,44 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 녹화 시작 성공 여부 추적
+  const recordingStartedRef = useRef(false);
+
   // 외부 시그널 처리 (호스트 + 비호스트 모두)
   useEffect(() => {
     if (externalRecordingSignal === 'start' && !isRecordingRef.current) {
-      // stream이 아직 없으면 잠시 대기 후 재시도
+      recordingStartedRef.current = false;
+
       const tryStart = () => {
-        if (streamRef.current) {
+        if (streamRef.current && !isRecordingRef.current) {
           startRecordingRef.current();
+          // startRecording 후 실제로 시작됐는지 100ms 후 확인
+          setTimeout(() => {
+            if (isRecordingRef.current) {
+              recordingStartedRef.current = true;
+            } else if (streamRef.current) {
+              // 첫 시도 실패 → 한 번 더 시도
+              console.warn('[studio] 녹화 시작 재시도');
+              startRecordingRef.current();
+              setTimeout(() => { recordingStartedRef.current = isRecordingRef.current; }, 100);
+            }
+          }, 100);
         }
       };
 
       if (streamRef.current) {
         tryStart();
       } else {
-        // 카메라 초기화 대기 (최대 3초)
+        // 카메라 초기화 대기 (최대 5초, 느린 안드로이드 대비)
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
           if (streamRef.current) {
             clearInterval(interval);
-            startRecordingRef.current();
-          } else if (attempts >= 15) {
+            tryStart();
+          } else if (attempts >= 25) {
             clearInterval(interval);
+            console.error('[studio] 카메라 스트림 대기 시간 초과 (5초)');
           }
         }, 200);
         return () => clearInterval(interval);
@@ -74,10 +90,11 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
       (async () => {
         let result = await stopRecordingRef.current();
 
-        // 녹화가 시작되지 않았던 경우 (MediaRecorder 실패 등) → 잠시 대기 후 재시도
-        if (!result && streamRef.current) {
-          console.warn('[studio] 녹화 결과 없음, 300ms 후 재시도');
-          await new Promise(r => setTimeout(r, 300));
+        // 녹화가 시작되지 않았던 경우 → 잠시 대기 후 재시도 (최대 2회)
+        for (let retry = 0; retry < 2 && !result; retry++) {
+          if (!streamRef.current) break;
+          console.warn(`[studio] 녹화 결과 없음, ${(retry + 1) * 300}ms 후 재시도`);
+          await new Promise(r => setTimeout(r, (retry + 1) * 300));
           result = await stopRecordingRef.current();
         }
 

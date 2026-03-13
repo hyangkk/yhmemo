@@ -102,7 +102,39 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     setRecordingSignal('stop');
   }, []);
 
-  // 녹화 완료 → 업로드 (signed URL로 Supabase Storage 직접 업로드)
+  // XHR 업로드 (Promise 래핑, 진행률 콜백)
+  const uploadWithXHR = useCallback((url: string, blob: Blob, timeoutMs: number): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', blob.type);
+      xhr.timeout = timeoutMs;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+
+      xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
+      xhr.onerror = () => resolve(false);
+      xhr.ontimeout = () => resolve(false);
+      xhr.send(blob);
+    });
+  }, []);
+
+  // signed URL 발급
+  const getSignedUrl = useCallback(async (deviceId: string, ext: string) => {
+    const res = await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase: 'url', deviceId, ext }),
+    });
+    if (!res.ok) throw new Error('signed URL 발급 실패');
+    return res.json();
+  }, [sessionId]);
+
+  // 녹화 완료 → 업로드 (최대 3회 재시도)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
     const goToResult = () => {
@@ -128,69 +160,62 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     } catch {}
 
     const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    // 파일 크기에 따라 타임아웃 조정 (최소 60초, MB당 4초, 최대 5분)
+    const timeoutMs = Math.max(60000, Math.min(300000, Math.round(blob.size / (1024 * 1024) * 4000)));
+    const MAX_RETRIES = 3;
 
-    try {
-      // 1단계: 서버에서 signed upload URL 발급
-      const urlRes = await fetch(`/api/studio/sessions/${sessionId}/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phase: 'url', deviceId: device.id, ext }),
-      });
+    let uploaded = false;
+    let storagePath = '';
 
-      if (!urlRes.ok) {
-        throw new Error('signed URL 발급 실패');
-      }
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        setUploadProgress(0);
 
-      const { signedUrl, token, storagePath } = await urlRes.json();
+        // 매 시도마다 새 signed URL 발급 (이전 URL은 만료될 수 있음)
+        const urlData = await getSignedUrl(device.id, ext);
+        storagePath = urlData.storagePath;
 
-      // 2단계: Supabase Storage에 직접 업로드 (Vercel body size 제한 우회)
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', signedUrl);
-      xhr.setRequestHeader('Content-Type', blob.type);
-      xhr.timeout = 120000; // 120초 타임아웃 (대용량 파일 대비)
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          setUploadProgress(Math.round((e.loaded / e.total) * 100));
-        }
-      };
-
-      const onUploadDone = async (success: boolean) => {
+        const success = await uploadWithXHR(urlData.signedUrl, blob, timeoutMs);
         if (success) {
-          // 3단계: 업로드 완료 → 서버에 메타데이터 기록
-          try {
-            await fetch(`/api/studio/sessions/${sessionId}/upload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                phase: 'confirm',
-                deviceId: device.id,
-                durationMs,
-                fileSize: blob.size,
-                storagePath,
-              }),
-            });
-          } catch {}
-        } else {
-          try {
-            await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
-          } catch {}
+          uploaded = true;
+          break;
         }
-        goToResult();
-      };
 
-      xhr.onload = () => onUploadDone(xhr.status >= 200 && xhr.status < 300);
-      xhr.onerror = () => onUploadDone(false);
-      xhr.ontimeout = () => onUploadDone(false);
+        console.warn(`[studio] 업로드 실패 (${attempt}/${MAX_RETRIES}), ${attempt < MAX_RETRIES ? '재시도...' : '포기'}`);
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, attempt * 2000)); // 2초, 4초 대기
+        }
+      } catch (err) {
+        console.warn(`[studio] 업로드 에러 (${attempt}/${MAX_RETRIES}):`, err);
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        }
+      }
+    }
 
-      xhr.send(blob);
-    } catch {
+    if (uploaded) {
+      // 업로드 성공 → 메타데이터 기록
+      try {
+        await fetch(`/api/studio/sessions/${sessionId}/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phase: 'confirm',
+            deviceId: device.id,
+            durationMs,
+            fileSize: blob.size,
+            storagePath,
+          }),
+        });
+      } catch {}
+    } else {
       try {
         await supabase.from('studio_devices').update({ status: 'error' }).eq('id', device.id);
       } catch {}
-      goToResult();
     }
-  }, [sessionId, router]);
+
+    goToResult();
+  }, [sessionId, router, getSignedUrl, uploadWithXHR]);
 
   if (loading) {
     return (
