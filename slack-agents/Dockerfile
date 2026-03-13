@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Playwright 브라우저 설치 (Chromium만)
+RUN playwright install --with-deps chromium
+
 # 소스 코드 복사
 COPY . .
 
