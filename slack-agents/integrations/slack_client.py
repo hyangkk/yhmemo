@@ -310,7 +310,10 @@ class SlackClient:
         try:
             kwargs = {"channel": channel_id, "limit": 10}
             if channel_id in self._last_ts:
-                kwargs["oldest"] = self._last_ts[channel_id]
+                # Slack API는 oldest 소수점 6자리까지만 인식 — 정규화
+                raw_ts = self._last_ts[channel_id]
+                dot = raw_ts.find(".")
+                kwargs["oldest"] = raw_ts[:dot + 7] if dot >= 0 and len(raw_ts) > dot + 7 else raw_ts
 
             logger.info(f"[poll] Checking {channel_id} (oldest={kwargs.get('oldest', 'none')})")
             result = await asyncio.wait_for(
