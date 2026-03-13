@@ -210,16 +210,25 @@ def _run_ffmpeg(args: list[str]):
         raise Exception(f"FFmpeg 오류: {result.stderr}")
 
 
-# iOS/macOS 호환 고품질 인코딩 (H.264 High + CRF 품질 모드)
-IOS_VIDEO_OPTS = [
+# 범용 고품질 인코딩 (H.264 High + CRF, 다양한 기기 입력 정규화)
+ENCODE_VIDEO_OPTS = [
     "-c:v", "libx264",
     "-profile:v", "high",
     "-level", "4.1",
     "-pix_fmt", "yuv420p",
     "-crf", "20",          # 고품질 (18=거의 무손실, 23=기본, 20=좋은 품질)
-    "-preset", "medium",   # 품질/속도 균형 (fast→medium으로 품질 개선)
+    "-preset", "medium",   # 품질/속도 균형
+    "-r", "30",            # 출력 프레임레이트 통일 (기기별 fps 차이 정규화)
 ]
-IOS_AUDIO_OPTS = ["-c:a", "aac", "-b:a", "192k"]  # 192kbps AAC (표준 품질)
+ENCODE_AUDIO_OPTS = [
+    "-c:a", "aac",
+    "-b:a", "192k",        # 192kbps AAC (표준 품질)
+    "-ar", "48000",        # 오디오 샘플레이트 통일 (안드로이드/iOS 차이 정규화)
+    "-ac", "2",            # 스테레오 통일 (모노 입력도 처리)
+]
+# 하위 호환 별칭
+IOS_VIDEO_OPTS = ENCODE_VIDEO_OPTS
+IOS_AUDIO_OPTS = ENCODE_AUDIO_OPTS
 IOS_CONTAINER_OPTS = ["-movflags", "+faststart"]
 
 
@@ -447,9 +456,9 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
         parts.append(
             f"[{cam}:v]trim=start={start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
-            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black[v{i}];"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30[v{i}];"
         )
-        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS[a{i}];")
+        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
         concat_in.append(f"[v{i}][a{i}]")
 
     fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
@@ -606,9 +615,9 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
         parts.append(
             f"[{cam}:v]trim=start={start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
-            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black[v{i}];"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30[v{i}];"
         )
-        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS[a{i}];")
+        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
         concat_in.append(f"[v{i}][a{i}]")
 
     fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
@@ -669,15 +678,30 @@ def _edit_pip(files: list[str], output: str):
 
 
 def _simple_concat(files: list[str], output: str):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        for p in files:
-            f.write(f"file '{p}'\n")
-        list_path = f.name
-    try:
-        _run_ffmpeg(["-f", "concat", "-safe", "0", "-i", list_path] +
-                    IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
-    finally:
-        os.unlink(list_path)
+    """단순 이어붙이기 (다양한 기기 입력 정규화 후 concat)"""
+    if len(files) == 1:
+        # 단일 파일은 재인코딩만
+        _run_ffmpeg(["-i", files[0],
+                     "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
+                    + ENCODE_VIDEO_OPTS + ENCODE_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
+        return
+
+    # 복수 파일: filter_complex로 해상도/fps 정규화 후 concat (기기별 차이 대응)
+    inp = []
+    parts = []
+    concat_in = []
+    for i, f in enumerate(files):
+        inp.extend(["-i", f])
+        parts.append(
+            f"[{i}:v]scale=1280:720:force_original_aspect_ratio=decrease,"
+            f"pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,fps=30,setpts=PTS-STARTPTS[v{i}];"
+        )
+        parts.append(f"[{i}:a]aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
+        concat_in.append(f"[v{i}][a{i}]")
+
+    fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(files)}:v=1:a=1[outv][outa]"
+    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "[outa]"] +
+                ENCODE_VIDEO_OPTS + ENCODE_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
 
 
 def _check_ffmpeg() -> bool:

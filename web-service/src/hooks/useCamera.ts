@@ -60,10 +60,18 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     try {
       setError(null);
 
+      // 오디오: 에코캔슬/노이즈억제 비활성화 (원본 품질 보존, 편집 시 처리)
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: true,
+        sampleRate: { ideal: 48000 },
+      };
+
       // 고해상도 → 저해상도 → 최소 순으로 시도
       const constraintsList: MediaStreamConstraints[] = [
-        { video: { facingMode: facing, width: { ideal: width }, height: { ideal: height } }, audio: true },
-        { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
+        { video: { facingMode: facing, width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: 30 } }, audio: audioConstraints },
+        { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: audioConstraints },
         { video: { facingMode: facing }, audio: true },
         { video: true, audio: true },
       ];
@@ -115,21 +123,50 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     chunksRef.current = [];
     setRecordedBlob(null);
 
-    // WebM이 가장 널리 지원됨, MP4 폴백 (iOS Safari)
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-      ? 'video/webm;codecs=vp9,opus'
-      : MediaRecorder.isTypeSupported('video/webm')
-        ? 'video/webm'
-        : 'video/mp4';
+    // 브라우저/기기별 MIME 타입 호환성 (우선순위 순)
+    const mimeTypes = [
+      'video/webm;codecs=vp9,opus',   // Chrome, Edge (고품질)
+      'video/webm;codecs=vp8,opus',   // 구형 안드로이드 Chrome
+      'video/webm;codecs=h264,opus',  // 일부 안드로이드
+      'video/webm',                    // WebM 기본
+      'video/mp4',                     // iOS Safari, 일부 브라우저
+    ];
+    const mimeType = mimeTypes.find(t => MediaRecorder.isTypeSupported(t)) || '';
 
-    // 아이폰/맥북 표준에 근접한 비트레이트 (모바일 8Mbps, 데스크톱 12Mbps)
-    const videoBitsPerSecond = mobile ? 8_000_000 : 12_000_000;
-    const recorder = new MediaRecorder(currentStream, { mimeType, videoBitsPerSecond });
+    // 비트레이트: 고 → 중 → 저 순으로 시도 (기기 인코더 한계 대응)
+    const bitrates = mobile ? [8_000_000, 4_000_000, 2_000_000] : [12_000_000, 8_000_000, 4_000_000];
+    let recorder: MediaRecorder | null = null;
+
+    for (const bps of bitrates) {
+      try {
+        const opts: MediaRecorderOptions = { videoBitsPerSecond: bps };
+        if (mimeType) opts.mimeType = mimeType;
+        recorder = new MediaRecorder(currentStream, opts);
+        break;
+      } catch {
+        continue;
+      }
+    }
+
+    // 모든 옵션 실패 시 기본값으로 시도
+    if (!recorder) {
+      try {
+        recorder = new MediaRecorder(currentStream);
+      } catch (err) {
+        setError('녹화를 시작할 수 없습니다: ' + (err instanceof Error ? err.message : ''));
+        return;
+      }
+    }
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
         chunksRef.current.push(e.data);
       }
+    };
+
+    recorder.onerror = () => {
+      // 녹화 중 에러 시 현재까지 데이터로 복구 시도
+      console.warn('[studio] MediaRecorder 에러 발생, 현재까지 데이터 저장');
     };
 
     recorder.start(1000); // 1초마다 chunk 저장
