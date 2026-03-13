@@ -697,12 +697,11 @@ class NaverBlogScraper:
                             src = await self._get_img_src(img)
                             if src:
                                 blocks.append({"type": "image", "value": src})
-                    # 텍스트 컴포넌트
+                    # 텍스트 컴포넌트 (빈 텍스트도 단락 구분 용도로 보존)
                     elif "se-text" in comp_type:
                         rich = await self._extract_rich_text(comp)
                         text = (await comp.inner_text()).strip()
-                        if text:
-                            blocks.append({"type": "text", "value": text, "rich_text": rich})
+                        blocks.append({"type": "text", "value": text, "rich_text": rich})
                     # 인용구
                     elif "se-quotation" in comp_type:
                         rich = await self._extract_rich_text(comp)
@@ -761,13 +760,14 @@ class NaverBlogScraper:
                 function walk(node) {
                     if (node.nodeType === 3) { // TEXT_NODE
                         const t = node.textContent;
-                        if (t) result.push({text: t});
+                        // 공백/줄바꿈만 있는 텍스트 노드는 건너뛰기
+                        if (t && t.trim().length > 0) result.push({text: t});
                     } else if (node.tagName === 'A') {
                         const href = node.href || node.getAttribute('href') || '';
                         const t = node.innerText || node.textContent || '';
                         if (t && href && href.startsWith('http')) {
                             result.push({text: t, url: href});
-                        } else if (t) {
+                        } else if (t && t.trim()) {
                             result.push({text: t});
                         }
                     } else if (node.tagName === 'BR') {
@@ -874,29 +874,37 @@ class NaverBlogScraper:
             blocks.append(NotionClient.block_divider())
 
         # ordered_blocks가 있으면 원래 순서대로 변환
-        # 연속 텍스트 블록은 \n으로 합쳐서 하나의 paragraph로 (이중 줄바꿈 방지)
+        # 연속 텍스트 블록은 \n으로 합쳐서 하나의 paragraph로 (원문 줄바꿈 보존)
+        # 빈 텍스트 블록은 단락 구분으로 처리 (새 paragraph 시작)
         ordered = result.get("ordered_blocks", [])
         if ordered:
-            # 연속 텍스트 블록을 그룹으로 묶기
             i = 0
             while i < len(ordered):
                 ob = ordered[i]
                 if ob["type"] == "text":
-                    # 연속된 text 블록들의 rich_text를 합치기
+                    # 연속된 text 블록들을 하나의 paragraph로 병합
+                    # 빈 텍스트 블록을 만나면 단락 구분 (새 paragraph)
                     merged_rich: list[dict] = []
                     while i < len(ordered) and ordered[i]["type"] == "text":
                         cur = ordered[i]
+                        val = cur["value"].strip()
+                        if not val:
+                            # 빈 텍스트 = 단락 구분 → 현재까지 병합 내용을 flush
+                            if merged_rich:
+                                blocks.append(NotionClient.block_paragraph_rich(merged_rich))
+                                merged_rich = []
+                            i += 1
+                            continue
                         if merged_rich:
-                            # 이전 텍스트와 구분을 위해 줄바꿈 추가
                             merged_rich.append({"text": "\n"})
                         rich = cur.get("rich_text", [])
                         if rich:
                             merged_rich.extend(rich)
                         else:
-                            merged_rich.append({"text": cur["value"]})
+                            merged_rich.append({"text": val})
                         i += 1
-                    # rich_text 전체 길이 체크 후 블록 생성
-                    blocks.append(NotionClient.block_paragraph_rich(merged_rich))
+                    if merged_rich:
+                        blocks.append(NotionClient.block_paragraph_rich(merged_rich))
                 elif ob["type"] == "image":
                     blocks.append(NotionClient.block_image(ob["value"]))
                     i += 1
