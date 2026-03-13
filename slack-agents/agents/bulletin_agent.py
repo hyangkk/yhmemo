@@ -569,13 +569,23 @@ class BulletinAgent(BaseAgent):
                 logger.error(f"[bulletin] Playwright 스크래핑 실패 ({url}): {e}")
                 return [], f"Playwright 오류: {e}"
         else:
-            # 기존 urllib 방식
+            # 기존 urllib 방식 (실패 시 Playwright로 자동 폴백)
             try:
                 content, headers = await asyncio.to_thread(self._fetch_url, url)
+                html = self._decode_html(content, headers)
+                # 빈 응답이면 Playwright 폴백
+                if not html or len(html.strip()) < 100:
+                    raise RuntimeError("빈 응답 — Playwright 폴백")
             except Exception as e:
-                logger.error(f"[bulletin] HTTP 요청 실패 ({url}): {e}")
-                return [], f"HTTP 오류: {e}"
-            html = self._decode_html(content, headers)
+                logger.warning(f"[bulletin] HTTP 실패, Playwright 폴백 시도 ({url}): {e}")
+                try:
+                    css_sel = board.get("css_selector", "")
+                    wait_sel = css_sel if css_sel else None
+                    html = await self._pw_fetch_html(url, wait_selector=wait_sel)
+                    use_playwright = True  # 본문 추출도 Playwright로
+                except Exception as e2:
+                    logger.error(f"[bulletin] Playwright 폴백도 실패 ({url}): {e2}")
+                    return [], f"HTTP 오류: {e}\nPlaywright 폴백 오류: {e2}"
 
         logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신 (playwright={use_playwright})")
 
