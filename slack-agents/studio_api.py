@@ -211,7 +211,7 @@ def _analyze_audio_levels(filepath: str, interval: float = 1.0) -> list[float]:
         return [-100.0]
 
 
-def _edit_auto_cut(files: list[str], output: str, min_segment: float = 3.0, max_segment: float = 10.0):
+def _edit_auto_cut(files: list[str], output: str, min_segment: float = 3.0, max_segment: float = 3.0):
     """오디오 분석 기반 자동 컷편집: 소리가 큰 카메라를 우선 선택, 자연스러운 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     min_dur = min(durations) if durations else 0
