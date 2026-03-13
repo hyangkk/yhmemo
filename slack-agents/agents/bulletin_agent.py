@@ -80,6 +80,13 @@ class BulletinAgent(BaseAgent):
         # 형식: http://user:pass@host:port 또는 socks5://host:port
         self._proxy_url = os.environ.get("KOREAN_PROXY_URL", "")
 
+        # Vercel 프록시 (서울 리전) — 한국 전용 사이트 우회용
+        self._vercel_proxy_url = os.environ.get(
+            "VERCEL_PROXY_URL",
+            "https://yhmemo.vercel.app/api/proxy",
+        )
+        self._vercel_proxy_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
         # Playwright 브라우저 인스턴스 (싱글턴, 필요 시 생성)
         self._pw = None
         self._pw_browser = None
@@ -403,6 +410,51 @@ class BulletinAgent(BaseAgent):
                 else:
                     await self._reply(channel, f":x: [{board['name']}] 오류: {e}", thread_ts)
 
+    # ── Vercel 프록시 (서울 리전) ────────────────────────
+
+    async def _fetch_via_vercel_proxy(self, url: str) -> str:
+        """Vercel 서울 리전 프록시를 통해 한국 전용 사이트 HTML 가져오기"""
+        import json
+        proxy_url = self._vercel_proxy_url
+        key = self._vercel_proxy_key
+
+        if not key:
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음 — Vercel 프록시 인증 불가")
+
+        logger.info(f"[bulletin/vercel] 프록시 요청: {url}")
+
+        data = json.dumps({"url": url}).encode("utf-8")
+        req = urllib.request.Request(
+            proxy_url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        # SSL 검증 (Vercel은 유효한 인증서 사용)
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+
+        resp_body = await asyncio.to_thread(
+            lambda: urllib.request.urlopen(req, context=ctx, timeout=25).read()
+        )
+        result = json.loads(resp_body)
+
+        if "error" in result:
+            raise RuntimeError(f"Vercel 프록시 오류: {result['error']}")
+
+        html = result.get("html", "")
+        status = result.get("status", 0)
+        logger.info(f"[bulletin/vercel] 응답: HTTP {status}, {len(html)}자")
+
+        if status >= 400:
+            raise RuntimeError(f"Vercel 프록시: 원본 HTTP {status}")
+
+        return html
+
     # ── Playwright 브라우저 관리 ────────────────────────
 
     async def _ensure_playwright(self):
@@ -411,14 +463,24 @@ class BulletinAgent(BaseAgent):
             return
         from playwright.async_api import async_playwright
         self._pw = await async_playwright().start()
+
+        launch_args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+        ]
+
+        # 한국 프록시 설정 (해외 IP 차단 사이트 우회)
+        proxy_config = None
+        if self._proxy_url:
+            proxy_config = {"server": self._proxy_url}
+            logger.info(f"[bulletin/pw] 한국 프록시 사용: {self._proxy_url[:30]}...")
+
         self._pw_browser = await self._pw.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-            ],
+            args=launch_args,
+            proxy=proxy_config,
         )
         logger.info("[bulletin] Playwright 브라우저 시작됨")
 
@@ -559,6 +621,18 @@ class BulletinAgent(BaseAgent):
         use_playwright = board.get("use_playwright", False)
         debug_info = ""
 
+        _error_patterns = ["bad request", "403 forbidden", "access denied",
+                           "502 bad gateway", "서버 오류", "접근이 거부"]
+
+        def _is_error_page(h: str) -> bool:
+            if not h or len(h.strip()) < 100:
+                return True
+            h_lower = h.lower()
+            return any(ep in h_lower for ep in _error_patterns)
+
+        html = ""
+        used_vercel_proxy = False
+
         if use_playwright:
             # Playwright로 렌더링된 HTML 가져오기
             try:
@@ -569,27 +643,40 @@ class BulletinAgent(BaseAgent):
                 logger.error(f"[bulletin] Playwright 스크래핑 실패 ({url}): {e}")
                 return [], f"Playwright 오류: {e}"
         else:
-            # 기존 urllib 방식 (실패 시 Playwright로 자동 폴백)
+            # 1단계: urllib 직접 접근
             try:
                 content, headers = await asyncio.to_thread(self._fetch_url, url)
                 html = self._decode_html(content, headers)
-                # 빈 응답 또는 에러 페이지이면 Playwright 폴백
-                _error_patterns = ["bad request", "403 forbidden", "access denied",
-                                   "502 bad gateway", "서버 오류", "접근이 거부"]
-                _html_lower = html.lower() if html else ""
-                if (not html or len(html.strip()) < 100
-                        or any(ep in _html_lower for ep in _error_patterns)):
-                    raise RuntimeError(f"에러 페이지 감지 ({len(html)}자) — Playwright 폴백")
+                if _is_error_page(html):
+                    raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
             except Exception as e:
-                logger.warning(f"[bulletin] HTTP 실패, Playwright 폴백 시도 ({url}): {e}")
+                logger.warning(f"[bulletin] 1단계(urllib) 실패: {e}")
+                html = ""
+
+            # 2단계: Vercel 서울 프록시
+            if not html or _is_error_page(html):
+                try:
+                    html = await self._fetch_via_vercel_proxy(url)
+                    if _is_error_page(html):
+                        raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
+                    used_vercel_proxy = True
+                    logger.info(f"[bulletin] 2단계(Vercel 프록시) 성공: {len(html)}자")
+                except Exception as e:
+                    logger.warning(f"[bulletin] 2단계(Vercel 프록시) 실패: {e}")
+
+            # 3단계: Playwright 폴백
+            if not html or _is_error_page(html):
                 try:
                     css_sel = board.get("css_selector", "")
                     wait_sel = css_sel if css_sel else None
                     html = await self._pw_fetch_html(url, wait_selector=wait_sel)
-                    use_playwright = True  # 본문 추출도 Playwright로
+                    if _is_error_page(html):
+                        raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
+                    use_playwright = True
+                    logger.info(f"[bulletin] 3단계(Playwright) 성공: {len(html)}자")
                 except Exception as e2:
-                    logger.error(f"[bulletin] Playwright 폴백도 실패 ({url}): {e2}")
-                    return [], f"HTTP 오류: {e}\nPlaywright 폴백 오류: {e2}"
+                    logger.error(f"[bulletin] 모든 접근 방법 실패 ({url})")
+                    return [], f"모든 접근 실패:\n1. urllib\n2. Vercel 프록시\n3. Playwright"
 
         logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신 (playwright={use_playwright})")
 
@@ -640,9 +727,9 @@ class BulletinAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"[bulletin] {board['name']}: Playwright 폴백 실패: {e}")
 
-        # Playwright 사용 게시판은 각 게시글 본문도 추출
-        if use_playwright and posts:
-            await self._enrich_posts_with_content(posts)
+        # 게시글 본문 추출 (Vercel 프록시 또는 Playwright)
+        if posts and (use_playwright or used_vercel_proxy):
+            await self._enrich_posts_with_content(posts, use_vercel=used_vercel_proxy)
 
         if not posts:
             # 디버그: HTML 구조 힌트
@@ -667,16 +754,43 @@ class BulletinAgent(BaseAgent):
 
         return posts, debug_info
 
-    async def _enrich_posts_with_content(self, posts: list[dict], max_posts: int = 5):
+    async def _enrich_posts_with_content(self, posts: list[dict], max_posts: int = 5,
+                                         use_vercel: bool = False):
         """게시글 목록의 각 항목에 본문 내용을 추가 (최대 max_posts개)"""
+        from bs4 import BeautifulSoup as BS4
+
+        # 본문 추출용 셀렉터 목록
+        _content_sels = [
+            "div.board_view_content", "div.view_content", "div.bbs_content",
+            "div.board-content", "div.content_view", "td.board_content",
+            "div#content", "div.detail_content", "article", "div.view_cont",
+        ]
+
         for post in posts[:max_posts]:
             post_url = post.get("url", "")
             if not post_url:
                 continue
             try:
-                content = await self._pw_scrape_post_content(post_url)
-                post["content"] = content
-                logger.info(f"[bulletin] 본문 추출: {post['title'][:30]}... ({len(content)}자)")
+                if use_vercel:
+                    # Vercel 프록시로 HTML 가져와서 BeautifulSoup 파싱
+                    html = await self._fetch_via_vercel_proxy(post_url)
+                    soup = BS4(html, "html.parser")
+                    content_text = ""
+                    for sel in _content_sels:
+                        el = soup.select_one(sel)
+                        if el and len(el.get_text(strip=True)) > 10:
+                            content_text = el.get_text(separator="\n", strip=True)
+                            break
+                    if not content_text:
+                        body = soup.find("body")
+                        if body:
+                            content_text = body.get_text(separator="\n", strip=True)[:3000]
+                    post["content"] = content_text[:5000]
+                else:
+                    # Playwright로 본문 추출
+                    post["content"] = await self._pw_scrape_post_content(post_url)
+
+                logger.info(f"[bulletin] 본문 추출: {post['title'][:30]}... ({len(post.get('content',''))}자)")
                 await asyncio.sleep(1)  # 서버 부하 방지
             except Exception as e:
                 logger.warning(f"[bulletin] 본문 추출 실패 ({post_url}): {e}")
