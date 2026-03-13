@@ -702,6 +702,26 @@ class NaverBlogScraper:
                         rich = await self._extract_rich_text(comp)
                         text = (await comp.inner_text()).strip()
                         blocks.append({"type": "text", "value": text, "rich_text": rich})
+                    # 동영상 컴포넌트
+                    elif "se-video" in comp_type or "se-movieSeq" in comp_type:
+                        video_info = await self._extract_video(comp)
+                        if video_info:
+                            blocks.append(video_info)
+                    # 지도/장소 컴포넌트
+                    elif "se-map" in comp_type or "se-place" in comp_type or "se-placesMap" in comp_type:
+                        map_info = await self._extract_map(comp)
+                        if map_info:
+                            blocks.append(map_info)
+                    # OG 링크 (외부 링크 카드)
+                    elif "se-oglink" in comp_type or "se-link" in comp_type:
+                        link_info = await self._extract_oglink(comp)
+                        if link_info:
+                            blocks.append(link_info)
+                    # 파일 첨부
+                    elif "se-file" in comp_type:
+                        text = (await comp.inner_text()).strip()
+                        if text:
+                            blocks.append({"type": "text", "value": f"[첨부파일] {text}", "rich_text": [{"text": f"[첨부파일] {text}"}]})
                     # 인용구
                     elif "se-quotation" in comp_type:
                         rich = await self._extract_rich_text(comp)
@@ -801,6 +821,119 @@ class NaverBlogScraper:
                 return [{"text": text}] if text else []
             except Exception:
                 return []
+
+    async def _extract_video(self, comp) -> Optional[dict]:
+        """동영상 컴포넌트에서 영상 URL 추출"""
+        try:
+            # iframe src (유튜브, 네이버TV 등)
+            iframe = await comp.query_selector("iframe")
+            if iframe:
+                src = await iframe.get_attribute("src") or await iframe.get_attribute("data-src")
+                if src:
+                    if src.startswith("//"):
+                        src = "https:" + src
+                    # 유튜브 embed URL → 일반 URL 변환
+                    yt = re.search(r"youtube\.com/embed/([^?&]+)", src)
+                    if yt:
+                        src = f"https://www.youtube.com/watch?v={yt.group(1)}"
+                    title = (await comp.inner_text()).strip() or "동영상"
+                    return {"type": "video", "value": src, "title": title}
+
+            # a 태그에 동영상 링크
+            link = await comp.query_selector("a[href]")
+            if link:
+                href = await link.get_attribute("href")
+                if href and ("youtube" in href or "youtu.be" in href or "tv.naver" in href or "video" in href):
+                    title = (await link.inner_text()).strip() or "동영상"
+                    return {"type": "video", "value": href, "title": title}
+
+            # data-module 속성에서 영상 정보 추출
+            video_url = await comp.evaluate("""el => {
+                // data-module에 JSON 형태로 영상 정보가 있을 수 있음
+                const module = el.querySelector('[data-module]');
+                if (module) {
+                    try {
+                        const data = JSON.parse(module.getAttribute('data-module'));
+                        return data.data?.url || data.url || null;
+                    } catch(e) {}
+                }
+                // __se_module-data 속성
+                const seModule = el.querySelector('[data-linkdata]');
+                if (seModule) {
+                    try {
+                        const data = JSON.parse(seModule.getAttribute('data-linkdata'));
+                        return data.link || data.url || null;
+                    } catch(e) {}
+                }
+                return null;
+            }""")
+            if video_url:
+                title = (await comp.inner_text()).strip() or "동영상"
+                return {"type": "video", "value": video_url, "title": title}
+
+        except Exception as e:
+            logger.debug(f"[NaverBlog] 동영상 추출 실패: {e}")
+        return None
+
+    async def _extract_map(self, comp) -> Optional[dict]:
+        """지도/장소 컴포넌트에서 장소 정보 추출"""
+        try:
+            # 장소명 추출
+            place_name = ""
+            for sel in ["a.se-map-info", "a.se-place-name", "strong", "a[href]"]:
+                el = await comp.query_selector(sel)
+                if el:
+                    place_name = (await el.inner_text()).strip()
+                    if place_name:
+                        break
+
+            # 네이버 지도 링크 추출
+            map_url = None
+            link = await comp.query_selector("a[href*='map.naver'], a[href*='place.naver'], a[href*='naver.me']")
+            if link:
+                map_url = await link.get_attribute("href")
+            else:
+                # 모든 a 태그에서 지도 관련 링크 찾기
+                all_links = await comp.query_selector_all("a[href]")
+                for a in all_links:
+                    href = await a.get_attribute("href")
+                    if href and ("map" in href or "place" in href or "naver.me" in href):
+                        map_url = href
+                        break
+
+            if not map_url:
+                # 주소 정보라도 추출
+                addr = (await comp.inner_text()).strip()
+                if addr:
+                    place_name = place_name or addr.split("\n")[0]
+                    map_url = f"https://map.naver.com/v5/search/{place_name}"
+
+            if place_name or map_url:
+                return {
+                    "type": "map",
+                    "value": map_url or "",
+                    "title": place_name or "장소",
+                }
+        except Exception as e:
+            logger.debug(f"[NaverBlog] 지도 추출 실패: {e}")
+        return None
+
+    async def _extract_oglink(self, comp) -> Optional[dict]:
+        """OG 링크 카드에서 URL 추출"""
+        try:
+            link = await comp.query_selector("a[href]")
+            if link:
+                href = await link.get_attribute("href")
+                title = (await link.inner_text()).strip()
+                if href and href.startswith("http"):
+                    return {
+                        "type": "embed",
+                        "value": href,
+                        "title": title or href,
+                    }
+        except Exception as e:
+            logger.debug(f"[NaverBlog] OG링크 추출 실패: {e}")
+        return None
 
     async def _get_img_src(self, img) -> Optional[str]:
         """img 요소에서 유효한 src URL 추출 (필터링 포함)"""
@@ -930,6 +1063,17 @@ class NaverBlogScraper:
                 elif ob["type"] == "divider":
                     blocks.append(NotionClient.block_divider())
                     i += 1
+                elif ob["type"] in ("video", "map", "embed"):
+                    # 동영상/지도/외부링크 → bookmark 블록으로 변환
+                    url = ob.get("value", "")
+                    title = ob.get("title", "")
+                    type_labels = {"video": "동영상", "map": "장소", "embed": "링크"}
+                    label = type_labels.get(ob["type"], "링크")
+                    if url and url.startswith("http"):
+                        blocks.append(NotionClient.block_bookmark(url))
+                    elif title:
+                        blocks.append(NotionClient.block_paragraph(f"[{label}] {title}"))
+                    i += 1
                 else:
                     i += 1
         else:
@@ -1006,6 +1150,23 @@ class NaverBlogScraper:
                 parts.append(img_url)
             if len(images) > 3:
                 parts.append(f"_... 외 {len(images) - 3}장_")
+
+        # 임베드된 동영상/지도/링크 표시
+        ordered = result.get("ordered_blocks", [])
+        embeds = []
+        for ob in ordered:
+            if ob["type"] == "video" and ob.get("value"):
+                title = ob.get("title", "동영상")
+                embeds.append(f":movie_camera: <{ob['value']}|{title}>")
+            elif ob["type"] == "map" and ob.get("value"):
+                title = ob.get("title", "장소")
+                embeds.append(f":round_pushpin: <{ob['value']}|{title}>")
+            elif ob["type"] == "embed" and ob.get("value"):
+                title = ob.get("title", "링크")
+                embeds.append(f":link: <{ob['value']}|{title}>")
+        if embeds:
+            parts.append("\n:paperclip: *임베드 콘텐츠*")
+            parts.extend(embeds)
 
         return "\n".join(parts)
 
