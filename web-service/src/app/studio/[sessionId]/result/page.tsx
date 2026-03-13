@@ -42,6 +42,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [pollKey, setPollKey] = useState(0);
   const [editingElapsed, setEditingElapsed] = useState(0);
   const [editingStartTime, setEditingStartTime] = useState(() => Date.now());
+  const [finalizeCalled, setFinalizeCalled] = useState(false);
 
   // 편집 중 경과 시간 타이머
   useEffect(() => {
@@ -75,9 +76,25 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           return;
         }
         const elapsed = Date.now() - startTime;
-        if (d.session.status === 'uploading' && elapsed > 30000) {
-          const stuckDevices = d.devices.filter(dev => dev.status !== 'done' && dev.status !== 'error');
-          if (stuckDevices.length > 0) {
+        // 모든 디바이스가 done/error이면 바로 finalize (편집 전환)
+        if (d.session.status === 'uploading') {
+          const allFinished = d.devices.every(dev => dev.status === 'done' || dev.status === 'error');
+          if (allFinished) {
+            await fetch(`/api/studio/sessions/${sessionId}/finalize`, { method: 'POST' });
+          } else if (elapsed > 90000) {
+            // 90초 초과 시 stuck 디바이스 강제 완료 (1회만, force=true)
+            setFinalizeCalled(prev => {
+              if (!prev) {
+                fetch(`/api/studio/sessions/${sessionId}/finalize`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ force: true }),
+                });
+              }
+              return true;
+            });
+          } else {
+            // 아직 타임아웃 전: stuck 디바이스(connected 등)만 정리, uploading은 유지
             await fetch(`/api/studio/sessions/${sessionId}/finalize`, { method: 'POST' });
           }
         }
