@@ -544,10 +544,10 @@ async def main():
 
         try:
             scraper = await get_blog_scraper()
-            # 전체 크롤링에 90초 타임아웃
+            # 전체 크롤링에 120초 타임아웃
             result = await asyncio.wait_for(
                 scraper.scrape(url, max_posts=max_posts),
-                timeout=90,
+                timeout=120,
             )
 
             # 블로그 홈이고 fetch_posts가 True면 각 글 본문까지 크롤링
@@ -556,7 +556,7 @@ async def main():
                 if fetch_posts and post_urls:
                     await _reply(channel, f":house: *{result.get('blog_id', '')}* 블로그에서 최신 글 {len(post_urls)}개 크롤링 → 노션 저장합니다...", thread_ts)
                     for pu in post_urls:
-                        post_result = await asyncio.wait_for(scraper.scrape(pu), timeout=90)
+                        post_result = await asyncio.wait_for(scraper.scrape(pu), timeout=120)
                         notion_url, err = await _save_blog_to_notion(post_result)
                         post_title = post_result.get("title", "(제목 없음)")
                         if notion_url:
@@ -579,7 +579,7 @@ async def main():
             msg = scraper.format_for_slack(result)
             await _reply(channel, msg, thread_ts)
         except asyncio.TimeoutError:
-            await _reply(channel, ":x: 크롤링 타임아웃 (90초 초과). 잠시 후 다시 시도해주세요.", thread_ts)
+            await _reply(channel, ":x: 크롤링 타임아웃 (120초 초과). 잠시 후 다시 시도해주세요.", thread_ts)
         except Exception as e:
             logger.error(f"[Blog] 스크래핑 오류: {e}", exc_info=True)
             await _reply(channel, f":x: 블로그 스크래핑 중 오류 발생: {e}", thread_ts)

@@ -53,9 +53,9 @@ class NaverBlogScraper:
     ]
 
     # 페이지 로딩 타임아웃 (ms)
-    PAGE_TIMEOUT = 30000
-    IFRAME_TIMEOUT = 15000
-    SELECTOR_TIMEOUT = 8000
+    PAGE_TIMEOUT = 20000
+    IFRAME_TIMEOUT = 10000
+    SELECTOR_TIMEOUT = 5000
 
     def __init__(self):
         self._browser = None
