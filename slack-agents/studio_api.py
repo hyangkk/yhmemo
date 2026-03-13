@@ -202,7 +202,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
 
 def _run_ffmpeg(args: list[str]):
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
         raise Exception(f"FFmpeg 오류: {result.stderr}")
 
@@ -482,9 +482,22 @@ def start_studio_server(port: int = 8000):
                 for sess in sessions.data:
                     sid = sess["id"]
                     # 이미 처리 중인 result가 있는지 확인
-                    existing = sb.table("studio_results").select("id,status").eq("session_id", sid).execute()
-                    if existing.data and any(r["status"] == "processing" for r in existing.data):
-                        continue  # 이미 처리 중
+                    existing = sb.table("studio_results").select("id,status,created_at").eq("session_id", sid).execute()
+                    processing = [r for r in (existing.data or []) if r["status"] == "processing"]
+                    if processing:
+                        # 5분 이상 stuck된 processing은 error로 전환
+                        from datetime import datetime, timezone, timedelta
+                        for r in processing:
+                            created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                            if datetime.now(timezone.utc) - created > timedelta(minutes=5):
+                                print(f"[studio] 세션 {sid}: result {r['id']} 5분 초과, error 처리", flush=True)
+                                sb.table("studio_results").update({"status": "error"}).eq("id", r["id"]).execute()
+                            else:
+                                continue
+                        # 아직 유효한 processing이 남아있으면 skip
+                        still_processing = sb.table("studio_results").select("id").eq("session_id", sid).eq("status", "processing").execute()
+                        if still_processing.data:
+                            continue
                     if existing.data and any(r["status"] == "done" for r in existing.data):
                         # 결과는 있는데 세션이 아직 editing → done으로 전환
                         sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
