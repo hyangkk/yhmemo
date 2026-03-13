@@ -27,6 +27,15 @@ class NaverBlogScraper:
         r"blog\.naver\.com/([^/\?]+)/(\d+)",        # blog.naver.com/블로그ID/글번호
         r"blog\.naver\.com/PostView\.naver",          # blog.naver.com/PostView.naver?blogId=...
         r"m\.blog\.naver\.com/([^/\?]+)/(\d+)",       # 모바일 버전
+        r"blog\.naver\.com/([^/\?\s]+)$",             # blog.naver.com/블로그ID (블로그 홈)
+        r"blog\.naver\.com/([^/\?\s]+)\?",            # blog.naver.com/블로그ID?... (쿼리 포함)
+    ]
+
+    # 개별 글 URL 패턴 (홈과 구분용)
+    POST_PATTERNS = [
+        r"blog\.naver\.com/([^/\?]+)/(\d+)",
+        r"blog\.naver\.com/PostView\.naver",
+        r"m\.blog\.naver\.com/([^/\?]+)/(\d+)",
     ]
 
     def __init__(self):
@@ -68,24 +77,23 @@ class NaverBlogScraper:
             url = "https://" + url
         return url
 
-    async def scrape(self, url: str) -> dict:
+    @staticmethod
+    def _is_post_url(url: str) -> bool:
+        """개별 글 URL인지 확인 (블로그 홈이 아닌)"""
+        return any(re.search(p, url) for p in NaverBlogScraper.POST_PATTERNS)
+
+    async def scrape(self, url: str, max_posts: int = 5) -> dict:
         """
         네이버 블로그 글을 스크래핑합니다.
+        블로그 홈 URL이면 최신 글 목록을 가져옵니다.
 
         Args:
-            url: 네이버 블로그 글 URL
+            url: 네이버 블로그 글 URL 또는 블로그 홈 URL
+            max_posts: 블로그 홈일 때 가져올 최신 글 수 (기본 5)
 
         Returns:
-            {
-                "success": bool,
-                "title": str,
-                "content": str,        # 본문 텍스트
-                "images": list[str],   # 이미지 URL 목록
-                "date": str,           # 작성일
-                "author": str,         # 작성자
-                "url": str,            # 원본 URL
-                "error": str           # 실패 시 에러 메시지
-            }
+            개별 글: {"success", "title", "content", "images", "date", "author", "url"}
+            블로그 홈: {"success", "is_home", "blog_id", "posts": [{"title", "url", "date"}...]}
         """
         url = self._normalize_url(url)
 
@@ -94,7 +102,10 @@ class NaverBlogScraper:
 
         try:
             await self._ensure_browser()
-            return await self._scrape_blog_post(url)
+            if self._is_post_url(url):
+                return await self._scrape_blog_post(url)
+            else:
+                return await self._scrape_blog_home(url, max_posts)
         except Exception as e:
             logger.error(f"[NaverBlog] 스크래핑 실패: {e}", exc_info=True)
             return {"success": False, "error": str(e), "url": url}
@@ -176,6 +187,111 @@ class NaverBlogScraper:
                 "date": date,
                 "author": author,
                 "url": url,
+            }
+
+        finally:
+            await page.close()
+            await context.close()
+
+    async def _scrape_blog_home(self, url: str, max_posts: int = 5) -> dict:
+        """블로그 홈 URL에서 최신 글 목록 추출"""
+        context = await self._browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="ko-KR",
+        )
+        page = await context.new_page()
+
+        try:
+            # 블로그 ID 추출
+            m = re.search(r"blog\.naver\.com/([^/\?\s]+)", url)
+            blog_id = m.group(1) if m else ""
+
+            # PostList 페이지로 접속 (글 목록을 볼 수 있는 URL)
+            list_url = f"https://blog.naver.com/PostList.naver?blogId={blog_id}&categoryNo=0&from=postList"
+            logger.info(f"[NaverBlog] 블로그 홈 접속: {list_url}")
+
+            await page.goto(list_url, wait_until="domcontentloaded", timeout=30000)
+
+            # iframe 진입
+            content_frame = page
+            iframe = page.frame("mainFrame")
+            if iframe:
+                content_frame = iframe
+                await content_frame.wait_for_load_state("domcontentloaded", timeout=15000)
+
+            # 글 목록에서 포스트 링크 추출
+            posts = []
+
+            # 방법 1: 블로그 포스트 목록에서 추출
+            post_selectors = [
+                "a.pcol2",                          # 제목 링크 (리스트뷰)
+                "span.ell a",                        # 제목 링크 (간략뷰)
+                "a.link__iGhdOl",                    # 최신 스킨
+                "div.post-item a",                   # 카드형
+                "table.board-list a",                # 테이블형
+            ]
+
+            for sel in post_selectors:
+                try:
+                    links = await content_frame.query_selector_all(sel)
+                    for link in links[:max_posts * 2]:  # 여유분 추출
+                        href = await link.get_attribute("href")
+                        title = (await link.inner_text()).strip()
+                        if href and title and len(title) > 1:
+                            # 상대 URL → 절대 URL
+                            if href.startswith("/"):
+                                href = "https://blog.naver.com" + href
+                            elif not href.startswith("http"):
+                                continue
+                            # 실제 블로그 글 URL만 필터
+                            if "blog.naver.com" in href:
+                                posts.append({"title": title, "url": href})
+                    if posts:
+                        break
+                except Exception:
+                    continue
+
+            # 방법 2: 직접 블로그 홈에서 모든 링크를 추출하여 글 URL 필터링
+            if not posts:
+                try:
+                    all_links = await content_frame.query_selector_all("a[href]")
+                    seen_urls = set()
+                    for link in all_links:
+                        href = await link.get_attribute("href")
+                        if not href:
+                            continue
+                        # blog.naver.com/블로그ID/글번호 패턴 매칭
+                        post_match = re.search(r"blog\.naver\.com/[^/]+/(\d+)", href)
+                        if post_match and href not in seen_urls:
+                            seen_urls.add(href)
+                            title = (await link.inner_text()).strip()
+                            if not title or len(title) < 2:
+                                title = f"글 #{post_match.group(1)}"
+                            if href.startswith("/"):
+                                href = "https://blog.naver.com" + href
+                            posts.append({"title": title, "url": href})
+                except Exception as e:
+                    logger.warning(f"[NaverBlog] 링크 추출 실패: {e}")
+
+            # 중복 제거 및 제한
+            seen = set()
+            unique_posts = []
+            for p in posts:
+                if p["url"] not in seen:
+                    seen.add(p["url"])
+                    unique_posts.append(p)
+            posts = unique_posts[:max_posts]
+
+            return {
+                "success": True,
+                "is_home": True,
+                "blog_id": blog_id,
+                "url": url,
+                "posts": posts,
             }
 
         finally:
@@ -320,6 +436,21 @@ class NaverBlogScraper:
         """스크래핑 결과를 슬랙 메시지로 포맷팅"""
         if not result.get("success"):
             return f":x: 스크래핑 실패: {result.get('error', '알 수 없는 오류')}\nURL: {result.get('url', '')}"
+
+        # 블로그 홈 결과
+        if result.get("is_home"):
+            parts = []
+            parts.append(f":house: *{result.get('blog_id', '')}* 블로그 최신 글 목록")
+            parts.append(f":link: {result['url']}")
+            parts.append("")
+            posts = result.get("posts", [])
+            if posts:
+                for i, p in enumerate(posts, 1):
+                    parts.append(f"{i}. <{p['url']}|{p['title']}>")
+                parts.append(f"\n_총 {len(posts)}건 — 개별 글을 크롤링하려면 URL을 보내주세요_")
+            else:
+                parts.append("_글 목록을 가져오지 못했습니다._")
+            return "\n".join(parts)
 
         parts = []
         parts.append(f":notebook: *{result['title']}*")
