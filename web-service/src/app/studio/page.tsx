@@ -46,76 +46,70 @@ export default function StudioPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
-      <div className="max-w-md w-full space-y-8">
-        {/* 로고/타이틀 */}
-        <div className="text-center">
-          <div className="text-5xl mb-3">🎬</div>
-          <h1 className="text-3xl font-bold">멀티캠 스튜디오</h1>
-          <p className="text-gray-400 mt-2">
-            여러 대의 카메라로 동시 촬영하고<br />
-            자동으로 편집된 영상을 받아보세요
-          </p>
+    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+      <div className="max-w-sm w-full space-y-4">
+        {/* 타이틀 */}
+        <div className="text-center pb-2">
+          <h1 className="text-2xl font-bold">멀티캠 스튜디오</h1>
+          <p className="text-gray-500 text-xs mt-1">여러 카메라로 동시 촬영 · 자동 편집</p>
         </div>
 
-        {/* 새 촬영 세션 */}
-        <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold">새 촬영 시작</h2>
-          <input
-            type="text"
-            placeholder="촬영 제목 (선택)"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-purple-500"
-          />
-          <button
-            onClick={createSession}
-            disabled={loading}
-            className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white font-semibold py-3 rounded-xl transition"
-          >
-            {loading ? '생성 중...' : '촬영 세션 만들기'}
-          </button>
-        </div>
+        {/* 새 촬영 + 참여 코드 통합 */}
+        <div className="bg-gray-900 rounded-2xl p-4 space-y-3">
+          {/* 새 촬영 */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="촬영 제목 (선택)"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="flex-1 bg-gray-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <button
+              onClick={createSession}
+              disabled={loading}
+              className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap"
+            >
+              {loading ? '...' : '새 촬영'}
+            </button>
+          </div>
 
-        {/* 구분선 */}
-        <div className="flex items-center gap-4">
-          <div className="flex-1 h-px bg-gray-800" />
-          <span className="text-gray-500 text-sm">또는</span>
-          <div className="flex-1 h-px bg-gray-800" />
-        </div>
+          {/* 구분선 */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-gray-800" />
+            <span className="text-gray-600 text-xs">또는 참여</span>
+            <div className="flex-1 h-px bg-gray-800" />
+          </div>
 
-        {/* 코드로 참여 */}
-        <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold">코드로 참여</h2>
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            placeholder="참여 코드 (2자리)"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
-            maxLength={2}
-            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white text-center text-4xl tracking-[0.5em] font-mono placeholder-gray-500 placeholder:text-base placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={joinSession}
-            disabled={loading || joinCode.length < 2}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white font-semibold py-3 rounded-xl transition"
-          >
-            {loading ? '참여 중...' : '세션 참여하기'}
-          </button>
+          {/* 코드로 참여 */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="코드 2자리"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              maxLength={2}
+              className="flex-1 bg-gray-800 rounded-xl px-3 py-2.5 text-white text-center text-2xl tracking-[0.3em] font-mono placeholder-gray-500 placeholder:text-sm placeholder:tracking-normal outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={joinSession}
+              disabled={loading || joinCode.length < 2}
+              className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap"
+            >
+              {loading ? '...' : '참여'}
+            </button>
+          </div>
         </div>
 
         {error && (
           <p className="text-red-400 text-center text-sm">{error}</p>
         )}
 
-        {/* 사용법 */}
-        <div className="text-center text-gray-500 text-sm space-y-1">
-          <p>1. 촬영 세션을 만들고 참여 코드를 공유하세요</p>
-          <p>2. 각 폰에서 코드를 입력해 카메라로 참여하세요</p>
-          <p>3. 호스트가 녹화를 시작하면 모든 카메라가 동시에 촬영!</p>
-          <p>4. 촬영 종료 후 자동으로 편집된 영상을 받아보세요</p>
+        {/* 사용법 - 컴팩트 */}
+        <div className="text-gray-600 text-xs text-center leading-relaxed">
+          세션 만들기 → 코드 공유 → 각 폰에서 참여 → 동시 촬영 → 자동 편집
         </div>
       </div>
     </div>
