@@ -57,7 +57,7 @@ from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
-from agents.naver_blog_scraper import get_scraper as get_blog_scraper
+from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
@@ -479,6 +479,42 @@ async def main():
     slack.on_command("게시판", cmd_bulletin)
 
     # "!블로그" → 네이버 블로그 글 스크래핑
+    # 에이전트 결과물 노션 DB ID
+    NOTION_AGENT_RESULTS_DB_ID = os.environ.get(
+        "NOTION_AGENT_RESULTS_DB_ID",
+        "1e21114e-6491-8101-8b67-ca52d78a8fb0",
+    )
+
+    async def _save_blog_to_notion(result: dict) -> str | None:
+        """블로그 크롤링 결과를 노션 '에이전트 결과물' DB에 저장. 노션 페이지 URL 반환."""
+        if not notion or not result.get("success") or result.get("is_home"):
+            return None
+        try:
+            title = result.get("title", "(제목 없음)")
+            author = result.get("author", "")
+            date = result.get("date", "")
+            blog_url = result.get("url", "")
+
+            properties = {
+                "이름": NotionClient.prop_title(title),
+            }
+            # URL 속성이 있으면 설정
+            if blog_url:
+                properties["URL"] = NotionClient.prop_url(blog_url)
+
+            content_blocks = scraper_mod.to_notion_blocks(result)
+            page = await notion.create_page(
+                database_id=NOTION_AGENT_RESULTS_DB_ID,
+                properties=properties,
+                content_blocks=content_blocks,
+            )
+            page_url = page.get("url", "")
+            logger.info(f"[Blog→Notion] 저장 완료: {title} → {page_url}")
+            return page_url
+        except Exception as e:
+            logger.error(f"[Blog→Notion] 노션 저장 실패: {e}", exc_info=True)
+            return None
+
     async def cmd_blog(args: str, user: str, channel: str, thread_ts: str = None, fetch_posts: bool = False):
         """!블로그 URL [N] - 네이버 블로그 글 크롤링. 블로그 홈 URL + 숫자면 최신 N개 글 본문까지 크롤링"""
         parts = args.strip().split()
@@ -503,13 +539,27 @@ async def main():
             if result.get("is_home") and (fetch_posts or max_posts > 0) and result.get("posts"):
                 post_urls = [p["url"] for p in result["posts"][:max_posts]]
                 if fetch_posts and post_urls:
-                    await _reply(channel, f":house: *{result.get('blog_id', '')}* 블로그에서 최신 글 {len(post_urls)}개 크롤링합니다...", thread_ts)
+                    await _reply(channel, f":house: *{result.get('blog_id', '')}* 블로그에서 최신 글 {len(post_urls)}개 크롤링 → 노션 저장합니다...", thread_ts)
                     for pu in post_urls:
                         post_result = await scraper.scrape(pu)
-                        msg = scraper.format_for_slack(post_result)
-                        await _reply(channel, msg, thread_ts)
+                        notion_url = await _save_blog_to_notion(post_result)
+                        post_title = post_result.get("title", "(제목 없음)")
+                        if notion_url:
+                            await _reply(channel, f":white_check_mark: *{post_title}* → <{notion_url}|노션에서 보기>", thread_ts)
+                        else:
+                            msg = scraper.format_for_slack(post_result)
+                            await _reply(channel, msg, thread_ts)
                     return
 
+            # 개별 글: 노션에 저장
+            if result.get("success") and not result.get("is_home"):
+                notion_url = await _save_blog_to_notion(result)
+                if notion_url:
+                    post_title = result.get("title", "(제목 없음)")
+                    await _reply(channel, f":white_check_mark: *{post_title}* 크롤링 완료 → <{notion_url}|노션에서 보기>", thread_ts)
+                    return
+
+            # 노션 저장 실패 시 또는 홈 목록 등은 기존 방식으로 출력
             msg = scraper.format_for_slack(result)
             await _reply(channel, msg, thread_ts)
         except Exception as e:

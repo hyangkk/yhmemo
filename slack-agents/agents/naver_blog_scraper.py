@@ -301,25 +301,8 @@ class NaverBlogScraper:
             content_frame = await self._get_content_frame(page)
             content_el = await self._find_content_element(content_frame)
 
-            title = await self._extract_title(content_frame)
-            content_text = ""
-            if content_el:
-                content_text = await self._extract_text(content_el)
-            images = await self._extract_images(content_frame, content_el)
-            date = await self._extract_date(content_frame)
-            author = await self._extract_author(content_frame, url)
-
-            logger.info(f"[NaverBlog] 추출 결과: 제목={title[:30]}, 본문={len(content_text)}자, 이미지={len(images)}장")
-
-            return {
-                "success": True,
-                "title": title,
-                "content": content_text,
-                "images": images,
-                "date": date,
-                "author": author,
-                "url": url,
-            }
+            result = await self._extract_all(content_frame, content_el, url)
+            return result
 
         finally:
             await page.close()
@@ -343,29 +326,40 @@ class NaverBlogScraper:
             content_frame = await self._get_content_frame(page)
             content_el = await self._find_content_element(content_frame)
 
-            title = await self._extract_title(content_frame)
-            content_text = ""
-            if content_el:
-                content_text = await self._extract_text(content_el)
-            images = await self._extract_images(content_frame, content_el)
-            date = await self._extract_date(content_frame)
-            author = await self._extract_author(content_frame, url)
-
-            logger.info(f"[NaverBlog] [PostView] 추출 결과: 제목={title[:30]}, 본문={len(content_text)}자, 이미지={len(images)}장")
-
-            return {
-                "success": True,
-                "title": title,
-                "content": content_text,
-                "images": images,
-                "date": date,
-                "author": author,
-                "url": url,
-            }
+            result = await self._extract_all(content_frame, content_el, url)
+            return result
 
         finally:
             await page.close()
             await context.close()
+
+    async def _extract_all(self, content_frame, content_el, url: str) -> dict:
+        """제목/본문/이미지/날짜/작성자를 한번에 추출 (순서 보존)"""
+        title = await self._extract_title(content_frame)
+        content_text = ""
+        if content_el:
+            content_text = await self._extract_text(content_el)
+        images = await self._extract_images(content_frame, content_el)
+        date = await self._extract_date(content_frame)
+        author = await self._extract_author(content_frame, url)
+
+        # 텍스트/이미지 순서 보존 추출
+        ordered_blocks = []
+        if content_el:
+            ordered_blocks = await self._extract_ordered_blocks(content_el)
+
+        logger.info(f"[NaverBlog] 추출 결과: 제목={title[:30]}, 본문={len(content_text)}자, 이미지={len(images)}장, 블록={len(ordered_blocks)}개")
+
+        return {
+            "success": True,
+            "title": title,
+            "content": content_text,
+            "images": images,
+            "ordered_blocks": ordered_blocks,
+            "date": date,
+            "author": author,
+            "url": url,
+        }
 
     async def _scrape_blog_home(self, url: str, max_posts: int = 5) -> dict:
         """블로그 홈 URL에서 최신 글 목록 추출 (RSS 우선, Playwright 폴백)"""
@@ -675,6 +669,112 @@ class NaverBlogScraper:
 
         return unique_images[:20]
 
+    # 이미지 필터링에 사용할 패턴 (클래스 상수)
+    _SKIP_IMG_PATTERNS = [
+        "static.nid.naver", "ssl.pstatic.net/static",
+        "blogpfthumb", "favicon", "btn_", "ico_",
+        "widget", "banner", "ad_", "blank.gif",
+        "transparent", "spacer",
+    ]
+
+    async def _extract_ordered_blocks(self, content_el) -> list[dict]:
+        """본문 내 텍스트와 이미지를 원래 순서대로 추출.
+        반환: [{"type": "text", "value": "..."}, {"type": "image", "value": "url"}, ...]
+        """
+        blocks = []
+        try:
+            # SE3: se-component 단위로 순회
+            components = await content_el.query_selector_all(
+                "div.se-component"
+            )
+            if components:
+                for comp in components:
+                    comp_type = await comp.get_attribute("class") or ""
+                    # 이미지 컴포넌트
+                    if "se-image" in comp_type or "se-sticker" in comp_type:
+                        img = await comp.query_selector("img")
+                        if img:
+                            src = await self._get_img_src(img)
+                            if src:
+                                blocks.append({"type": "image", "value": src})
+                    # 텍스트 컴포넌트
+                    elif "se-text" in comp_type:
+                        text = (await comp.inner_text()).strip()
+                        if text:
+                            blocks.append({"type": "text", "value": text})
+                    # 인용구
+                    elif "se-quotation" in comp_type:
+                        text = (await comp.inner_text()).strip()
+                        if text:
+                            blocks.append({"type": "quote", "value": text})
+                    # 구분선
+                    elif "se-horizontalLine" in comp_type:
+                        blocks.append({"type": "divider", "value": ""})
+                    # 기타: 텍스트가 있으면 추출
+                    else:
+                        # 이미지부터 확인
+                        imgs = await comp.query_selector_all("img")
+                        for img in imgs:
+                            src = await self._get_img_src(img)
+                            if src:
+                                blocks.append({"type": "image", "value": src})
+                        text = (await comp.inner_text()).strip()
+                        if text:
+                            blocks.append({"type": "text", "value": text})
+                if blocks:
+                    return blocks
+
+            # SE2 / 구버전: 자식 요소를 순회
+            children = await content_el.query_selector_all(":scope > *")
+            for child in children:
+                tag = await child.evaluate("el => el.tagName.toLowerCase()")
+                # img 태그
+                if tag == "img":
+                    src = await self._get_img_src(child)
+                    if src:
+                        blocks.append({"type": "image", "value": src})
+                    continue
+                # 자식 중 img가 있으면 추출
+                imgs = await child.query_selector_all("img")
+                for img in imgs:
+                    src = await self._get_img_src(img)
+                    if src:
+                        blocks.append({"type": "image", "value": src})
+                # 텍스트
+                text = (await child.inner_text()).strip()
+                if text:
+                    blocks.append({"type": "text", "value": text})
+
+        except Exception as e:
+            logger.warning(f"[NaverBlog] ordered_blocks 추출 실패: {e}")
+
+        return blocks
+
+    async def _get_img_src(self, img) -> Optional[str]:
+        """img 요소에서 유효한 src URL 추출 (필터링 포함)"""
+        src = None
+        for attr in ["data-lazy-src", "data-src", "src"]:
+            s = await img.get_attribute(attr)
+            if s and (s.startswith("http") or s.startswith("//")):
+                src = s
+                break
+        if not src:
+            return None
+        if src.startswith("//"):
+            src = "https:" + src
+        if any(skip in src for skip in self._SKIP_IMG_PATTERNS):
+            return None
+        # 크기 필터
+        width = await img.get_attribute("width")
+        height = await img.get_attribute("height")
+        if width and height:
+            try:
+                if int(width) < 50 or int(height) < 50:
+                    return None
+            except ValueError:
+                pass
+        return src if src.startswith("http") else None
+
     async def _extract_date(self, frame) -> str:
         """작성일 추출"""
         date_selectors = [
@@ -718,6 +818,58 @@ class NaverBlogScraper:
             results.append(result)
             await asyncio.sleep(1)
         return results
+
+    @staticmethod
+    def to_notion_blocks(result: dict) -> list[dict]:
+        """스크래핑 결과를 노션 콘텐츠 블록으로 변환 (원문 순서 보존).
+        NotionClient의 블록 헬퍼를 사용합니다.
+        """
+        from integrations.notion_client import NotionClient
+
+        blocks = []
+
+        # 원문 링크
+        if result.get("url"):
+            blocks.append(NotionClient.block_bookmark(result["url"]))
+            blocks.append(NotionClient.block_divider())
+
+        # ordered_blocks가 있으면 원래 순서대로 변환
+        ordered = result.get("ordered_blocks", [])
+        if ordered:
+            for ob in ordered:
+                if ob["type"] == "text":
+                    # 노션 paragraph는 2000자 제한 → 긴 텍스트는 분할
+                    text = ob["value"]
+                    while text:
+                        chunk = text[:2000]
+                        blocks.append(NotionClient.block_paragraph(chunk))
+                        text = text[2000:]
+                elif ob["type"] == "image":
+                    blocks.append(NotionClient.block_image(ob["value"]))
+                elif ob["type"] == "quote":
+                    text = ob["value"][:2000]
+                    blocks.append(NotionClient.block_quote(text))
+                elif ob["type"] == "divider":
+                    blocks.append(NotionClient.block_divider())
+        else:
+            # ordered_blocks가 없으면 content + images 순서로 폴백
+            content = result.get("content", "")
+            if content:
+                for para in content.split("\n\n"):
+                    para = para.strip()
+                    if para:
+                        while para:
+                            blocks.append(NotionClient.block_paragraph(para[:2000]))
+                            para = para[2000:]
+
+            images = result.get("images", [])
+            if images:
+                blocks.append(NotionClient.block_divider())
+                for img_url in images:
+                    blocks.append(NotionClient.block_image(img_url))
+
+        # 노션 API는 한 번에 최대 100개 블록
+        return blocks[:100]
 
     def format_for_slack(self, result: dict) -> str:
         """스크래핑 결과를 슬랙 메시지로 포맷팅"""

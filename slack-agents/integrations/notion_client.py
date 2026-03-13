@@ -192,6 +192,28 @@ class NotionClient:
     def block_divider() -> dict:
         return {"type": "divider", "divider": {}}
 
+    @staticmethod
+    def block_image(url: str, caption: str = "") -> dict:
+        """외부 이미지 블록"""
+        block = {
+            "type": "image",
+            "image": {
+                "type": "external",
+                "external": {"url": url},
+            },
+        }
+        if caption:
+            block["image"]["caption"] = [{"text": {"content": caption[:2000]}}]
+        return block
+
+    @staticmethod
+    def block_quote(text: str) -> dict:
+        """인용문 블록"""
+        return {
+            "type": "quote",
+            "quote": {"rich_text": [{"text": {"content": text[:2000]}}]},
+        }
+
     # ── 페이지 블록(콘텐츠) 읽기 ────────────────────────
 
     async def get_page_blocks(self, page_id: str, page_size: int = 100) -> list[dict]:
