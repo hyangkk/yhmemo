@@ -424,7 +424,7 @@ class BulletinAgent(BaseAgent):
 
     async def _fetch_via_proxy(self, url: str) -> str:
         """프록시를 통해 한국 전용 사이트 HTML 가져오기.
-        Cloudflare Worker → Vercel 프록시 → Supabase Edge Function 순으로 시도.
+        Cloudflare Worker (X-Forwarded-For 스푸핑) → Vercel → Supabase 순으로 시도.
         """
         import json
         key = self._vercel_proxy_key
@@ -432,12 +432,15 @@ class BulletinAgent(BaseAgent):
         if not key:
             raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음 — 프록시 인증 불가")
 
-        # 시도할 프록시 URL 목록 (Cloudflare Worker 최우선 — 서울 POP)
+        # 시도할 프록시 URL 목록 (Cloudflare Worker 최우선 — X-Forwarded-For 한국 IP 스푸핑)
         proxy_urls = [
             ("Cloudflare", self._cf_proxy_url),
             ("Vercel", self._vercel_proxy_url),
             ("Supabase", self._supabase_proxy_url),
         ]
+
+        # 한국 통신사 IP (KT 대역) — WAF X-Forwarded-For 우회용
+        KOREAN_SPOOF_IP = "211.234.120.50"
 
         import ssl as _ssl
         ctx = _ssl.create_default_context()
@@ -449,7 +452,12 @@ class BulletinAgent(BaseAgent):
             try:
                 logger.info(f"[bulletin/{proxy_name}] 프록시 요청: {url}")
 
-                data = json.dumps({"url": url}).encode("utf-8")
+                payload = {"url": url}
+                # Cloudflare Worker에는 X-Forwarded-For 스푸핑 파라미터 추가
+                if proxy_name == "Cloudflare":
+                    payload["spoof_ip"] = KOREAN_SPOOF_IP
+
+                data = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(
                     proxy_url,
                     data=data,
@@ -919,18 +927,28 @@ class BulletinAgent(BaseAgent):
                 if a_tag:
                     title = a_tag.get_text(strip=True)
                     href = a_tag.get("href", "")
-                    if href:
-                        # javascript:void(0) 등 무시, onclick에서 URL 추출 시도
-                        if href.startswith("javascript") or href == "#":
-                            onclick = a_tag.get("onclick", "")
+                    onclick = a_tag.get("onclick", "")
+
+                    # onclick에서 URL 또는 게시글 번호 추출
+                    if href.startswith("javascript") or href in ("#", "./", ""):
+                        # boardView('16730') 패턴 처리
+                        board_view_match = re.search(r"boardView\s*\(\s*['\"](\d+)['\"]\s*\)", onclick)
+                        if board_view_match:
+                            post_no = board_view_match.group(1)
+                            # 현재 게시판 URL에 no=... &board=view 추가
+                            board_url_parsed = urlparse(url)
+                            base_params = board_url_parsed.query
+                            href = f"{board_url_parsed.scheme}://{board_url_parsed.netloc}{board_url_parsed.path}?{base_params}&no={post_no}&board=view"
+                        else:
+                            # 일반 onclick URL 추출
                             url_match = re.search(r"['\"]([^'\"]*(?:\.php|\.do|\.asp|view)[^'\"]*)['\"]", onclick)
                             if url_match:
                                 href = url_match.group(1)
                             else:
                                 href = ""
-                        if href and not href.startswith("http"):
-                            href = urljoin(base_url, href)
-                        link = href
+                    if href and not href.startswith("http"):
+                        href = urljoin(base_url, href)
+                    link = href
                 else:
                     title = title_cell.get_text(strip=True)
 
