@@ -72,7 +72,15 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     } else if (externalRecordingSignal === 'stop') {
       // stop은 isRecording 체크 없이 항상 시도 (stale closure 방지)
       (async () => {
-        const result = await stopRecordingRef.current();
+        let result = await stopRecordingRef.current();
+
+        // 녹화가 시작되지 않았던 경우 (MediaRecorder 실패 등) → 잠시 대기 후 재시도
+        if (!result && streamRef.current) {
+          console.warn('[studio] 녹화 결과 없음, 300ms 후 재시도');
+          await new Promise(r => setTimeout(r, 300));
+          result = await stopRecordingRef.current();
+        }
+
         // 녹화 성공이든 실패든 항상 콜백 호출 (실패 시 빈 blob → 업로드 스킵 후 결과 이동)
         const blob = result?.blob ?? new Blob([], { type: 'video/webm' });
         const durationMs = result?.durationMs ?? 0;

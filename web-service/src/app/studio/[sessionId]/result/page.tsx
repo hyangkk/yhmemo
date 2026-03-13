@@ -37,7 +37,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const router = useRouter();
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedClipIdx, setSelectedClipIdx] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [editingMode, setEditingMode] = useState<string | null>(null);
   const [pollKey, setPollKey] = useState(0);
@@ -349,31 +348,46 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
-        {/* 촬영된 클립 */}
+        {/* 촬영된 클립 (모든 디바이스 표시, 실패한 것도 포함) */}
         <div>
           <h2 className="text-sm font-semibold text-gray-400 mb-1.5">촬영된 클립</h2>
           <div className="space-y-1">
-            {clips.map((clip, idx) => (
-              <div
-                key={clip.id}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition ${
-                  selectedClipIdx === idx ? 'bg-purple-600/20 border border-purple-500/30' : 'bg-gray-900 hover:bg-gray-800'
-                }`}
-                onClick={() => setSelectedClipIdx(idx)}
-              >
-                <span className="text-base">🎥</span>
-                <span className="flex-1 text-sm font-medium min-w-0 truncate">{getDeviceName(clip.device_id)}</span>
-                <span className="text-xs text-gray-500">{formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}</span>
-                <a
-                  href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
-                  download
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-blue-400 hover:text-blue-300 text-xs"
+            {devices.map((device) => {
+              const clip = clips.find(c => c.device_id === device.id);
+              if (clip) {
+                return (
+                  <div
+                    key={device.id}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition"
+                  >
+                    <span className="text-base">🎥</span>
+                    <span className="flex-1 text-sm font-medium min-w-0 truncate">{device.name}</span>
+                    <span className="text-xs text-gray-500">{formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}</span>
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
+                      download
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-400 hover:text-blue-300 text-xs"
+                    >
+                      저장
+                    </a>
+                  </div>
+                );
+              }
+              // 클립 없는 디바이스 (업로드 실패 또는 녹화 실패)
+              return (
+                <div
+                  key={device.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900/50 opacity-60"
                 >
-                  저장
-                </a>
-              </div>
-            ))}
+                  <span className="text-base">🎥</span>
+                  <span className="flex-1 text-sm font-medium min-w-0 truncate">{device.name}</span>
+                  <span className="text-xs text-red-400">
+                    {device.status === 'error' ? '업로드 실패' : device.status === 'uploading' ? '업로드 중...' : '녹화 없음'}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
