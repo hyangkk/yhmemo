@@ -83,7 +83,12 @@ class BulletinAgent(BaseAgent):
         # Vercel 프록시 (서울 리전) — 한국 전용 사이트 우회용
         self._vercel_proxy_url = os.environ.get(
             "VERCEL_PROXY_URL",
-            "https://yhmemo.vercel.app/api/proxy",
+            "https://web-service-ruby.vercel.app/api/proxy",
+        )
+        # Supabase Edge Function 프록시 (글로벌 CDN) — 대안
+        self._supabase_proxy_url = os.environ.get(
+            "SUPABASE_PROXY_URL",
+            "https://unuvbdqjgiypxfvlplpd.supabase.co/functions/v1/kr-proxy",
         )
         self._vercel_proxy_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -412,48 +417,64 @@ class BulletinAgent(BaseAgent):
 
     # ── Vercel 프록시 (서울 리전) ────────────────────────
 
-    async def _fetch_via_vercel_proxy(self, url: str) -> str:
-        """Vercel 서울 리전 프록시를 통해 한국 전용 사이트 HTML 가져오기"""
+    async def _fetch_via_proxy(self, url: str) -> str:
+        """프록시를 통해 한국 전용 사이트 HTML 가져오기.
+        Vercel 프록시 → Supabase Edge Function 순으로 시도.
+        """
         import json
-        proxy_url = self._vercel_proxy_url
         key = self._vercel_proxy_key
 
         if not key:
-            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음 — Vercel 프록시 인증 불가")
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음 — 프록시 인증 불가")
 
-        logger.info(f"[bulletin/vercel] 프록시 요청: {url}")
+        # 시도할 프록시 URL 목록
+        proxy_urls = [
+            ("Vercel", self._vercel_proxy_url),
+            ("Supabase", self._supabase_proxy_url),
+        ]
 
-        data = json.dumps({"url": url}).encode("utf-8")
-        req = urllib.request.Request(
-            proxy_url,
-            data=data,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
-        # SSL 검증 (Vercel은 유효한 인증서 사용)
         import ssl as _ssl
         ctx = _ssl.create_default_context()
 
-        resp_body = await asyncio.to_thread(
-            lambda: urllib.request.urlopen(req, context=ctx, timeout=25).read()
-        )
-        result = json.loads(resp_body)
+        last_error = None
+        for proxy_name, proxy_url in proxy_urls:
+            if not proxy_url:
+                continue
+            try:
+                logger.info(f"[bulletin/{proxy_name}] 프록시 요청: {url}")
 
-        if "error" in result:
-            raise RuntimeError(f"Vercel 프록시 오류: {result['error']}")
+                data = json.dumps({"url": url}).encode("utf-8")
+                req = urllib.request.Request(
+                    proxy_url,
+                    data=data,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
 
-        html = result.get("html", "")
-        status = result.get("status", 0)
-        logger.info(f"[bulletin/vercel] 응답: HTTP {status}, {len(html)}자")
+                resp_body = await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(req, context=ctx, timeout=25).read()
+                )
+                result = json.loads(resp_body)
 
-        if status >= 400:
-            raise RuntimeError(f"Vercel 프록시: 원본 HTTP {status}")
+                if "error" in result:
+                    raise RuntimeError(f"{proxy_name} 프록시 오류: {result['error']}")
 
-        return html
+                html = result.get("html", "")
+                status = result.get("status", 0)
+                logger.info(f"[bulletin/{proxy_name}] 응답: HTTP {status}, {len(html)}자")
+
+                if status >= 400:
+                    raise RuntimeError(f"{proxy_name} 프록시: 원본 HTTP {status}")
+
+                return html
+            except Exception as e:
+                logger.warning(f"[bulletin/{proxy_name}] 프록시 실패: {e}")
+                last_error = e
+
+        raise RuntimeError(f"모든 프록시 실패: {last_error}")
 
     # ── Playwright 브라우저 관리 ────────────────────────
 
@@ -656,7 +677,7 @@ class BulletinAgent(BaseAgent):
             # 2단계: Vercel 서울 프록시
             if not html or _is_error_page(html):
                 try:
-                    html = await self._fetch_via_vercel_proxy(url)
+                    html = await self._fetch_via_proxy(url)
                     if _is_error_page(html):
                         raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
                     used_vercel_proxy = True
@@ -773,7 +794,7 @@ class BulletinAgent(BaseAgent):
             try:
                 if use_vercel:
                     # Vercel 프록시로 HTML 가져와서 BeautifulSoup 파싱
-                    html = await self._fetch_via_vercel_proxy(post_url)
+                    html = await self._fetch_via_proxy(post_url)
                     soup = BS4(html, "html.parser")
                     content_text = ""
                     for sel in _content_sels:

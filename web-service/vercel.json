@@ -1,0 +1,8 @@
+{
+  "regions": ["icn1"],
+  "functions": {
+    "src/app/api/proxy/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
