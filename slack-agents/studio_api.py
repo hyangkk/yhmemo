@@ -100,7 +100,7 @@ def _update_edit_step(sb, result_id: str, step: int, total: int, description: st
     logger.info(f"[studio] 편집 진행: {step}/{total} - {description}")
 
 
-async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str):
+async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str, audio_mode: str = "each"):
     """FFmpeg로 영상 편집"""
     sb = _get_supabase()
     work_dir = DATA_DIR / session_id
@@ -159,7 +159,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
                         "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
                         + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [str(output_path)])
         elif mode == "director":
-            _edit_ai_director(local_files, str(output_path), progress=progress_cb)
+            _edit_ai_director(local_files, str(output_path), progress=progress_cb, audio_mode=audio_mode)
         elif mode == "split":
             on_analyze(0)
             on_segments()
@@ -171,7 +171,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             on_encode()
             _edit_pip(local_files, str(output_path))
         else:
-            _edit_auto_cut(local_files, str(output_path), progress=progress_cb)
+            _edit_auto_cut(local_files, str(output_path), progress=progress_cb, audio_mode=audio_mode)
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
@@ -319,7 +319,7 @@ def _build_round_robin_segments(n: int, total_dur: float, interval: float = 3.0)
     return segments
 
 
-def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progress: dict | None = None):
+def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progress: dict | None = None, audio_mode: str = "each"):
     """자동 컷편집: 3초 간격으로 카메라 전환, 오디오 분석 가능 시 스마트 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     print(f"[studio] 클립 durations: {durations}", flush=True)
@@ -447,6 +447,16 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
     if progress:
         progress["on_encode"]()
 
+    # audio_mode=best: 평균 오디오 가장 큰 카메라의 오디오만 사용
+    best_audio_cam = 0
+    if audio_mode == "best" and audio_ok:
+        avg_per_cam = []
+        for i in range(n):
+            active = [l for l in all_levels[i][:int(durations[i])] if l > -80]
+            avg_per_cam.append(sum(active) / len(active) if active else -100.0)
+        best_audio_cam = avg_per_cam.index(max(avg_per_cam))
+        print(f"[studio] 최적 오디오 카메라: {best_audio_cam} (avg={avg_per_cam})", flush=True)
+
     # 출력 해상도 (가로 기준)
     out_w, out_h = 1280, 720
 
@@ -460,7 +470,9 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
             f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30[v{i}];"
         )
-        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
+        # audio_mode=best: 항상 best_audio_cam의 오디오 사용
+        audio_cam = best_audio_cam if audio_mode == "best" else cam
+        parts.append(f"[{audio_cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
         concat_in.append(f"[v{i}][a{i}]")
 
     fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
@@ -472,7 +484,7 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0, progres
                 IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
 
 
-def _edit_ai_director(files: list[str], output: str, progress: dict | None = None):
+def _edit_ai_director(files: list[str], output: str, progress: dict | None = None, audio_mode: str = "each"):
     """AI 감독 모드: 메인 카메라 중심 + 리액션 컷어웨이 (3~5초 주기)"""
     durations = [_get_duration(f) or 0 for f in files]
     print(f"[studio] AI감독 durations: {durations}", flush=True)
@@ -605,6 +617,11 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
     if progress:
         progress["on_encode"]()
 
+    # audio_mode=best: 메인 카메라의 오디오만 사용
+    best_audio_cam = main_cam if audio_mode == "best" else None
+    if best_audio_cam is not None:
+        print(f"[studio] AI감독 최적 오디오: 메인 카메라 {best_audio_cam}", flush=True)
+
     # FFmpeg filter_complex 빌드 (auto_cut과 동일 구조)
     out_w, out_h = 1280, 720
     parts = []
@@ -616,7 +633,8 @@ def _edit_ai_director(files: list[str], output: str, progress: dict | None = Non
             f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
             f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30[v{i}];"
         )
-        parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
+        audio_cam = best_audio_cam if best_audio_cam is not None else cam
+        parts.append(f"[{audio_cam}:a]atrim=start={start:.3f}:duration={dur:.3f},aresample=48000,asetpts=PTS-STARTPTS[a{i}];")
         concat_in.append(f"[v{i}][a{i}]")
 
     fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
@@ -759,11 +777,14 @@ def start_studio_server(port: int = 8000):
                                     handled = True
                             elif sp.startswith("mode:") or sp == "":
                                 # 새로 생성된 result (아직 편집 시작 안됨) → 편집 시작
-                                mode = sp.split(":", 1)[1] if sp.startswith("mode:") else "auto"
+                                # 포맷: "mode:auto" 또는 "mode:auto:audio=best"
+                                mode_part = sp.split(":", 1)[1] if sp.startswith("mode:") else "auto"
+                                mode = mode_part.split(":")[0]
+                                audio_mode = "best" if "audio=best" in mode_part else "each"
                                 clips = sb.table("studio_clips").select("*").eq("session_id", sid).execute()
                                 if clips.data:
-                                    print(f"[studio] 세션 {sid}: 편집 시작 (모드={mode}, {len(clips.data)}개 클립)", flush=True)
-                                    asyncio.run(process_edit(sid, r["id"], clips.data, mode))
+                                    print(f"[studio] 세션 {sid}: 편집 시작 (모드={mode}, 오디오={audio_mode}, {len(clips.data)}개 클립)", flush=True)
+                                    asyncio.run(process_edit(sid, r["id"], clips.data, mode, audio_mode))
                                     print(f"[studio] 세션 {sid}: 편집 완료 (모드={mode})", flush=True)
                                 handled = True
                                 break
