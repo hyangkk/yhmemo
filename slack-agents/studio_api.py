@@ -211,8 +211,20 @@ def _analyze_audio_levels(filepath: str, interval: float = 1.0) -> list[float]:
         return [-100.0]
 
 
-def _edit_auto_cut(files: list[str], output: str, min_segment: float = 3.0, max_segment: float = 3.0):
-    """오디오 분석 기반 자동 컷편집: 소리가 큰 카메라를 우선 선택, 자연스러운 전환"""
+def _build_round_robin_segments(n: int, total_dur: float, interval: float = 3.0) -> list[tuple[int, float, float]]:
+    """고정 간격 라운드로빈 세그먼트 생성"""
+    segments = []
+    t = 0.0
+    while t < total_dur:
+        cam = len(segments) % n
+        end = min(t + interval, total_dur)
+        segments.append((cam, t, end))
+        t = end
+    return segments
+
+
+def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
+    """자동 컷편집: 3초 간격으로 카메라 전환, 오디오 분석 가능 시 스마트 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     min_dur = min(durations) if durations else 0
     if min_dur <= 0:
@@ -220,66 +232,73 @@ def _edit_auto_cut(files: list[str], output: str, min_segment: float = 3.0, max_
         return
 
     n = len(files)
+    total_secs = int(min_dur)
 
-    # 각 카메라의 초별 오디오 레벨 분석
-    all_levels = []
+    # 오디오 분석 시도
+    audio_ok = False
+    all_levels: list[list[float]] = []
     for f in files:
         levels = _analyze_audio_levels(f)
         all_levels.append(levels)
+        print(f"[studio] 오디오 분석: {f} → {len(levels)}개 샘플", flush=True)
 
-    # 모든 카메라의 레벨 길이를 맞춤
-    max_len = min(int(min_dur), min(len(l) for l in all_levels))
-    if max_len <= 0:
-        _simple_concat(files, output)
-        return
-    for i in range(n):
-        all_levels[i] = all_levels[i][:max_len]
+    # 오디오 데이터가 충분한지 확인 (최소 3초 이상)
+    min_samples = min(len(l) for l in all_levels)
+    if min_samples >= 3:
+        audio_ok = True
+        print(f"[studio] 오디오 분석 성공: {min_samples}개 샘플, 스마트 전환 사용", flush=True)
+    else:
+        print(f"[studio] 오디오 분석 부족({min_samples}개 샘플), 라운드로빈 전환 사용", flush=True)
 
-    # 초별로 가장 소리가 큰 카메라 선택
-    best_cam_per_sec = []
-    for sec in range(max_len):
-        best = 0
-        best_level = all_levels[0][sec]
-        for cam in range(1, n):
-            if sec < len(all_levels[cam]) and all_levels[cam][sec] > best_level:
-                best_level = all_levels[cam][sec]
-                best = cam
-        best_cam_per_sec.append(best)
+    if audio_ok:
+        # 오디오 기반 세그먼트 생성
+        max_len = min(total_secs, min_samples)
+        for i in range(n):
+            all_levels[i] = all_levels[i][:max_len]
 
-    # 세그먼트 생성 (최소 min_segment초, 최대 max_segment초)
-    segments = []
-    seg_start = 0.0
-    current_cam = best_cam_per_sec[0] if best_cam_per_sec else 0
+        # 초별로 가장 소리가 큰 카메라 선택
+        best_cam_per_sec = []
+        for sec in range(max_len):
+            best = 0
+            best_level = all_levels[0][sec]
+            for cam in range(1, n):
+                if all_levels[cam][sec] > best_level:
+                    best_level = all_levels[cam][sec]
+                    best = cam
+            best_cam_per_sec.append(best)
 
-    for sec in range(1, max_len):
-        elapsed = sec - seg_start
-        preferred_cam = best_cam_per_sec[sec]
+        segments = []
+        seg_start = 0.0
+        current_cam = best_cam_per_sec[0]
 
-        # 전환 조건: 다른 카메라가 더 적절하고, 최소 시간 경과
-        should_switch = (
-            preferred_cam != current_cam
-            and elapsed >= min_segment
-        )
-        # 최대 시간 도달 시 강제 전환 (다른 카메라로)
-        force_switch = elapsed >= max_segment and n > 1
+        for sec in range(1, max_len):
+            elapsed = sec - seg_start
+            preferred_cam = best_cam_per_sec[sec]
 
-        if should_switch or force_switch:
-            segments.append((current_cam, seg_start, float(sec)))
-            seg_start = float(sec)
-            if force_switch and preferred_cam == current_cam:
-                current_cam = (current_cam + 1) % n
-            else:
-                current_cam = preferred_cam
+            should_switch = preferred_cam != current_cam and elapsed >= interval
+            force_switch = elapsed >= interval and n > 1
 
-    # 마지막 세그먼트
-    if seg_start < min_dur:
-        segments.append((current_cam, seg_start, min_dur))
+            if should_switch or force_switch:
+                segments.append((current_cam, seg_start, float(sec)))
+                seg_start = float(sec)
+                if force_switch and preferred_cam == current_cam:
+                    current_cam = (current_cam + 1) % n
+                else:
+                    current_cam = preferred_cam
+
+        if seg_start < min_dur:
+            segments.append((current_cam, seg_start, min_dur))
+    else:
+        # 오디오 분석 실패 → 고정 간격 라운드로빈
+        segments = _build_round_robin_segments(n, min_dur, interval)
 
     if not segments:
         _simple_concat(files, output)
         return
 
-    logger.info(f"[studio] 자동 편집: {len(segments)}개 세그먼트 생성 (카메라 {n}대)")
+    print(f"[studio] 자동 편집: {len(segments)}개 세그먼트 (카메라 {n}대, 총 {min_dur:.1f}초)", flush=True)
+    for i, (cam, s, e) in enumerate(segments):
+        print(f"[studio]   세그먼트 {i}: 카메라{cam} {s:.1f}~{e:.1f}초", flush=True)
 
     parts = []
     concat_in = []
