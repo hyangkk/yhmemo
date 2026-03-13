@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function StudioPage() {
@@ -9,6 +9,11 @@ export default function StudioPage() {
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [version, setVersion] = useState<{ front: string; server: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/studio/version').then(r => r.json()).then(setVersion).catch(() => {});
+  }, []);
 
   const createSession = async () => {
     setLoading(true);
@@ -107,9 +112,22 @@ export default function StudioPage() {
           <p className="text-red-400 text-center text-sm">{error}</p>
         )}
 
-        {/* 사용법 - 컴팩트 */}
-        <div className="text-gray-600 text-xs text-center leading-relaxed">
-          세션 만들기 → 코드 공유 → 각 폰에서 참여 → 동시 촬영 → 자동 편집
+        {/* 사용법 + 버전 */}
+        <div className="text-gray-600 text-xs text-center leading-relaxed space-y-1">
+          <p>세션 만들기 → 코드 공유 → 각 폰에서 참여 → 동시 촬영 → 자동 편집</p>
+          {version && (
+            <p className="text-gray-700 font-mono">
+              {version.front === version.server ? (
+                <span>v.{version.front}</span>
+              ) : (
+                <span>
+                  <span className="text-gray-600">F</span> {version.front}
+                  <span className="mx-1">·</span>
+                  <span className="text-gray-600">S</span> {version.server}
+                </span>
+              )}
+            </p>
+          )}
         </div>
       </div>
     </div>
