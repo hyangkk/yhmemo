@@ -128,6 +128,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   }
 
   const { session, devices, clips } = data;
+  const failedDevices = devices.filter(d => !clips.some(c => c.device_id === d.id));
   const allResults = data.results || (data.result ? [data.result] : []);
   const doneResults = allResults.filter(r => r.status === 'done');
   const processingResult = allResults.find(r => r.status === 'processing');
@@ -163,7 +164,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         <div className="max-w-2xl mx-auto flex items-baseline gap-2">
           <h1 className="text-lg font-bold">{session.title}</h1>
           <span className="text-gray-500 text-xs">
-            {devices.length}대 · {clips.length}클립
+            {clips.length}클립{failedDevices.length > 0 && ` · ${failedDevices.length}대 미사용`}
           </span>
         </div>
       </div>
@@ -348,46 +349,44 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
-        {/* 촬영된 클립 (모든 디바이스 표시, 실패한 것도 포함) */}
+        {/* 촬영된 클립 */}
         <div>
           <h2 className="text-sm font-semibold text-gray-400 mb-1.5">촬영된 클립</h2>
           <div className="space-y-1">
-            {devices.map((device) => {
-              const clip = clips.find(c => c.device_id === device.id);
-              if (clip) {
-                return (
-                  <div
-                    key={device.id}
-                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition"
-                  >
-                    <span className="text-base">🎥</span>
-                    <span className="flex-1 text-sm font-medium min-w-0 truncate">{device.name}</span>
-                    <span className="text-xs text-gray-500">{formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}</span>
-                    <a
-                      href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
-                      download
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-blue-400 hover:text-blue-300 text-xs"
-                    >
-                      저장
-                    </a>
-                  </div>
-                );
-              }
-              // 클립 없는 디바이스 (업로드 실패 또는 녹화 실패)
+            {devices.filter(d => clips.some(c => c.device_id === d.id)).map((device) => {
+              const clip = clips.find(c => c.device_id === device.id)!;
               return (
                 <div
                   key={device.id}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900/50 opacity-60"
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition"
                 >
                   <span className="text-base">🎥</span>
                   <span className="flex-1 text-sm font-medium min-w-0 truncate">{device.name}</span>
-                  <span className="text-xs text-red-400">
-                    {device.status === 'error' ? '업로드 실패' : device.status === 'uploading' ? '업로드 중...' : '녹화 없음'}
-                  </span>
+                  <span className="text-xs text-gray-500">{formatDuration(clip.duration_ms)} · {formatSize(clip.file_size)}</span>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${clip.storage_path}`}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-blue-400 hover:text-blue-300 text-xs"
+                  >
+                    저장
+                  </a>
                 </div>
               );
             })}
+            {/* 클립 없는 디바이스 (업로드 실패/미사용) */}
+            {failedDevices.map((device) => (
+              <div
+                key={device.id}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-gray-600 text-xs"
+              >
+                <span>{device.name}</span>
+                <span>·</span>
+                <span>
+                  {device.status === 'error' ? '업로드 실패' : device.status === 'uploading' ? '업로드 중...' : '미사용'}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 
