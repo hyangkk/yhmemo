@@ -163,6 +163,11 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {/* 편집 상태 */}
         {session.status === 'editing' && (() => {
           const editStep = parseEditStep(data.result);
+          // storage_path에서 직접 step 정보 추출 (result.status와 무관하게)
+          const rawPath = data.result?.storage_path || '';
+          const rawMatch = rawPath.match(/^step:(\d+)\/(\d+):(.+)$/);
+          const directStep = rawMatch ? { step: parseInt(rawMatch[1]), total: parseInt(rawMatch[2]), description: rawMatch[3] } : null;
+          const step = editStep || directStep;
           return (
             <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 space-y-2">
               <div className="flex items-center gap-3">
@@ -170,9 +175,9 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">
                     영상 편집 중
-                    {editStep && (
+                    {step && (
                       <span className="text-purple-300 ml-2">
-                        {editStep.step}/{editStep.total} · {editStep.description}
+                        {step.step}/{step.total} · {step.description}
                       </span>
                     )}
                   </p>
@@ -181,16 +186,20 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   {Math.floor(editingElapsed / 60)}:{(editingElapsed % 60).toString().padStart(2, '0')}
                 </span>
               </div>
-              {editStep ? (
+              {step ? (
                 <div className="w-full h-1.5 bg-purple-900/50 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-purple-500 rounded-full transition-all duration-500"
-                    style={{ width: `${(editStep.step / editStep.total) * 100}%` }}
+                    style={{ width: `${(step.step / step.total) * 100}%` }}
                   />
                 </div>
               ) : (
                 <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
               )}
+              {/* 디버그: result 상태 */}
+              <p className="text-gray-700 text-[10px] font-mono">
+                result: {data.result ? `${data.result.status} | ${data.result.storage_path?.substring(0, 40)}` : 'null'}
+              </p>
             </div>
           );
         })()}
