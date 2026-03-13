@@ -26,6 +26,19 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [selectedClipIdx, setSelectedClipIdx] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [pollKey, setPollKey] = useState(0);
+  const [editingElapsed, setEditingElapsed] = useState(0);
+  const [editingStartTime] = useState(() => Date.now());
+
+  // 편집 중 경과 시간 타이머
+  useEffect(() => {
+    if (!data || (data.session.status !== 'editing' && data.session.status !== 'uploading')) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setEditingElapsed(Math.floor((Date.now() - editingStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data?.session.status, editingStartTime]);
 
   useEffect(() => {
     const startTime = Date.now();
@@ -162,6 +175,9 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     )}
                   </p>
                 </div>
+                <span className="text-gray-500 text-xs font-mono shrink-0">
+                  {Math.floor(editingElapsed / 60)}:{(editingElapsed % 60).toString().padStart(2, '0')}
+                </span>
               </div>
               {editStep ? (
                 <div className="w-full h-1.5 bg-purple-900/50 rounded-full overflow-hidden">
