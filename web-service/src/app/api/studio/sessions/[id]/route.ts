@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 
+export const dynamic = 'force-dynamic';
+
 // GET: 세션 상세 정보 (디바이스, 클립 포함)
 export async function GET(
   _req: NextRequest,
