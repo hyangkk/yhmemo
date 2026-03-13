@@ -411,14 +411,24 @@ class BulletinAgent(BaseAgent):
             return
         from playwright.async_api import async_playwright
         self._pw = await async_playwright().start()
+
+        launch_args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+        ]
+
+        # 한국 프록시 설정 (해외 IP 차단 사이트 우회)
+        proxy_config = None
+        if self._proxy_url:
+            proxy_config = {"server": self._proxy_url}
+            logger.info(f"[bulletin/pw] 한국 프록시 사용: {self._proxy_url[:30]}...")
+
         self._pw_browser = await self._pw.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-            ],
+            args=launch_args,
+            proxy=proxy_config,
         )
         logger.info("[bulletin] Playwright 브라우저 시작됨")
 
