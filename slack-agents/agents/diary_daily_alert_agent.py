@@ -128,22 +128,18 @@ class DiaryDailyAlertAgent(BaseAgent):
 {entries_text}
 
 ---
-각 구간별 요약과 종합 분석을 작성해주세요. 반드시 아래 JSON 형식으로만 응답하세요.
+각 구간별 요약을 작성해주세요. 반드시 아래 JSON 형식으로만 응답하세요.
 
 분석 규칙:
 - 각 구간별 핵심 내용을 1~2문장으로 요약
-- 글이 없는 구간은 summary를 빈 문자열로
+- 글이 없는 구간은 빈 문자열로
 - 과거 글(random_old)은 현재 상황과 비교하여 변화/성장 포인트 짚기
-- overall은 3일간의 흐름 + 과거 대비 종합 인사이트 (2~3문장)
-- 한 가지 핵심 메시지(one_liner)를 짧고 임팩트 있게
 
 {{
   "today": "오늘 글 핵심 요약",
   "yesterday": "어제 글 핵심 요약",
   "day_before": "그제 글 핵심 요약",
-  "random_old": "과거 글 요약 + 현재와의 비교",
-  "overall": "3일간 흐름 + 과거 대비 종합 인사이트 (2~3문장)",
-  "one_liner": "오늘의 핵심 메시지 한 줄"
+  "random_old": "과거 글 요약 + 현재와의 비교"
 }}"""
 
         result_text = await self.ai_think(system_prompt, user_prompt)
@@ -324,32 +320,22 @@ class DiaryDailyAlertAgent(BaseAgent):
         for key, label, count in section_config:
             summary = analysis.get(key, "")
             section_entries = sections.get(key, [])
-            if not summary and count == 0:
-                continue
 
             lines.append(f"*{label} ({count}개)*")
-            # 글 제목 나열
-            for entry in section_entries:
-                title_line = f"  • {entry['title']}"
-                if entry.get("created_kst"):
-                    title_line += f" _{entry['created_kst']}_"
-                if entry.get("page_url"):
-                    title_line += f"  <{entry['page_url']}|보기>"
-                lines.append(title_line)
+            if count == 0:
+                lines.append("  (없음)")
+            else:
+                for entry in section_entries:
+                    title_line = f"  • {entry['title']}"
+                    if entry.get("created_kst"):
+                        title_line += f" _{entry['created_kst']}_"
+                    if entry.get("page_url"):
+                        title_line += f"  <{entry['page_url']}|보기>"
+                    lines.append(title_line)
             if summary:
                 lines.append(f"  → {summary}")
             lines.append("")
 
-        # 종합 분석
-        overall = analysis.get("overall", "")
-        if overall:
-            lines.append(f"*📊 종합 분석*\n{overall}\n")
-
-        # 핵심 메시지
-        one_liner = analysis.get("one_liner", "")
-        if one_liner:
-            lines.append(f"> 💡 _{one_liner}_")
-
-        lines.append("\n`⏰ 매일 밤 10시 자동 발송`")
+        lines.append("`⏰ 매일 밤 10시 자동 발송`")
 
         return "\n".join(lines)
