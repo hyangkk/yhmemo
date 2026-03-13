@@ -485,33 +485,55 @@ async def main():
         "1e21114e-6491-8101-8b67-ca52d78a8fb0",
     )
 
-    async def _save_blog_to_notion(result: dict) -> str | None:
+    _notion_save_error = None  # 디버그용: 마지막 노션 저장 에러
+
+    async def _save_blog_to_notion(result: dict, channel: str = None, thread_ts: str = None) -> str | None:
         """블로그 크롤링 결과를 노션 '에이전트 결과물' DB에 저장. 노션 페이지 URL 반환."""
-        if not notion or not result.get("success") or result.get("is_home"):
+        nonlocal _notion_save_error
+        _notion_save_error = None
+
+        if not notion:
+            _notion_save_error = "notion 클라이언트 미초기화"
+            logger.warning(f"[Blog→Notion] {_notion_save_error}")
+            return None
+        if not result.get("success") or result.get("is_home"):
             return None
         try:
             title = result.get("title", "(제목 없음)")
-            author = result.get("author", "")
-            date = result.get("date", "")
-            blog_url = result.get("url", "")
 
             properties = {
                 "이름": NotionClient.prop_title(title),
             }
-            # URL 속성이 있으면 설정
-            if blog_url:
-                properties["URL"] = NotionClient.prop_url(blog_url)
 
             content_blocks = scraper_mod.to_notion_blocks(result)
+            logger.info(f"[Blog→Notion] 노션 저장 시도: {title}, 블록 {len(content_blocks)}개")
+
+            # 블록이 너무 많으면 분할 저장 (100개 제한)
+            first_batch = content_blocks[:100]
             page = await notion.create_page(
                 database_id=NOTION_AGENT_RESULTS_DB_ID,
                 properties=properties,
-                content_blocks=content_blocks,
+                content_blocks=first_batch,
             )
+            if not page:
+                _notion_save_error = "create_page None 반환 (API 에러)"
+                logger.error(f"[Blog→Notion] {_notion_save_error}")
+                return None
+
             page_url = page.get("url", "")
+            page_id = page.get("id", "")
+
+            # 100개 초과 블록은 append_blocks로 추가
+            if len(content_blocks) > 100 and page_id:
+                remaining = content_blocks[100:]
+                for i in range(0, len(remaining), 100):
+                    batch = remaining[i:i+100]
+                    await notion.append_blocks(page_id, batch)
+
             logger.info(f"[Blog→Notion] 저장 완료: {title} → {page_url}")
             return page_url
         except Exception as e:
+            _notion_save_error = str(e)
             logger.error(f"[Blog→Notion] 노션 저장 실패: {e}", exc_info=True)
             return None
 
@@ -558,8 +580,10 @@ async def main():
                     post_title = result.get("title", "(제목 없음)")
                     await _reply(channel, f":white_check_mark: *{post_title}* 크롤링 완료 → <{notion_url}|노션에서 보기>", thread_ts)
                     return
+                else:
+                    err = _notion_save_error or "알 수 없는 오류"
+                    await _reply(channel, f":warning: 노션 저장 실패 ({err}), 슬랙에 본문을 표시합니다.", thread_ts)
 
-            # 노션 저장 실패 시 또는 홈 목록 등은 기존 방식으로 출력
             msg = scraper.format_for_slack(result)
             await _reply(channel, msg, thread_ts)
         except Exception as e:
