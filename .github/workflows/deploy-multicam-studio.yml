@@ -1,0 +1,38 @@
+name: Multicam Studio 배포
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'multicam-studio/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Vercel 배포
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Vercel CLI 설치
+        run: npm install -g vercel
+
+      - name: Vercel 프로덕션 배포
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_lQMdwq03iCqUN9tTdDFl2VGe
+          VERCEL_PROJECT_ID: ${{ secrets.MULTICAM_STUDIO_VERCEL_PROJECT_ID }}
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          cd multicam-studio
+          export BUILD_NUM=$(printf "%04d" $BUILD_NUM)
+          vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          vercel build --prod --token=$VERCEL_TOKEN
+          vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
