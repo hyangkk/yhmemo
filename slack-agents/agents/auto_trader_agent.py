@@ -32,11 +32,15 @@ DEFAULT_CONFIG = {
     "take_profit_pct": 1.0,              # 익절선 (+1%)
     "half_profit_pct": 0.5,              # 절반 익절선 (+0.5%)
     "max_stocks": 5,                     # 최대 동시 보유 종목 수 (집중 관리)
-    "no_buy_after": "15:15",             # 이 시간 이후 매수 금지
+    "no_buy_after": "11:30",             # 평가 시각(12시) 전 매수 마감
     "force_sell_by": "15:20",            # 이 시간까지 전량 매도
+    # 평가 시각 설정
+    "eval_time": "12:00",                # 평가 기준 시각
+    "eval_date": "2026-03-13",           # 평가 기준 날짜
+    "eval_hold_until": "12:00",          # 이 시각까지 보유 유지 (평가액 극대화)
     # 시즌4 매매 규칙 엔진
-    "min_hold_minutes": 30,              # 최소 보유시간 (분) - 패닉셀 방지
-    "max_daily_trades": 6,               # 하루 최대 매매 횟수 (과매매 방지)
+    "min_hold_minutes": 15,              # 최소 보유시간 (분) - 평가일 단축
+    "max_daily_trades": 8,               # 하루 최대 매매 횟수 (평가일 확대)
     "no_chase_pct": 5.0,                 # 이 등락률 이상 급등주 매수 금지
     "max_same_sector": 2,                # 동일 섹터 최대 종목 수
     "prefer_limit_order": True,          # 지정가 주문 우선 사용
@@ -47,7 +51,7 @@ DEFAULT_CONFIG = {
         "009150", "105560", "051910", "066570",  # 삼성전기, KB금융, LG화학, LG전자
         "035420", "028260", "012330", "055550",  # NAVER, 삼성물산, 현대모비스, 신한지주
     ],
-    "loop_interval": 60,                 # 매매 판단 주기 (초)
+    "loop_interval": 45,                 # 매매 판단 주기 (초) - 평가일 빠르게
 }
 
 # 종목코드 → 종목명 매핑
@@ -128,8 +132,18 @@ class AutoTraderAgent(BaseAgent):
         return now >= cutoff
 
     def _is_force_sell_time(self) -> bool:
-        """강제 매도 시간인지 확인"""
+        """강제 매도 시간인지 확인 (평가 시각 전에는 강제 매도 안함)"""
         now = self._now_kst()
+        # 평가일이면 평가 시각 이후에만 강제 매도 (평가액 보전)
+        eval_date = self.config.get("eval_date", "")
+        eval_hold = self.config.get("eval_hold_until", "")
+        if eval_date and eval_hold:
+            today = now.strftime("%Y-%m-%d")
+            if today == eval_date:
+                eh, em = map(int, eval_hold.split(":"))
+                eval_cutoff = now.replace(hour=eh, minute=em, second=0)
+                if now < eval_cutoff:
+                    return False  # 평가 시각 전 강제 매도 차단
         h, m = map(int, self.config["force_sell_by"].split(":"))
         cutoff = now.replace(hour=h, minute=m, second=0)
         return now >= cutoff
@@ -225,7 +239,17 @@ class AutoTraderAgent(BaseAgent):
 
         # 2) 기계적 손절/익절 체크 (최소 보유시간 규칙 적용)
         now = self._now_kst()
-        min_hold = self.config.get("min_hold_minutes", 30)
+        min_hold = self.config.get("min_hold_minutes", 15)
+
+        # 평가일 + 평가 시각 임박 시 익절 억제
+        eval_date = self.config.get("eval_date", "")
+        eval_hold = self.config.get("eval_hold_until", "")
+        is_eval_hold = False
+        if eval_date == now.strftime("%Y-%m-%d") and eval_hold:
+            eh, em = map(int, eval_hold.split(":"))
+            eval_cutoff = now.replace(hour=eh, minute=em, second=0)
+            # 평가 시각 30분 전부터 보유 유지 모드
+            is_eval_hold = now >= (eval_cutoff - timedelta(minutes=30)) and now <= eval_cutoff
 
         for code, h in context["holdings"].items():
             if h["잔고수량"] <= 0:
@@ -242,6 +266,9 @@ class AutoTraderAgent(BaseAgent):
                     "qty": h["잔고수량"],
                     "reason": f"손절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
                 })
+            # 평가 시각 임박 시 익절 억제 (평가액 보전)
+            elif is_eval_hold:
+                continue  # 수익 중인 종목 보유 유지
             # 최소 보유시간 미만이면 익절 보류 (패닉셀 방지)
             elif held_minutes < min_hold:
                 continue
@@ -376,7 +403,16 @@ class AutoTraderAgent(BaseAgent):
 
         trend_text = "\n".join(trend_summary) if trend_summary else "분봉 데이터 없음"
 
+        # 평가일 모드 메시지
+        eval_date = self.config.get("eval_date", "")
+        eval_time = self.config.get("eval_time", "15:30")
+        today = self._now_kst().strftime("%Y-%m-%d")
+        eval_msg = ""
+        if eval_date == today:
+            eval_msg = f"\n⚠️ 오늘은 평가일입니다! {eval_time} 기준 포트폴리오 평가액(현금+보유주식)을 극대화해야 합니다.\n평가 시각 전 불필요한 매도를 자제하고, 상승 모멘텀 있는 종목에 적극 투자하세요.\n"
+
         prompt = f"""당신은 한국 주식 데이트레이딩 AI입니다. 현재 시장 데이터를 분석하고 매수할 종목을 추천하세요.
+{eval_msg}
 
 ## 현재 시세 (호가 스프레드 포함)
 {chr(10).join(price_summary)}

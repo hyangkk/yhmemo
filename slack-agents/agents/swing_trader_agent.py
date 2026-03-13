@@ -55,13 +55,16 @@ NEWS_SOURCES = {
 
 DEFAULT_CONFIG = {
     "target_date": "2026-03-13",           # 평가 목표일
+    "target_time": "12:00",                # 평가 기준 시각 (이 시각에 평가액 극대화)
     "scan_tickers": list(STOCK_NAMES.keys()),
-    "max_position_pct": 35,                # 종목당 최대 비중 (%)
-    "max_stocks": 8,                       # 최대 보유 종목
-    "stop_loss_pct": -5.0,                 # 손절 (스윙이라 넓게)
-    "market_loop_interval": 180,           # 장중 사이클 (3분)
+    "max_position_pct": 40,                # 종목당 최대 비중 (%) - 평가액 극대화 위해 상향
+    "max_stocks": 6,                       # 최대 보유 종목 (집중 투자)
+    "stop_loss_pct": -3.0,                 # 손절 (평가일 손실 최소화 위해 타이트하게)
+    "market_loop_interval": 120,           # 장중 사이클 (2분 - 평가일 집중 모니터링)
     "offhours_loop_interval": 1800,        # 장외 사이클 (30분)
-    "daily_max_trades": 10,                # 하루 최대 거래
+    "daily_max_trades": 12,                # 하루 최대 거래 (평가일 적극 매매)
+    "no_buy_after": "11:45",               # 평가 시각 전 매수 마감
+    "evaluation_mode": True,               # 평가액 극대화 모드
 }
 
 
@@ -117,6 +120,22 @@ class SwingTraderAgent(BaseAgent):
         target = datetime.strptime(self.config["target_date"], "%Y-%m-%d").date()
         today = self._now().date()
         return (target - today).days
+
+    def _is_near_eval_time(self) -> bool:
+        """평가 시각 임박 여부 (평가 15분 전부터)"""
+        now = self._now()
+        target_time = self.config.get("target_time", "15:30")
+        h, m = map(int, target_time.split(":"))
+        eval_time = now.replace(hour=h, minute=m, second=0)
+        return (eval_time - timedelta(minutes=15)) <= now <= eval_time
+
+    def _is_no_buy_time(self) -> bool:
+        """매수 금지 시간 확인 (평가 시각 전 매수 마감)"""
+        now = self._now()
+        no_buy = self.config.get("no_buy_after", "11:45")
+        h, m = map(int, no_buy.split(":"))
+        cutoff = now.replace(hour=h, minute=m, second=0)
+        return now >= cutoff and self._days_to_target() <= 0
 
     def _adaptive_interval(self) -> int:
         """상황에 따라 루프 간격 동적 조절"""
@@ -303,21 +322,31 @@ class SwingTraderAgent(BaseAgent):
         if not prices:
             return None
 
-        # 1) 손절 체크
+        near_eval = self._is_near_eval_time() and days_left <= 0
+
+        # 1) 손절 체크 (평가 시각 임박 시 손절 기준 완화 - 불필요한 매도 방지)
         actions = []
         for code, h in holdings.items():
             pnl = h.get("수익률", 0)
-            if pnl <= self.config["stop_loss_pct"]:
+            stop_loss = self.config["stop_loss_pct"]
+            # 평가 시각 15분 전부터는 큰 손실만 손절 (평가액 보전)
+            if near_eval:
+                stop_loss = stop_loss * 2  # -3% → -6%로 완화
+            if pnl <= stop_loss:
                 actions.append({
                     "action": "sell", "code": code,
                     "qty": h["잔고수량"],
                     "reason": f"손절: {pnl:.1f}%",
                 })
 
-        # 2) AI 종합 판단
-        if self._daily_trade_count < self.config["daily_max_trades"]:
+        # 2) AI 종합 판단 (매수 금지 시간에는 매도만)
+        no_buy = self._is_no_buy_time()
+        if self._daily_trade_count < self.config["daily_max_trades"] and not near_eval:
             ai_actions = await self._ai_swing_decide(ctx)
             if ai_actions:
+                if no_buy:
+                    # 매수 금지 시간: 매도 액션만 통과
+                    ai_actions = [a for a in ai_actions if a["action"] == "sell"]
                 actions.extend(ai_actions)
 
         if not actions:
@@ -399,8 +428,13 @@ class SwingTraderAgent(BaseAgent):
         if self._overnight_plan:
             plan_text = f"\n## 야간 분석 결과\n{self._overnight_plan.get('summary', '없음')}"
 
+        target_time = self.config.get("target_time", "15:30")
+        eval_mode = self.config.get("evaluation_mode", False)
+        eval_msg = f"⚠️ 오늘 {target_time} 평가! 이 시각까지 포트폴리오 가치를 극대화하세요." if eval_mode and days_left <= 0 else ""
+
         prompt = f"""당신은 한국 주식 스윙 트레이딩 AI입니다.
-목표: {self.config['target_date']}(금) 장 마감 시 평가액 극대화 (D-{days_left})
+목표: {self.config['target_date']} {target_time} 기준 평가액 극대화 (D-{days_left})
+{eval_msg}
 
 ## 현재 포트폴리오
 추정순자산: {total_asset:,}원 | 추정손익: {total_pnl:,}원 | 현금: {cash:,}원
@@ -418,14 +452,17 @@ class SwingTraderAgent(BaseAgent):
 - 매수 수수료 0.015%, 매도 수수료 0.015% + 거래세 0.18%
 - 종목당 최대 비중 {self.config['max_position_pct']}%
 - 하루 최대 거래 {self.config['daily_max_trades']}건 (현재 {self._daily_trade_count}건)
-- D-{days_left}: {'적극적' if days_left <= 1 else '신중한'} 포지셔닝
+- D-{days_left}: {'🔥 평가일! 적극적' if days_left <= 0 else '적극적' if days_left <= 1 else '신중한'} 포지셔닝
+- 평가 기준 시각: {target_time} → 이 시각에 보유 중인 종목의 총 평가액이 최대가 되어야 함
+- ⚠️ 평가 시각 전에 불필요한 매도 금지 (평가액 = 현금 + 보유주식 평가액)
 
 ## 판단 기준
 1. 뉴스/공시에서 호재/악재 파악
 2. 모멘텀 + 수급 분석 (거래량, 등락률)
 3. 섹터 로테이션 가능성
-4. 금요일까지의 상승 여력
+4. {target_time}까지의 상승 여력
 5. 비용 대비 수익 기대값
+6. 평가 시각 전 포지션 최적화 (약한 종목 → 강한 종목 교체)
 
 ## 응답 (JSON만 출력)
 {{"actions": [
