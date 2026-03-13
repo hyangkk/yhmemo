@@ -52,6 +52,7 @@ from agents.invest_report_agent import InvestReportAgent
 from agents.task_board_agent import TaskBoardAgent
 from agents.fortune_agent import FortuneAgent
 from agents.diary_quote_agent import DiaryQuoteAgent
+from agents.diary_daily_alert_agent import DiaryDailyAlertAgent
 from agents.sentiment_agent import SentimentAgent
 from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
@@ -257,6 +258,10 @@ async def main():
         diary_db_id=config.get("DIARY_NOTION_DATABASE_ID", ""),
         **common_kwargs,
     )
+    diary_daily_alert = DiaryDailyAlertAgent(
+        diary_db_id=config.get("DIARY_NOTION_DATABASE_ID", ""),
+        **common_kwargs,
+    )
     fortune = FortuneAgent(**common_kwargs)
     sentiment = SentimentAgent(**common_kwargs)
     # invest = InvestAgent(**common_kwargs)        # 비용 절감 위해 비활성화
@@ -279,7 +284,7 @@ async def main():
     )
     # 기존 에이전트들 HR 등록
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
-                        "sentiment", "task_board", "diary_quote", "quote",
+                        "sentiment", "task_board", "diary_quote", "diary_daily_alert", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
                         "bulletin"]:
         agent_hr.ensure_registered(_agent_name)
@@ -360,6 +365,12 @@ async def main():
     # "!생각일기" → 생각일기 한 마디 즉시 실행
     async def cmd_diary_quote(args: str, user: str, channel: str, thread_ts: str = None):
         err = await diary_quote.run_once(channel=channel, thread_ts=thread_ts)
+        if err:
+            await _reply(channel, err, thread_ts)
+
+    # "!일기분석" → 생각일기 분석알림 즉시 실행
+    async def cmd_diary_daily_alert(args: str, user: str, channel: str, thread_ts: str = None):
+        err = await diary_daily_alert.run_once(channel=channel, thread_ts=thread_ts)
         if err:
             await _reply(channel, err, thread_ts)
 
@@ -445,6 +456,7 @@ async def main():
     slack.on_command("상태", cmd_status)
     slack.on_command("명언", cmd_quote)
     slack.on_command("생각일기", cmd_diary_quote)
+    slack.on_command("일기분석", cmd_diary_daily_alert)
     slack.on_command("로그", cmd_log)
     slack.on_command("현황", cmd_dashboard)
     slack.on_command("시세", cmd_market)
@@ -966,6 +978,7 @@ async def main():
 - dashboard: 에이전트 가동 현황, 시스템 상태, 업타임 확인
 - quote: 명언 보내기
 - diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
+- diary_daily_alert: 생각일기 분석, 일기 분석알림, 일기 분석해줘, 오늘 일기 분석
 - fortune: 운세 보기, 오늘의 운세
 - hr_eval: 인사평가 실행, 에이전트 평가, 성과 평가, "인사평가 해줘", "에이전트들 평가해봐"
 - hr_status: 인사현황, 연봉 조회, 에이전트 인사카드, "연봉 랭킹", "인사 현황 보여줘", "에이전트 연봉", "누가 제일 많이 받아?" hr_target 필드에 특정 에이전트명 (없으면 전체)
@@ -989,7 +1002,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|diary_daily_alert|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -1065,6 +1078,9 @@ async def main():
             elif action == "diary_quote":
                 await cmd_diary_quote(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "생각일기 한마디 전송 완료"
+            elif action == "diary_daily_alert":
+                await cmd_diary_daily_alert(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "생각일기 분석알림 전송 완료"
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
@@ -1461,6 +1477,7 @@ async def main():
         # "curator": lambda: asyncio.create_task(curator.start(), name="curator"),      # ai-curator 알림 중지
         # "quote": lambda: asyncio.create_task(quote.start(), name="quote"),          # 명언 비활성화
         "diary_quote": lambda: asyncio.create_task(diary_quote.start(), name="diary_quote"),
+        "diary_daily_alert": lambda: asyncio.create_task(diary_daily_alert.start(), name="diary_daily_alert"),
         # "fortune": lambda: asyncio.create_task(fortune.start(), name="fortune"),  # 운영 중단
         "proactive": lambda: asyncio.create_task(proactive.start(), name="proactive"),
         # "invest": lambda: asyncio.create_task(invest.start(), name="invest"),          # 비활성화됨
