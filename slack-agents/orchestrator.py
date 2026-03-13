@@ -485,19 +485,12 @@ async def main():
         "1e21114e-6491-8101-8b67-ca52d78a8fb0",
     )
 
-    _notion_save_error = None  # 디버그용: 마지막 노션 저장 에러
-
-    async def _save_blog_to_notion(result: dict, channel: str = None, thread_ts: str = None) -> str | None:
-        """블로그 크롤링 결과를 노션 '에이전트 결과물' DB에 저장. 노션 페이지 URL 반환."""
-        nonlocal _notion_save_error
-        _notion_save_error = None
-
+    async def _save_blog_to_notion(result: dict):
+        """블로그 크롤링 결과를 노션 '에이전트 결과물' DB에 저장. (page_url, error) 튜플 반환."""
         if not notion:
-            _notion_save_error = "notion 클라이언트 미초기화"
-            logger.warning(f"[Blog→Notion] {_notion_save_error}")
-            return None
+            return None, "notion 클라이언트 미초기화"
         if not result.get("success") or result.get("is_home"):
-            return None
+            return None, "저장 대상 아님"
         try:
             title = result.get("title", "(제목 없음)")
 
@@ -508,7 +501,6 @@ async def main():
             content_blocks = scraper_mod.to_notion_blocks(result)
             logger.info(f"[Blog→Notion] 노션 저장 시도: {title}, 블록 {len(content_blocks)}개")
 
-            # 블록이 너무 많으면 분할 저장 (100개 제한)
             first_batch = content_blocks[:100]
             page = await notion.create_page(
                 database_id=NOTION_AGENT_RESULTS_DB_ID,
@@ -516,9 +508,7 @@ async def main():
                 content_blocks=first_batch,
             )
             if not page:
-                _notion_save_error = "create_page None 반환 (API 에러)"
-                logger.error(f"[Blog→Notion] {_notion_save_error}")
-                return None
+                return None, "create_page None 반환 (API 에러)"
 
             page_url = page.get("url", "")
             page_id = page.get("id", "")
@@ -531,11 +521,10 @@ async def main():
                     await notion.append_blocks(page_id, batch)
 
             logger.info(f"[Blog→Notion] 저장 완료: {title} → {page_url}")
-            return page_url
+            return page_url, None
         except Exception as e:
-            _notion_save_error = str(e)
             logger.error(f"[Blog→Notion] 노션 저장 실패: {e}", exc_info=True)
-            return None
+            return None, str(e)
 
     async def cmd_blog(args: str, user: str, channel: str, thread_ts: str = None, fetch_posts: bool = False):
         """!블로그 URL [N] - 네이버 블로그 글 크롤링. 블로그 홈 URL + 숫자면 최신 N개 글 본문까지 크롤링"""
@@ -555,7 +544,11 @@ async def main():
 
         try:
             scraper = await get_blog_scraper()
-            result = await scraper.scrape(url, max_posts=max_posts)
+            # 전체 크롤링에 90초 타임아웃
+            result = await asyncio.wait_for(
+                scraper.scrape(url, max_posts=max_posts),
+                timeout=90,
+            )
 
             # 블로그 홈이고 fetch_posts가 True면 각 글 본문까지 크롤링
             if result.get("is_home") and (fetch_posts or max_posts > 0) and result.get("posts"):
@@ -563,8 +556,8 @@ async def main():
                 if fetch_posts and post_urls:
                     await _reply(channel, f":house: *{result.get('blog_id', '')}* 블로그에서 최신 글 {len(post_urls)}개 크롤링 → 노션 저장합니다...", thread_ts)
                     for pu in post_urls:
-                        post_result = await scraper.scrape(pu)
-                        notion_url = await _save_blog_to_notion(post_result)
+                        post_result = await asyncio.wait_for(scraper.scrape(pu), timeout=90)
+                        notion_url, err = await _save_blog_to_notion(post_result)
                         post_title = post_result.get("title", "(제목 없음)")
                         if notion_url:
                             await _reply(channel, f":white_check_mark: *{post_title}* → <{notion_url}|노션에서 보기>", thread_ts)
@@ -575,17 +568,18 @@ async def main():
 
             # 개별 글: 노션에 저장
             if result.get("success") and not result.get("is_home"):
-                notion_url = await _save_blog_to_notion(result)
+                notion_url, err = await _save_blog_to_notion(result)
                 if notion_url:
                     post_title = result.get("title", "(제목 없음)")
                     await _reply(channel, f":white_check_mark: *{post_title}* 크롤링 완료 → <{notion_url}|노션에서 보기>", thread_ts)
                     return
                 else:
-                    err = _notion_save_error or "알 수 없는 오류"
                     await _reply(channel, f":warning: 노션 저장 실패 ({err}), 슬랙에 본문을 표시합니다.", thread_ts)
 
             msg = scraper.format_for_slack(result)
             await _reply(channel, msg, thread_ts)
+        except asyncio.TimeoutError:
+            await _reply(channel, ":x: 크롤링 타임아웃 (90초 초과). 잠시 후 다시 시도해주세요.", thread_ts)
         except Exception as e:
             logger.error(f"[Blog] 스크래핑 오류: {e}", exc_info=True)
             await _reply(channel, f":x: 블로그 스크래핑 중 오류 발생: {e}", thread_ts)
