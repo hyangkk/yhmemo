@@ -660,17 +660,8 @@ class BulletinAgent(BaseAgent):
         html = ""
         used_vercel_proxy = False
 
-        if use_playwright:
-            # Playwright로 렌더링된 HTML 가져오기
-            try:
-                css_sel = board.get("css_selector", "")
-                wait_sel = css_sel if css_sel else None
-                html = await self._pw_fetch_html(url, wait_selector=wait_sel)
-            except Exception as e:
-                logger.error(f"[bulletin] Playwright 스크래핑 실패 ({url}): {e}")
-                return [], f"Playwright 오류: {e}"
-        else:
-            # 1단계: urllib 직접 접근
+        # 1단계: urllib 직접 접근 (use_playwright가 아닌 경우만)
+        if not use_playwright:
             try:
                 content, headers = await asyncio.to_thread(self._fetch_url, url)
                 html = self._decode_html(content, headers)
@@ -680,30 +671,30 @@ class BulletinAgent(BaseAgent):
                 logger.warning(f"[bulletin] 1단계(urllib) 실패: {e}")
                 html = ""
 
-            # 2단계: 프록시 체인 (Cloudflare → Vercel → Supabase)
-            if not html or _is_error_page(html):
-                try:
-                    html = await self._fetch_via_proxy(url)
-                    if _is_error_page(html):
-                        raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
-                    used_vercel_proxy = True
-                    logger.info(f"[bulletin] 2단계(프록시) 성공: {len(html)}자")
-                except Exception as e:
-                    logger.warning(f"[bulletin] 2단계(프록시) 실패: {e}")
+        # 2단계: 프록시 체인 (Cloudflare → Vercel → Supabase)
+        if not html or _is_error_page(html):
+            try:
+                html = await self._fetch_via_proxy(url)
+                if _is_error_page(html):
+                    raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
+                used_vercel_proxy = True
+                logger.info(f"[bulletin] 2단계(프록시) 성공: {len(html)}자")
+            except Exception as e:
+                logger.warning(f"[bulletin] 2단계(프록시) 실패: {e}")
 
-            # 3단계: Playwright 폴백
-            if not html or _is_error_page(html):
-                try:
-                    css_sel = board.get("css_selector", "")
-                    wait_sel = css_sel if css_sel else None
-                    html = await self._pw_fetch_html(url, wait_selector=wait_sel)
-                    if _is_error_page(html):
-                        raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
-                    use_playwright = True
-                    logger.info(f"[bulletin] 3단계(Playwright) 성공: {len(html)}자")
-                except Exception as e2:
-                    logger.error(f"[bulletin] 모든 접근 방법 실패 ({url})")
-                    return [], f"모든 접근 실패:\n1. urllib\n2. Vercel 프록시\n3. Playwright"
+        # 3단계: Playwright 폴백
+        if not html or _is_error_page(html):
+            try:
+                css_sel = board.get("css_selector", "")
+                wait_sel = css_sel if css_sel else None
+                html = await self._pw_fetch_html(url, wait_selector=wait_sel)
+                if _is_error_page(html):
+                    raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
+                use_playwright = True
+                logger.info(f"[bulletin] 3단계(Playwright) 성공: {len(html)}자")
+            except Exception as e2:
+                logger.error(f"[bulletin] 모든 접근 방법 실패 ({url})")
+                return [], f"모든 접근 실패:\n1. urllib\n2. 프록시 체인\n3. Playwright"
 
         logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신 (playwright={use_playwright})")
 
