@@ -479,24 +479,39 @@ async def main():
     slack.on_command("게시판", cmd_bulletin)
 
     # "!블로그" → 네이버 블로그 글 스크래핑
-    async def cmd_blog(args: str, user: str, channel: str, thread_ts: str = None):
-        """!블로그 URL - 네이버 블로그 글 크롤링"""
-        url = args.strip()
-        if not url:
-            await _reply(channel, "사용법: `!블로그 https://blog.naver.com/블로그ID/글번호`", thread_ts)
+    async def cmd_blog(args: str, user: str, channel: str, thread_ts: str = None, fetch_posts: bool = False):
+        """!블로그 URL [N] - 네이버 블로그 글 크롤링. 블로그 홈 URL + 숫자면 최신 N개 글 본문까지 크롤링"""
+        parts = args.strip().split()
+        if not parts:
+            await _reply(channel, "사용법:\n• `!블로그 https://blog.naver.com/블로그ID/글번호` — 글 크롤링\n• `!블로그 https://blog.naver.com/블로그ID` — 최신 글 목록\n• `!블로그 https://blog.naver.com/블로그ID 5` — 최신 5개 글 본문까지 크롤링", thread_ts)
             return
 
-        # URL 여러 개 지원 (공백 구분)
-        urls = url.split()
+        url = parts[0]
+        # 두 번째 인자가 숫자면 크롤링할 글 수
+        max_posts = 5
+        if len(parts) > 1 and parts[1].isdigit():
+            max_posts = min(int(parts[1]), 10)  # 최대 10개
+            fetch_posts = True
 
-        await _reply(channel, f":mag: 네이버 블로그 크롤링 중... ({len(urls)}건)", thread_ts)
+        await _reply(channel, f":mag: 네이버 블로그 크롤링 중...", thread_ts)
 
         try:
             scraper = await get_blog_scraper()
-            for u in urls:
-                result = await scraper.scrape(u)
-                msg = scraper.format_for_slack(result)
-                await _reply(channel, msg, thread_ts)
+            result = await scraper.scrape(url, max_posts=max_posts)
+
+            # 블로그 홈이고 fetch_posts가 True면 각 글 본문까지 크롤링
+            if result.get("is_home") and (fetch_posts or max_posts > 0) and result.get("posts"):
+                post_urls = [p["url"] for p in result["posts"][:max_posts]]
+                if fetch_posts and post_urls:
+                    await _reply(channel, f":house: *{result.get('blog_id', '')}* 블로그에서 최신 글 {len(post_urls)}개 크롤링합니다...", thread_ts)
+                    for pu in post_urls:
+                        post_result = await scraper.scrape(pu)
+                        msg = scraper.format_for_slack(post_result)
+                        await _reply(channel, msg, thread_ts)
+                    return
+
+            msg = scraper.format_for_slack(result)
+            await _reply(channel, msg, thread_ts)
         except Exception as e:
             logger.error(f"[Blog] 스크래핑 오류: {e}", exc_info=True)
             await _reply(channel, f":x: 블로그 스크래핑 중 오류 발생: {e}", thread_ts)
@@ -1018,8 +1033,13 @@ async def main():
                     import re as _re
                     found = _re.findall(r'https?://(?:m\.)?blog\.naver\.com/\S+', text)
                     blog_urls = found if found else []
+                # "최신글", "가져와", "크롤링" 등이 포함되면 본문까지 크롤링
+                want_fetch = any(kw in text for kw in ["최신글", "최신 글", "가져와", "크롤링", "읽어", "본문"])
                 if blog_urls:
-                    await cmd_blog(" ".join(blog_urls), user, channel, thread_ts)
+                    args_str = blog_urls[0]
+                    if want_fetch:
+                        args_str += " 5"  # 기본 5개 크롤링
+                    await cmd_blog(args_str, user, channel, thread_ts, fetch_posts=want_fetch)
                     result_text = f"네이버 블로그 스크래핑 {len(blog_urls)}건"
                 else:
                     await _reply(channel, "블로그 URL을 찾지 못했어요. URL을 함께 보내주세요.\n예: `이 블로그 글 읽어줘 https://blog.naver.com/xxx/123`", thread_ts)
