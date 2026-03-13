@@ -134,8 +134,10 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         output_path = work_dir / f"result_{result_id}.mp4"
 
         if len(local_files) == 1:
-            _run_ffmpeg(["-i", local_files[0]] + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS +
-                        IOS_CONTAINER_OPTS + [str(output_path)])
+            # 세로 영상도 가로(1280x720) 프레임에 맞춤 (pillarbox)
+            _run_ffmpeg(["-i", local_files[0],
+                        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"]
+                        + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [str(output_path)])
         elif mode == "split":
             _edit_split_screen(local_files, str(output_path))
         elif mode == "pip":
@@ -317,11 +319,19 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
     for i, (cam, s, e) in enumerate(segments):
         print(f"[studio]   세그먼트 {i}: 카메라{cam} {s:.1f}~{e:.1f}초", flush=True)
 
+    # 출력 해상도 (가로 기준)
+    out_w, out_h = 1280, 720
+
     parts = []
     concat_in = []
     for i, (cam, start, end) in enumerate(segments):
         dur = end - start
-        parts.append(f"[{cam}:v]trim=start={start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[v{i}];")
+        # 세로 영상도 가로 프레임에 맞춤: 비율 유지 + 양옆 검정 (pillarbox)
+        parts.append(
+            f"[{cam}:v]trim=start={start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
+            f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black[v{i}];"
+        )
         parts.append(f"[{cam}:a]atrim=start={start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS[a{i}];")
         concat_in.append(f"[v{i}][a{i}]")
 
@@ -335,21 +345,26 @@ def _edit_auto_cut(files: list[str], output: str, interval: float = 3.0):
 
 
 def _edit_split_screen(files: list[str], output: str):
-    """화면 분할"""
+    """화면 분할 (세로 영상은 pillarbox 처리)"""
     n = len(files)
     inp = []
     for f in files:
         inp.extend(["-i", f])
 
+    # 각 입력을 비율 유지하면서 셀 크기에 맞춤
+    def _fit(idx: int, w: int, h: int, label: str) -> str:
+        return (f"[{idx}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black[{label}]")
+
     if n == 2:
-        fc = "[0:v]scale=640:360[l];[1:v]scale=640:360[r];[l][r]hstack=inputs=2[outv]"
+        fc = f"{_fit(0,640,360,'l')};{_fit(1,640,360,'r')};[l][r]hstack=inputs=2[outv]"
     elif n == 3:
-        fc = ("[0:v]scale=1280:360[top];[1:v]scale=640:360[bl];[2:v]scale=640:360[br];"
+        fc = (f"{_fit(0,1280,360,'top')};{_fit(1,640,360,'bl')};{_fit(2,640,360,'br')};"
               "[bl][br]hstack=inputs=2[bottom];[top][bottom]vstack=inputs=2[outv]")
     else:
-        fc = ("[0:v]scale=640:360[tl];[1:v]scale=640:360[tr];"
-              f"{'[2:v]scale=640:360[bl];' if n > 2 else 'color=black:640x360[bl];'}"
-              f"{'[3:v]scale=640:360[br];' if n > 3 else 'color=black:640x360[br];'}"
+        fc = (f"{_fit(0,640,360,'tl')};{_fit(1,640,360,'tr')};"
+              f"{_fit(2,640,360,'bl') if n > 2 else 'color=black:640x360[bl]'};"
+              f"{_fit(3,640,360,'br') if n > 3 else 'color=black:640x360[br]'};"
               "[tl][tr]hstack=inputs=2[top];[bl][br]hstack=inputs=2[bottom];"
               "[top][bottom]vstack=inputs=2[outv]")
 
@@ -358,16 +373,16 @@ def _edit_split_screen(files: list[str], output: str):
 
 
 def _edit_pip(files: list[str], output: str):
-    """PIP (Picture-in-Picture)"""
+    """PIP (Picture-in-Picture) - 세로 영상 pillarbox 처리"""
     inp = []
     for f in files:
         inp.extend(["-i", f])
 
-    parts = ["[0:v]scale=1280:720[main]"]
+    parts = ["[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[main]"]
     cur = "[main]"
     for i in range(1, len(files)):
         sl = f"s{i}"
-        parts.append(f"[{i}:v]scale=240:135[{sl}]")
+        parts.append(f"[{i}:v]scale=240:135:force_original_aspect_ratio=decrease,pad=240:135:(ow-iw)/2:(oh-ih)/2:black[{sl}]")
         out = f"[pip{i}]" if i < len(files) - 1 else "[outv]"
         y = 720 - 135 * i - 10 * i
         parts.append(f"{cur}[{sl}]overlay=W-w-10:{y}{out}")
