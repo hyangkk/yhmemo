@@ -44,7 +44,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     const startTime = Date.now();
 
     const load = async () => {
-      const res = await fetch(`/api/studio/sessions/${sessionId}`);
+      const res = await fetch(`/api/studio/sessions/${sessionId}`, { cache: 'no-store' });
       if (res.ok) {
         setData(await res.json());
       }
@@ -54,7 +54,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
     // 세션 상태 폴링 (done + error가 아닌 한 계속)
     const interval = setInterval(async () => {
-      const res = await fetch(`/api/studio/sessions/${sessionId}`);
+      const res = await fetch(`/api/studio/sessions/${sessionId}`, { cache: 'no-store' });
       if (res.ok) {
         const d: SessionData = await res.json();
         setData(d);
@@ -280,7 +280,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           onClick={() => router.push('/studio')}
           className="w-full bg-gray-800 hover:bg-gray-700 py-2.5 rounded-xl text-sm font-semibold transition"
         >
-          새 촬영 시작
+          홈으로 가기
         </button>
       </div>
     </div>
