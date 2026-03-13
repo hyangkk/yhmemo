@@ -118,8 +118,8 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         output_path = work_dir / f"result_{result_id}.mp4"
 
         if len(local_files) == 1:
-            _run_ffmpeg(["-i", local_files[0], "-c:v", "libx264", "-preset", "fast",
-                         "-c:a", "aac", "-movflags", "+faststart", str(output_path)])
+            _run_ffmpeg(["-i", local_files[0]] + IOS_VIDEO_OPTS + IOS_AUDIO_OPTS +
+                        IOS_CONTAINER_OPTS + [str(output_path)])
         elif mode == "split":
             _edit_split_screen(local_files, str(output_path))
         elif mode == "pip":
@@ -162,6 +162,18 @@ def _run_ffmpeg(args: list[str]):
         raise Exception(f"FFmpeg 오류: {result.stderr}")
 
 
+# iOS 호환 인코딩 옵션 (H.264 Baseline/Main + yuv420p)
+IOS_VIDEO_OPTS = [
+    "-c:v", "libx264",
+    "-profile:v", "main",
+    "-level", "4.0",
+    "-pix_fmt", "yuv420p",
+    "-preset", "fast",
+]
+IOS_AUDIO_OPTS = ["-c:a", "aac", "-b:a", "128k"]
+IOS_CONTAINER_OPTS = ["-movflags", "+faststart"]
+
+
 def _get_duration(path: str) -> float | None:
     try:
         result = subprocess.run(
@@ -174,8 +186,33 @@ def _get_duration(path: str) -> float | None:
         return None
 
 
-def _edit_auto_cut(files: list[str], output: str, interval_sec: float = 5.0):
-    """자동 컷편집: 일정 간격마다 카메라 전환"""
+def _analyze_audio_levels(filepath: str, interval: float = 1.0) -> list[float]:
+    """각 초 단위로 오디오 볼륨(RMS) 측정"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-f", "lavfi",
+             "-i", f"amovie={filepath},astats=metadata=1:reset={int(1/interval)}",
+             "-show_entries", "frame_tags=lavfi.astats.Overall.RMS_level",
+             "-of", "csv=p=0"],
+            capture_output=True, text=True, timeout=120,
+        )
+        levels = []
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line or line == "-inf":
+                levels.append(-100.0)
+            else:
+                try:
+                    levels.append(float(line))
+                except ValueError:
+                    levels.append(-100.0)
+        return levels if levels else [-100.0]
+    except Exception:
+        return [-100.0]
+
+
+def _edit_auto_cut(files: list[str], output: str, min_segment: float = 3.0, max_segment: float = 10.0):
+    """오디오 분석 기반 자동 컷편집: 소리가 큰 카메라를 우선 선택, 자연스러운 전환"""
     durations = [_get_duration(f) or 0 for f in files]
     min_dur = min(durations) if durations else 0
     if min_dur <= 0:
@@ -183,17 +220,66 @@ def _edit_auto_cut(files: list[str], output: str, interval_sec: float = 5.0):
         return
 
     n = len(files)
+
+    # 각 카메라의 초별 오디오 레벨 분석
+    all_levels = []
+    for f in files:
+        levels = _analyze_audio_levels(f)
+        all_levels.append(levels)
+
+    # 모든 카메라의 레벨 길이를 맞춤
+    max_len = min(int(min_dur), min(len(l) for l in all_levels))
+    if max_len <= 0:
+        _simple_concat(files, output)
+        return
+    for i in range(n):
+        all_levels[i] = all_levels[i][:max_len]
+
+    # 초별로 가장 소리가 큰 카메라 선택
+    best_cam_per_sec = []
+    for sec in range(max_len):
+        best = 0
+        best_level = all_levels[0][sec]
+        for cam in range(1, n):
+            if sec < len(all_levels[cam]) and all_levels[cam][sec] > best_level:
+                best_level = all_levels[cam][sec]
+                best = cam
+        best_cam_per_sec.append(best)
+
+    # 세그먼트 생성 (최소 min_segment초, 최대 max_segment초)
     segments = []
-    t = 0.0
-    while t < min_dur:
-        cam = len(segments) % n
-        end = min(t + interval_sec, min_dur)
-        segments.append((cam, t, end))
-        t = end
+    seg_start = 0.0
+    current_cam = best_cam_per_sec[0] if best_cam_per_sec else 0
+
+    for sec in range(1, max_len):
+        elapsed = sec - seg_start
+        preferred_cam = best_cam_per_sec[sec]
+
+        # 전환 조건: 다른 카메라가 더 적절하고, 최소 시간 경과
+        should_switch = (
+            preferred_cam != current_cam
+            and elapsed >= min_segment
+        )
+        # 최대 시간 도달 시 강제 전환 (다른 카메라로)
+        force_switch = elapsed >= max_segment and n > 1
+
+        if should_switch or force_switch:
+            segments.append((current_cam, seg_start, float(sec)))
+            seg_start = float(sec)
+            if force_switch and preferred_cam == current_cam:
+                current_cam = (current_cam + 1) % n
+            else:
+                current_cam = preferred_cam
+
+    # 마지막 세그먼트
+    if seg_start < min_dur:
+        segments.append((current_cam, seg_start, min_dur))
 
     if not segments:
         _simple_concat(files, output)
         return
+
+    logger.info(f"[studio] 자동 편집: {len(segments)}개 세그먼트 생성 (카메라 {n}대)")
 
     parts = []
     concat_in = []
@@ -208,9 +294,8 @@ def _edit_auto_cut(files: list[str], output: str, interval_sec: float = 5.0):
     for f in files:
         inp.extend(["-i", f])
 
-    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "[outa]",
-                       "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
-                       "-movflags", "+faststart", output])
+    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "[outa]"] +
+                IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
 
 
 def _edit_split_screen(files: list[str], output: str):
@@ -232,9 +317,8 @@ def _edit_split_screen(files: list[str], output: str):
               "[tl][tr]hstack=inputs=2[top];[bl][br]hstack=inputs=2[bottom];"
               "[top][bottom]vstack=inputs=2[outv]")
 
-    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "0:a?",
-                       "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
-                       "-movflags", "+faststart", "-shortest", output])
+    _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "0:a?"] +
+                IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + ["-shortest", output])
 
 
 def _edit_pip(files: list[str], output: str):
@@ -253,9 +337,8 @@ def _edit_pip(files: list[str], output: str):
         parts.append(f"{cur}[{sl}]overlay=W-w-10:{y}{out}")
         cur = f"[pip{i}]"
 
-    _run_ffmpeg(inp + ["-filter_complex", ";".join(parts), "-map", "[outv]", "-map", "0:a?",
-                       "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
-                       "-movflags", "+faststart", "-shortest", output])
+    _run_ffmpeg(inp + ["-filter_complex", ";".join(parts), "-map", "[outv]", "-map", "0:a?"] +
+                IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + ["-shortest", output])
 
 
 def _simple_concat(files: list[str], output: str):
@@ -264,9 +347,8 @@ def _simple_concat(files: list[str], output: str):
             f.write(f"file '{p}'\n")
         list_path = f.name
     try:
-        _run_ffmpeg(["-f", "concat", "-safe", "0", "-i", list_path,
-                     "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
-                     "-movflags", "+faststart", output])
+        _run_ffmpeg(["-f", "concat", "-safe", "0", "-i", list_path] +
+                    IOS_VIDEO_OPTS + IOS_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
     finally:
         os.unlink(list_path)
 
