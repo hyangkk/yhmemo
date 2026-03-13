@@ -24,4 +24,5 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           cd slack-agents
-          flyctl deploy --build-arg BUILD_SHA=${GITHUB_SHA::7}
+          BUILD_NUM=$(printf "%04d" ${{ github.run_number }})
+          flyctl deploy --build-arg BUILD_NUM=$BUILD_NUM

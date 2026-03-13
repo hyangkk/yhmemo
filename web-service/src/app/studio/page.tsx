@@ -117,13 +117,11 @@ export default function StudioPage() {
           <p>세션 만들기 → 코드 공유 → 각 폰에서 참여 → 동시 촬영 → 자동 편집</p>
           {version && (
             <p className="text-gray-700 font-mono">
-              {version.front === version.server ? (
-                <span>v.{version.front}</span>
+              {version.front === version.server && version.front !== '0' ? (
+                <span>#{version.front}</span>
               ) : (
                 <span>
-                  <span className="text-gray-600">F</span> {version.front}
-                  <span className="mx-1">·</span>
-                  <span className="text-gray-600">S</span> {version.server}
+                  F.{version.front} · S.{version.server}
                 </span>
               )}
             </p>
