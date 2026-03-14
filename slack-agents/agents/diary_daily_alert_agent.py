@@ -241,7 +241,8 @@ class DiaryDailyAlertAgent(BaseAgent):
             page_id = page.get("id", "")
             content = await self.notion.get_page_text(page_id) if page_id else ""
             page_url = page.get("url", "")
-            entries.append({"title": title, "content": content, "page_url": page_url})
+            created = page.get("created_time", "")
+            entries.append({"title": title, "content": content, "page_url": page_url, "created_time": created})
         return entries
 
     @staticmethod
@@ -280,6 +281,10 @@ class DiaryDailyAlertAgent(BaseAgent):
             else:
                 for entry in section_entries:
                     display = entry.get("summary", entry["title"])
+                    # 랜덤 구간은 날짜 표시
+                    if key == "random_old" and entry.get("created_time"):
+                        ct = datetime.fromisoformat(entry["created_time"].replace("Z", "+00:00")).astimezone(KST)
+                        display += f" ({ct.strftime('%y.%m.%d')})"
                     if entry.get("page_url"):
                         lines.append(f"  • {display}  <{entry['page_url']}|원문>")
                     else:
