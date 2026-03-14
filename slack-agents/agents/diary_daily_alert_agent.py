@@ -10,6 +10,7 @@
 - 각 글의 한줄요약(제목) + 원문 링크로 슬랙 '명언-한마디' 채널에 전송
 """
 
+import json
 import logging
 import random
 from datetime import datetime, timezone, timedelta
@@ -96,6 +97,34 @@ class DiaryDailyAlertAgent(BaseAgent):
 
     async def think(self, context: dict) -> dict | None:
         sections = context["sections"]
+
+        # 모든 항목을 모아서 한번에 AI 한줄요약 요청
+        all_entries = []
+        for key in ["today", "yesterday", "day_before", "random_old"]:
+            for entry in sections.get(key, []):
+                all_entries.append(entry)
+
+        if all_entries:
+            entries_for_ai = []
+            for i, e in enumerate(all_entries):
+                text = e["title"]
+                if e.get("content"):
+                    text += "\n" + e["content"][:500]
+                entries_for_ai.append(f"[{i}] {text}")
+
+            prompt = "다음 생각일기 항목들을 각각 한 줄(30자 이내)로 요약해주세요.\n핵심 메시지만 간결하게. 반드시 JSON 배열로만 응답.\n\n" + "\n\n".join(entries_for_ai) + '\n\n예: ["요약1", "요약2", ...]'
+
+            result = await self.ai_think("한줄요약 전문가. JSON 배열만 반환.", prompt)
+            try:
+                clean = result.strip()
+                if clean.startswith("```"):
+                    clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
+                summaries = json.loads(clean.strip())
+                for i, entry in enumerate(all_entries):
+                    if i < len(summaries):
+                        entry["summary"] = summaries[i]
+            except (json.JSONDecodeError, IndexError):
+                logger.warning("[diary_daily_alert] 한줄요약 파싱 실패, 제목 사용")
 
         entry_counts = {
             "today": len(sections["today"]),
@@ -209,12 +238,14 @@ class DiaryDailyAlertAgent(BaseAgent):
             return []
 
     async def _collect_entries(self, pages: list) -> list:
-        """페이지 목록에서 제목 + 링크 수집"""
+        """페이지 목록에서 제목 + 본문 + 링크 수집"""
         entries = []
         for page in pages:
             title = self._extract_title(page)
+            page_id = page.get("id", "")
+            content = await self.notion.get_page_text(page_id) if page_id else ""
             page_url = page.get("url", "")
-            entries.append({"title": title, "page_url": page_url})
+            entries.append({"title": title, "content": content, "page_url": page_url})
         return entries
 
     @staticmethod
@@ -252,10 +283,11 @@ class DiaryDailyAlertAgent(BaseAgent):
                 lines.append("  (없음)")
             else:
                 for entry in section_entries:
+                    display = entry.get("summary", entry["title"])
                     if entry.get("page_url"):
-                        lines.append(f"  • <{entry['page_url']}|{entry['title']}>")
+                        lines.append(f"  • {display}  <{entry['page_url']}|원문>")
                     else:
-                        lines.append(f"  • {entry['title']}")
+                        lines.append(f"  • {display}")
             lines.append("")
 
         lines.append("`⏰ 매일 밤 10시 자동 발송`")
