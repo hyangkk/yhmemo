@@ -57,16 +57,14 @@ class DiaryDailyAlertAgent(BaseAgent):
 
         logger.info("[diary_daily_alert] 밤 10시 — 4개 구간 생각일기 조회 시작")
 
-        # 1. 오늘 글 (0~24시간)
-        today_pages = await self._fetch_pages_in_range(0, 24)
+        # KST 자정 기준 날짜별 조회
+        today_pages = await self._fetch_pages_for_day(now, 0)
         logger.info(f"  오늘 글: {len(today_pages)}개")
 
-        # 2. 어제 글 (24~48시간)
-        yesterday_pages = await self._fetch_pages_in_range(24, 48)
+        yesterday_pages = await self._fetch_pages_for_day(now, 1)
         logger.info(f"  어제 글: {len(yesterday_pages)}개")
 
-        # 3. 그제 글 (48~72시간)
-        day_before_pages = await self._fetch_pages_in_range(48, 72)
+        day_before_pages = await self._fetch_pages_for_day(now, 2)
         logger.info(f"  그제 글: {len(day_before_pages)}개")
 
         # 4. 과거 랜덤 (72시간 이전 ~ 2년 이내)
@@ -112,7 +110,7 @@ class DiaryDailyAlertAgent(BaseAgent):
                     text += "\n" + e["content"][:500]
                 entries_for_ai.append(f"[{i}] {text}")
 
-            prompt = "다음 생각일기 항목들을 각각 한 줄(30자 이내)로 요약해주세요.\n핵심 메시지만 간결하게. 반드시 JSON 배열로만 응답.\n\n" + "\n\n".join(entries_for_ai) + '\n\n예: ["요약1", "요약2", ...]'
+            prompt = "다음 생각일기 항목들을 각각 한 줄(40~60자)로 요약해주세요.\n제목과 본문의 핵심 메시지를 자연스럽게 요약. 반드시 JSON 배열로만 응답.\n\n" + "\n\n".join(entries_for_ai) + '\n\n예: ["요약1", "요약2", ...]'
 
             result = await self.ai_think("한줄요약 전문가. JSON 배열만 반환.", prompt)
             try:
@@ -162,9 +160,9 @@ class DiaryDailyAlertAgent(BaseAgent):
 
         now = datetime.now(KST)
 
-        today_pages = await self._fetch_pages_in_range(0, 24)
-        yesterday_pages = await self._fetch_pages_in_range(24, 48)
-        day_before_pages = await self._fetch_pages_in_range(48, 72)
+        today_pages = await self._fetch_pages_for_day(now, 0)
+        yesterday_pages = await self._fetch_pages_for_day(now, 1)
+        day_before_pages = await self._fetch_pages_for_day(now, 2)
         random_old_pages = await self._fetch_random_old()
 
         total = len(today_pages) + len(yesterday_pages) + len(day_before_pages) + len(random_old_pages)
@@ -190,16 +188,20 @@ class DiaryDailyAlertAgent(BaseAgent):
 
     # ── 내부 헬퍼 ────────────────────────────────────────
 
-    async def _fetch_pages_in_range(self, start_hours_ago: int, end_hours_ago: int) -> list:
-        """start_hours_ago ~ end_hours_ago 범위의 글 조회"""
-        now_utc = datetime.now(timezone.utc)
-        after = (now_utc - timedelta(hours=end_hours_ago)).isoformat()
-        before = (now_utc - timedelta(hours=start_hours_ago)).isoformat()
+    async def _fetch_pages_for_day(self, now_kst: datetime, days_ago: int) -> list:
+        """KST 자정 기준으로 days_ago일 전의 글 조회 (0=오늘, 1=어제, 2=그제)"""
+        target_date = now_kst.date() - timedelta(days=days_ago)
+        # KST 자정을 UTC로 변환
+        day_start_kst = datetime(target_date.year, target_date.month, target_date.day, tzinfo=KST)
+        day_end_kst = day_start_kst + timedelta(days=1)
+
+        after = day_start_kst.astimezone(timezone.utc).isoformat()
+        before = day_end_kst.astimezone(timezone.utc).isoformat()
 
         filter_dict = {
             "and": [
-                {"timestamp": "created_time", "created_time": {"after": after}},
-                {"timestamp": "created_time", "created_time": {"on_or_before": before}},
+                {"timestamp": "created_time", "created_time": {"on_or_after": after}},
+                {"timestamp": "created_time", "created_time": {"before": before}},
             ]
         }
         try:
@@ -213,10 +215,13 @@ class DiaryDailyAlertAgent(BaseAgent):
             return []
 
     async def _fetch_random_old(self) -> list:
-        """72시간 이전 ~ 2년(24개월) 이내 랜덤 1개"""
-        now_utc = datetime.now(timezone.utc)
-        after = (now_utc - timedelta(days=30 * 24)).isoformat()
-        before = (now_utc - timedelta(hours=72)).isoformat()
+        """3일 전 ~ 2년(24개월) 이내 랜덤 1개"""
+        now_kst = datetime.now(KST)
+        three_days_ago = datetime(now_kst.year, now_kst.month, now_kst.day, tzinfo=KST) - timedelta(days=3)
+        two_years_ago = three_days_ago - timedelta(days=30 * 24)
+
+        after = two_years_ago.astimezone(timezone.utc).isoformat()
+        before = three_days_ago.astimezone(timezone.utc).isoformat()
 
         filter_dict = {
             "and": [
