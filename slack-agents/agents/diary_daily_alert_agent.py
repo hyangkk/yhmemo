@@ -7,12 +7,9 @@
   2. 어제: 24~48시간 전 작성 글
   3. 그제: 48~72시간 전 작성 글
   4. 과거: 최근 2년(24개월) 중 랜덤 1개
-- Claude AI로 각 구간별 요약 + 종합 분석 생성
-- 슬랙 '명언-한마디' 채널에 전송
+- 각 글의 한줄요약(제목) + 원문 링크로 슬랙 '명언-한마디' 채널에 전송
 """
 
-import asyncio
-import json
 import logging
 import random
 from datetime import datetime, timezone, timedelta
@@ -100,59 +97,6 @@ class DiaryDailyAlertAgent(BaseAgent):
     async def think(self, context: dict) -> dict | None:
         sections = context["sections"]
 
-        # 구간별 텍스트 구성
-        section_labels = {
-            "today": "📌 오늘 글 (최근 24시간)",
-            "yesterday": "📎 어제 글 (24~48시간 전)",
-            "day_before": "📂 그제 글 (48~72시간 전)",
-            "random_old": "🎲 과거 글 (2년간 랜덤)",
-        }
-
-        entries_text = ""
-        for key in ["today", "yesterday", "day_before", "random_old"]:
-            entries = sections.get(key, [])
-            label = section_labels[key]
-            entries_text += f"\n\n=== {label} ==="
-            if not entries:
-                entries_text += "\n(해당 구간 글 없음)"
-            else:
-                for i, e in enumerate(entries, 1):
-                    entries_text += f"\n\n[{i}] {e['title']} ({e['created_kst']})\n"
-                    if e["content"]:
-                        entries_text += e["content"][:800]
-
-        system_prompt = """당신은 사용자의 생각일기를 분석하여 따뜻하고 통찰력 있는 요약을 작성하는 전문가입니다.
-사용자가 자신의 생각 흐름을 되돌아보고, 과거의 자신과 비교하며 성장을 느낄 수 있게 도와주세요."""
-
-        user_prompt = f"""다음은 생각일기를 4개 구간으로 나눈 것입니다.
-{entries_text}
-
----
-각 구간별 요약을 작성해주세요. 반드시 아래 JSON 형식으로만 응답하세요.
-
-분석 규칙:
-- 각 구간별 핵심 내용을 1~2문장으로 요약
-- 글이 없는 구간은 빈 문자열로
-- 과거 글(random_old)은 현재 상황과 비교하여 변화/성장 포인트 짚기
-
-{{
-  "today": "오늘 글 핵심 요약",
-  "yesterday": "어제 글 핵심 요약",
-  "day_before": "그제 글 핵심 요약",
-  "random_old": "과거 글 요약 + 현재와의 비교"
-}}"""
-
-        result_text = await self.ai_think(system_prompt, user_prompt)
-
-        try:
-            clean = result_text.strip()
-            if clean.startswith("```"):
-                clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
-            parsed = json.loads(clean.strip())
-        except json.JSONDecodeError:
-            logger.error(f"[diary_daily_alert] JSON 파싱 실패: {result_text[:200]}")
-            return None
-
         entry_counts = {
             "today": len(sections["today"]),
             "yesterday": len(sections["yesterday"]),
@@ -162,7 +106,6 @@ class DiaryDailyAlertAgent(BaseAgent):
 
         return {
             "action": "send_daily_alert",
-            "analysis": parsed,
             "sections": sections,
             "entry_counts": entry_counts,
             "now": context["now"],
@@ -266,27 +209,12 @@ class DiaryDailyAlertAgent(BaseAgent):
             return []
 
     async def _collect_entries(self, pages: list) -> list:
-        """페이지 목록에서 제목 + 본문 수집"""
+        """페이지 목록에서 제목 + 링크 수집"""
         entries = []
         for page in pages:
             title = self._extract_title(page)
-            page_id = page.get("id", "")
-            content = await self.notion.get_page_text(page_id) if page_id else ""
-            created_str = page.get("created_time", "")
-            created_kst = ""
             page_url = page.get("url", "")
-            if created_str:
-                try:
-                    dt = datetime.fromisoformat(created_str.replace("Z", "+00:00")).astimezone(KST)
-                    created_kst = dt.strftime("%m/%d %H:%M")
-                except ValueError:
-                    pass
-            entries.append({
-                "title": title,
-                "content": content,
-                "created_kst": created_kst,
-                "page_url": page_url,
-            })
+            entries.append({"title": title, "page_url": page_url})
         return entries
 
     @staticmethod
@@ -297,8 +225,7 @@ class DiaryDailyAlertAgent(BaseAgent):
         return "(제목 없음)"
 
     def _format_message(self, decision: dict) -> str:
-        """슬랙 메시지 포맷"""
-        analysis = decision["analysis"]
+        """슬랙 메시지 포맷: 한줄요약(제목) + 원문 링크만"""
         entry_counts = decision["entry_counts"]
         sections = decision["sections"]
         now = decision["now"]
@@ -307,33 +234,28 @@ class DiaryDailyAlertAgent(BaseAgent):
         total = sum(entry_counts.values())
 
         lines = [f"*📔 생각일기 분석알림 · {time_str} KST*"]
-        lines.append(f"_매일 밤 10시 · 총 {total}개 항목_\n")
+        lines.append(f"_총 {total}개 항목_\n")
 
-        # 구간별 요약
         section_config = [
-            ("today", "📌 오늘", entry_counts["today"]),
-            ("yesterday", "📎 어제", entry_counts["yesterday"]),
-            ("day_before", "📂 그제", entry_counts["day_before"]),
-            ("random_old", "🎲 과거 랜덤", entry_counts["random_old"]),
+            ("today", "📌 오늘"),
+            ("yesterday", "📎 어제"),
+            ("day_before", "📂 그제"),
+            ("random_old", "🎲 랜덤"),
         ]
 
-        for key, label, count in section_config:
-            summary = analysis.get(key, "")
+        for key, label in section_config:
             section_entries = sections.get(key, [])
+            count = entry_counts[key]
 
-            lines.append(f"*{label} ({count}개)*")
+            lines.append(f"*{label}*")
             if count == 0:
                 lines.append("  (없음)")
             else:
                 for entry in section_entries:
-                    title_line = f"  • {entry['title']}"
-                    if entry.get("created_kst"):
-                        title_line += f" _{entry['created_kst']}_"
                     if entry.get("page_url"):
-                        title_line += f"  <{entry['page_url']}|보기>"
-                    lines.append(title_line)
-            if summary:
-                lines.append(f"  → {summary}")
+                        lines.append(f"  • <{entry['page_url']}|{entry['title']}>")
+                    else:
+                        lines.append(f"  • {entry['title']}")
             lines.append("")
 
         lines.append("`⏰ 매일 밤 10시 자동 발송`")
