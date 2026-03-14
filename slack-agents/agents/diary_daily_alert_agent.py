@@ -275,20 +275,20 @@ class DiaryDailyAlertAgent(BaseAgent):
             section_entries = sections.get(key, [])
             count = entry_counts[key]
 
-            lines.append(f"*{label}*")
+            lines.append(f"*{label} ({count}개)*" if count > 0 else f"*{label}*")
             if count == 0:
                 lines.append("  (없음)")
             else:
-                for entry in section_entries:
+                for idx, entry in enumerate(section_entries, 1):
                     display = entry.get("summary", entry["title"])
                     # 랜덤 구간은 날짜 표시
                     if key == "random_old" and entry.get("created_time"):
                         ct = datetime.fromisoformat(entry["created_time"].replace("Z", "+00:00")).astimezone(KST)
                         display += f" ({ct.strftime('%y.%m.%d')})"
                     if entry.get("page_url"):
-                        lines.append(f"  • {display}  <{entry['page_url']}|원문>")
+                        lines.append(f"  {idx}. {display}  <{entry['page_url']}|원문>")
                     else:
-                        lines.append(f"  • {display}")
+                        lines.append(f"  {idx}. {display}")
             lines.append("")
 
         lines.append("`⏰ 매일 밤 10시 자동 발송`")
