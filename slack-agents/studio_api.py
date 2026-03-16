@@ -1014,8 +1014,13 @@ def start_studio_server(port: int = 8000):
                 from datetime import datetime, timezone, timedelta
                 for sess in sessions.data:
                     sid = sess["id"]
-                    # 이미 처리 중인 result가 있는지 확인
+                    # 이미 처리 중이거나 대기 중인 result가 있는지 확인
                     existing = sb.table("studio_results").select("id,status,created_at,storage_path").eq("session_id", sid).execute()
+                    # pending → processing으로 변경 후 편집 시작
+                    pending = [r for r in (existing.data or []) if r["status"] == "pending"]
+                    for r in pending:
+                        sb.table("studio_results").update({"status": "processing"}).eq("id", r["id"]).execute()
+                        r["status"] = "processing"
                     processing = [r for r in (existing.data or []) if r["status"] == "processing"]
                     if processing:
                         handled = False
