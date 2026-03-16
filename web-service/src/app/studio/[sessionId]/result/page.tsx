@@ -18,6 +18,7 @@ const MODE_LABELS: Record<string, string> = {
   director: 'AI 감독 모드',
   split: '화면 분할',
   pip: 'PIP',
+  prompt: 'AI 프롬프트',
 };
 
 function parseEditStep(result: StudioResult | null): { step: number; total: number; description: string } | null {

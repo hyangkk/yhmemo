@@ -102,6 +102,7 @@ def _update_edit_step(sb, result_id: str, step: int, total: int, description: st
 
 async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str, audio_mode: str = "each"):
     """FFmpeg로 영상 편집"""
+    original_mode = mode  # 업로드 경로용 (prompt 모드 유지)
     sb = _get_supabase()
     work_dir = DATA_DIR / session_id
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +152,31 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
 
         progress_cb = {"on_analyze": on_analyze, "on_segments": on_segments, "on_encode": on_encode}
 
+        # 프롬프트 모드: 자연어 → 편집 옵션 파싱
+        prompt_opts = None
+        if mode == "prompt":
+            # storage_path에서 프롬프트 텍스트 추출
+            result_row = sb.table("studio_results").select("storage_path").eq("id", result_id).single().execute()
+            sp = result_row.data.get("storage_path", "") if result_row.data else ""
+            # 포맷: "mode:prompt:텍스트" 또는 "mode:prompt:텍스트:audio=best"
+            prompt_text = ""
+            if sp.startswith("mode:prompt:"):
+                parts = sp.split(":", 2)
+                if len(parts) >= 3:
+                    prompt_text = parts[2]
+                    # :audio=best 접미사 제거
+                    if prompt_text.endswith(":audio=best"):
+                        prompt_text = prompt_text[:-len(":audio=best")]
+
+            if prompt_text:
+                print(f"[studio] 프롬프트 파싱: '{prompt_text}'", flush=True)
+                prompt_opts = _parse_prompt_with_ai(prompt_text)
+                print(f"[studio] 파싱 결과: {prompt_opts}", flush=True)
+                mode = prompt_opts["base_mode"]
+                audio_mode = prompt_opts.get("audio_mode", audio_mode)
+            else:
+                prompt_opts = {"bgm": False, "interval": 3.0}
+
         if len(local_files) == 1:
             on_analyze(0)
             on_segments()
@@ -171,11 +197,24 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             on_encode()
             _edit_pip(local_files, str(output_path))
         else:
-            _edit_auto_cut(local_files, str(output_path), progress=progress_cb, audio_mode=audio_mode)
+            interval = prompt_opts.get("interval", 3.0) if prompt_opts else 3.0
+            _edit_auto_cut(local_files, str(output_path), interval=interval, progress=progress_cb, audio_mode=audio_mode)
+
+        # BGM 추가 (프롬프트에서 요청된 경우)
+        if prompt_opts and prompt_opts.get("bgm"):
+            bgm_style = prompt_opts.get("bgm_style", "ambient")
+            bgm_volume = prompt_opts.get("bgm_volume", 0.15)
+            print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
+            bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
+            _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
+            # BGM 버전으로 교체
+            output_path.unlink(missing_ok=True)
+            bgm_output.rename(output_path)
+            print(f"[studio] BGM 적용 완료", flush=True)
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
-        result_storage_path = f"{session_id}/result_{result_id}_{mode}.mp4"
+        result_storage_path = f"{session_id}/result_{result_id}_{original_mode}.mp4"
         with open(output_path, "rb") as f:
             sb.storage.from_("studio-clips").upload(
                 result_storage_path, f.read(),
@@ -719,6 +758,213 @@ def _simple_concat(files: list[str], output: str):
     fc = "".join(parts) + "".join(concat_in) + f"concat=n={len(files)}:v=1:a=1[outv][outa]"
     _run_ffmpeg(inp + ["-filter_complex", fc, "-map", "[outv]", "-map", "[outa]"] +
                 ENCODE_VIDEO_OPTS + ENCODE_AUDIO_OPTS + IOS_CONTAINER_OPTS + [output])
+
+
+# ── BGM (배경음악) ─────────────────────────────────────
+
+BGM_CACHE_DIR = DATA_DIR / "bgm_cache"
+BGM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _generate_bgm(duration: float, style: str = "ambient") -> str:
+    """FFmpeg lavfi로 배경음악 생성 (로열티프리)
+
+    style:
+      - ambient: 잔잔한 앰비언트 패드 (기본)
+      - upbeat: 경쾌한 리듬감 있는 BGM
+      - chill: 차분한 로파이 느낌
+    """
+    cache_key = f"bgm_{style}_{int(duration)}.mp3"
+    cached = BGM_CACHE_DIR / cache_key
+    if cached.exists():
+        return str(cached)
+
+    if style == "upbeat":
+        # C-E-G 메이저 코드 + 리듬 패턴 (경쾌)
+        lavfi = (
+            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.12[c];"
+            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.10[e];"
+            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.09[g];"
+            f"sine=frequency=523.25:duration={duration}:sample_rate=48000,volume=0.06[c2];"
+            # 리듬 펄스 (4비트 느낌)
+            f"sine=frequency=130.81:duration={duration}:sample_rate=48000,volume=0.08,"
+            f"aeval='val(0)*abs(sin(2*PI*2*t))'[bass];"
+            f"[c][e]amix=inputs=2[ce];[ce][g]amix=inputs=2[ceg];"
+            f"[ceg][c2]amix=inputs=2[chord];[chord][bass]amix=inputs=2,"
+            f"atempo=1.0,afade=t=in:d=2,afade=t=out:st={max(0,duration-3)}:d=3"
+        )
+    elif style == "chill":
+        # Am7 코드 (차분한 느낌) + 느린 페이드
+        lavfi = (
+            f"sine=frequency=220.00:duration={duration}:sample_rate=48000,volume=0.10[a];"
+            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.08[c];"
+            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.07[e];"
+            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.05[g];"
+            f"[a][c]amix=inputs=2[ac];[ac][e]amix=inputs=2[ace];[ace][g]amix=inputs=2,"
+            f"atempo=1.0,afade=t=in:d=3,afade=t=out:st={max(0,duration-4)}:d=4"
+        )
+    else:
+        # ambient: C 메이저 코드 패드 (잔잔)
+        lavfi = (
+            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.08[c];"
+            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.06[e];"
+            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.05[g];"
+            f"[c][e]amix=inputs=2[ce];[ce][g]amix=inputs=2,"
+            f"afade=t=in:d=2,afade=t=out:st={max(0,duration-3)}:d=3"
+        )
+
+    _run_ffmpeg(["-f", "lavfi", "-i", lavfi, "-c:a", "libmp3lame", "-b:a", "128k", str(cached)])
+    return str(cached)
+
+
+def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
+    """Supabase Storage에서 BGM 찾기, 없으면 생성"""
+    try:
+        sb = _get_supabase()
+        # studio-clips/bgm/ 폴더에서 BGM 파일 검색
+        files = sb.storage.from_("studio-clips").list("bgm")
+        if files:
+            # 스타일에 맞는 파일 찾기
+            for f in files:
+                name = f.get("name", "")
+                if style in name.lower() and (name.endswith(".mp3") or name.endswith(".m4a")):
+                    local_path = BGM_CACHE_DIR / name
+                    if not local_path.exists():
+                        data = sb.storage.from_("studio-clips").download(f"bgm/{name}")
+                        local_path.write_bytes(data)
+                    return str(local_path)
+            # 스타일 무관하게 아무 BGM 파일이라도 사용
+            for f in files:
+                name = f.get("name", "")
+                if name.endswith(".mp3") or name.endswith(".m4a"):
+                    local_path = BGM_CACHE_DIR / name
+                    if not local_path.exists():
+                        data = sb.storage.from_("studio-clips").download(f"bgm/{name}")
+                        local_path.write_bytes(data)
+                    return str(local_path)
+    except Exception as e:
+        print(f"[studio] BGM 스토리지 조회 실패 (생성으로 대체): {e}", flush=True)
+
+    # 스토리지에 없으면 FFmpeg로 생성
+    return _generate_bgm(duration, style)
+
+
+def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.15):
+    """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
+    duration = _get_duration(video_path) or 30.0
+    bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
+
+    # BGM을 영상 길이에 맞추고 볼륨 조절 후 원본 오디오와 믹싱
+    _run_ffmpeg([
+        "-i", video_path,
+        "-i", bgm_path,
+        "-filter_complex",
+        f"[1:a]aloop=loop=-1:size=48000*{int(duration)+1},atrim=0:{duration:.3f},"
+        f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2[bgm];"
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[outa]",
+        "-map", "0:v", "-map", "[outa]",
+        "-c:v", "copy",  # 비디오는 재인코딩 없이 복사
+        "-c:a", "aac", "-b:a", "192k",
+        str(output_path),
+    ])
+
+
+# ── 프롬프트 파싱 (자연어 → 편집 옵션) ───────────────
+
+def _parse_prompt(prompt_text: str) -> dict:
+    """자연어 프롬프트에서 편집 옵션 추출
+
+    Returns:
+        {
+            "base_mode": "auto"|"director"|"split"|"pip",
+            "bgm": True|False,
+            "bgm_style": "ambient"|"upbeat"|"chill",
+            "bgm_volume": 0.15,
+            "interval": 3.0,  # 카메라 전환 주기 (초)
+            "audio_mode": "each"|"best",
+        }
+    """
+    text = prompt_text.lower()
+    opts: dict = {
+        "base_mode": "auto",
+        "bgm": False,
+        "bgm_style": "ambient",
+        "bgm_volume": 0.15,
+        "interval": 3.0,
+        "audio_mode": "each",
+    }
+
+    # 배경음악 감지
+    bgm_keywords = ["배경음악", "bgm", "음악", "배경 음악", "브금", "뮤직", "music"]
+    if any(kw in text for kw in bgm_keywords):
+        opts["bgm"] = True
+        if any(kw in text for kw in ["경쾌", "신나", "밝은", "활기", "upbeat", "energetic"]):
+            opts["bgm_style"] = "upbeat"
+        elif any(kw in text for kw in ["차분", "잔잔", "조용", "로파이", "chill", "calm", "lofi"]):
+            opts["bgm_style"] = "chill"
+
+    # 편집 모드 감지
+    if any(kw in text for kw in ["감독", "메인 카메라", "리액션", "director"]):
+        opts["base_mode"] = "director"
+    elif any(kw in text for kw in ["분할", "split", "나눠", "격자"]):
+        opts["base_mode"] = "split"
+    elif any(kw in text for kw in ["pip", "작은 화면", "화면 속 화면"]):
+        opts["base_mode"] = "pip"
+
+    # 전환 주기 감지
+    import re
+    interval_match = re.search(r'(\d+)\s*초\s*(?:마다|간격|주기|씩)', text)
+    if interval_match:
+        val = int(interval_match.group(1))
+        if 1 <= val <= 30:
+            opts["interval"] = float(val)
+
+    # 오디오 모드 감지
+    if any(kw in text for kw in ["최적 음성", "좋은 마이크", "best", "하나의 음성"]):
+        opts["audio_mode"] = "best"
+
+    return opts
+
+
+def _parse_prompt_with_ai(prompt_text: str) -> dict:
+    """Claude API로 프롬프트 파싱 (키워드 매칭보다 정확)"""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": f"""다음 영상 편집 지시를 JSON으로 파싱해줘. 반드시 JSON만 출력해.
+
+지시: "{prompt_text}"
+
+출력 형식:
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.1~0.3, "interval": 1~30, "audio_mode": "each"|"best"}}
+
+규칙:
+- base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
+- bgm: 배경음악/BGM/음악 언급 시 true
+- bgm_style: 경쾌/신나는=upbeat, 차분/잔잔=chill, 그외=ambient
+- interval: 카메라 전환 주기(초), 기본 3
+- audio_mode: 최적음성/좋은마이크=best, 그외=each"""}],
+        )
+        import json
+        text = response.content[0].text.strip()
+        # JSON 블록 추출
+        if "```" in text:
+            text = text.split("```")[1].replace("json", "").strip()
+        result = json.loads(text)
+        # 유효성 검증
+        result.setdefault("base_mode", "auto")
+        result.setdefault("bgm", False)
+        result.setdefault("bgm_style", "ambient")
+        result.setdefault("bgm_volume", 0.15)
+        result.setdefault("interval", 3.0)
+        result.setdefault("audio_mode", "each")
+        return result
+    except Exception as e:
+        print(f"[studio] AI 프롬프트 파싱 실패, 키워드 매칭으로 대체: {e}", flush=True)
+        return _parse_prompt(prompt_text)
 
 
 def _check_ffmpeg() -> bool:
