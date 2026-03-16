@@ -631,6 +631,104 @@ def save_to_json(products, filepath="naver_promotion_products.json"):
     return filepath
 
 
+def save_to_excel(products, filepath="naver_promotion_products.xlsx"):
+    """크롤링 결과를 엑셀 파일로 저장합니다."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "네이버 쇼핑 프로모션"
+
+    # 헤더 스타일
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    # 헤더 행
+    headers = ["번호", "상품명", "할인가(원)", "정가(원)", "할인률(%)", "이미지 URL"]
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+
+    # 데이터 행
+    price_align = Alignment(horizontal="right", vertical="center")
+    center_align = Alignment(horizontal="center", vertical="center")
+    wrap_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    for i, p in enumerate(products, 1):
+        row = i + 1
+
+        # 번호
+        cell = ws.cell(row=row, column=1, value=i)
+        cell.alignment = center_align
+        cell.border = thin_border
+
+        # 상품명
+        cell = ws.cell(row=row, column=2, value=p["name"])
+        cell.alignment = wrap_align
+        cell.border = thin_border
+
+        # 할인가
+        cell = ws.cell(row=row, column=3, value=p.get("price"))
+        cell.number_format = "#,##0"
+        cell.alignment = price_align
+        cell.border = thin_border
+
+        # 정가
+        cell = ws.cell(row=row, column=4, value=p.get("original_price"))
+        cell.number_format = "#,##0"
+        cell.alignment = price_align
+        cell.border = thin_border
+
+        # 할인률
+        cell = ws.cell(row=row, column=5, value=p.get("discount_rate"))
+        cell.alignment = center_align
+        cell.border = thin_border
+
+        # 이미지 URL
+        cell = ws.cell(row=row, column=6, value=p.get("image_url", ""))
+        cell.border = thin_border
+
+    # 컬럼 너비 설정
+    ws.column_dimensions["A"].width = 6    # 번호
+    ws.column_dimensions["B"].width = 40   # 상품명
+    ws.column_dimensions["C"].width = 15   # 할인가
+    ws.column_dimensions["D"].width = 15   # 정가
+    ws.column_dimensions["E"].width = 10   # 할인률
+    ws.column_dimensions["F"].width = 60   # 이미지 URL
+
+    # 필터 적용
+    ws.auto_filter.ref = f"A1:F{len(products) + 1}"
+
+    # 틀 고정 (헤더 아래)
+    ws.freeze_panes = "A2"
+
+    # 크롤링 정보 시트 추가
+    info_ws = wb.create_sheet("크롤링 정보")
+    info_ws.cell(row=1, column=1, value="크롤링 일시").font = Font(bold=True)
+    info_ws.cell(row=1, column=2, value=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    info_ws.cell(row=2, column=1, value="출처").font = Font(bold=True)
+    info_ws.cell(row=2, column=2, value="https://shopping.naver.com/promotion")
+    info_ws.cell(row=3, column=1, value="총 상품 수").font = Font(bold=True)
+    info_ws.cell(row=3, column=2, value=len(products))
+    info_ws.column_dimensions["A"].width = 15
+    info_ws.column_dimensions["B"].width = 40
+
+    wb.save(filepath)
+    print(f"엑셀 저장 완료: {filepath}")
+    return filepath
+
+
 async def main():
     print("=" * 60)
     print("네이버 쇼핑 프로모션 크롤러")
@@ -647,6 +745,9 @@ async def main():
 
     # JSON 저장
     json_path = save_to_json(products)
+
+    # 엑셀 저장
+    excel_path = save_to_excel(products)
 
     # 상품 요약 출력
     print("\n📋 크롤링 결과 요약:")
