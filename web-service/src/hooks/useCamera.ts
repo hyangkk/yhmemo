@@ -20,6 +20,21 @@ interface UseCameraReturn {
   startRecording: () => void;
   stopRecording: () => Promise<{ blob: Blob; durationMs: number } | null>;
   switchCamera: () => Promise<void>;
+  tapToFocus: (x: number, y: number) => Promise<void>;
+}
+
+// 고급 카메라 제어용 타입 (WebRTC 표준이지만 TS 타입에 미포함)
+interface AdvancedConstraints extends MediaTrackConstraints {
+  focusMode?: string;
+  exposureMode?: string;
+  whiteBalanceMode?: string;
+  pointsOfInterest?: Array<{ x: number; y: number }>;
+}
+
+interface AdvancedCapabilities {
+  focusMode?: string[];
+  exposureMode?: string[];
+  whiteBalanceMode?: string[];
 }
 
 // 모바일 기기 감지
@@ -87,6 +102,31 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
       }
 
       if (!mediaStream) throw new Error('카메라를 시작할 수 없습니다');
+
+      // 연속 자동초점 + 노출 + 화이트밸런스 적용 (아이폰 기본 카메라 수준)
+      const videoTrack = mediaStream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          const capabilities = videoTrack.getCapabilities?.() as AdvancedCapabilities | undefined;
+          const advancedConstraints: AdvancedConstraints = {};
+
+          if (capabilities?.focusMode?.includes('continuous')) {
+            advancedConstraints.focusMode = 'continuous';
+          }
+          if (capabilities?.exposureMode?.includes('continuous')) {
+            advancedConstraints.exposureMode = 'continuous';
+          }
+          if (capabilities?.whiteBalanceMode?.includes('continuous')) {
+            advancedConstraints.whiteBalanceMode = 'continuous';
+          }
+
+          if (Object.keys(advancedConstraints).length > 0) {
+            await videoTrack.applyConstraints({ advanced: [advancedConstraints] } as MediaTrackConstraints);
+          }
+        } catch {
+          // 고급 카메라 제어 미지원 기기 → 무시
+        }
+      }
 
       setStream(mediaStream);
       streamRef.current = mediaStream; // useEffect 대기 없이 즉시 업데이트
@@ -206,6 +246,51 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     });
   }, []);
 
+  // 탭으로 초점 맞추기 (x, y: 0~1 범위, 좌상단 기준)
+  const tapToFocus = useCallback(async (x: number, y: number) => {
+    const currentStream = streamRef.current;
+    if (!currentStream) return;
+
+    const videoTrack = currentStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+      const capabilities = videoTrack.getCapabilities?.() as AdvancedCapabilities | undefined;
+      if (!capabilities?.focusMode?.includes('manual') && !capabilities?.focusMode?.includes('single-shot')) return;
+
+      const focusConstraints: AdvancedConstraints = {
+        pointsOfInterest: [{ x, y }],
+        focusMode: 'single-shot',
+      };
+
+      if (capabilities?.exposureMode?.includes('single-shot')) {
+        focusConstraints.exposureMode = 'single-shot';
+      }
+
+      await videoTrack.applyConstraints({ advanced: [focusConstraints] } as MediaTrackConstraints);
+
+      // 2초 후 연속 자동초점으로 복귀 (아이폰 동작과 동일)
+      setTimeout(async () => {
+        try {
+          const restoreConstraints: AdvancedConstraints = {};
+          if (capabilities?.focusMode?.includes('continuous')) {
+            restoreConstraints.focusMode = 'continuous';
+          }
+          if (capabilities?.exposureMode?.includes('continuous')) {
+            restoreConstraints.exposureMode = 'continuous';
+          }
+          if (Object.keys(restoreConstraints).length > 0) {
+            await videoTrack.applyConstraints({ advanced: [restoreConstraints] } as MediaTrackConstraints);
+          }
+        } catch {
+          // 무시
+        }
+      }, 2000);
+    } catch {
+      // 탭 포커스 미지원 → 무시
+    }
+  }, []);
+
   const switchCamera = useCallback(async () => {
     if (isRecording) return;
 
@@ -244,5 +329,6 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     startRecording,
     stopRecording,
     switchCamera,
+    tapToFocus,
   };
 }

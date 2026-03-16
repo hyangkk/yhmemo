@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useCamera } from '@/hooks/useCamera';
 
 interface CameraViewProps {
@@ -21,7 +21,30 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     startRecording,
     stopRecording,
     switchCamera,
+    tapToFocus,
   } = useCamera();
+
+  // 탭-투-포커스 상태
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleTapToFocus = useCallback((e: React.TouchEvent | React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    // 화면 좌표 → 0~1 정규화 좌표
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+
+    // 포커스 인디케이터 표시 (화면 좌표)
+    setFocusPoint({ x: clientX - rect.left, y: clientY - rect.top });
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => setFocusPoint(null), 1500);
+
+    // 실제 포커스 적용
+    tapToFocus(x, y);
+  }, [tapToFocus]);
 
   // ref로 최신 값 추적 (stale closure 방지)
   const isRecordingRef = useRef(isRecording);
@@ -113,7 +136,11 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
   };
 
   return (
-    <div className="relative w-full h-full bg-black">
+    <div
+      className="relative w-full h-full bg-black"
+      onTouchStart={handleTapToFocus}
+      onClick={handleTapToFocus}
+    >
       {/* 카메라 뷰 */}
       <video
         ref={videoRef}
@@ -122,6 +149,21 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
         muted
         className="w-full h-full object-cover"
       />
+
+      {/* 탭-투-포커스 인디케이터 */}
+      {focusPoint && (
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            left: focusPoint.x - 30,
+            top: focusPoint.y - 30,
+            width: 60,
+            height: 60,
+          }}
+        >
+          <div className="w-full h-full border-2 border-yellow-400 rounded-lg animate-pulse" />
+        </div>
+      )}
 
       {/* 에러 표시 */}
       {error && (
