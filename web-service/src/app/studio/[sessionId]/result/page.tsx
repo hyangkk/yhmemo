@@ -33,6 +33,24 @@ function parseModeFromPath(path: string): string | null {
   return match ? match[1] : null;
 }
 
+// storage_path에서 프롬프트 텍스트 추출 (mode:prompt:텍스트 형태)
+function parsePromptFromResult(result: StudioResult): string | null {
+  // 처리 중일 때는 storage_path에 mode:prompt:텍스트 형태
+  const promptMatch = result.storage_path?.match(/^mode:prompt:(.+?)(?::audio=\w+)?$/);
+  return promptMatch ? promptMatch[1] : null;
+}
+
+// 상대 시간 포맷 (몇 분 전, 몇 시간 전)
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '방금 전';
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
+}
+
 export default function ResultPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
   const router = useRouter();
@@ -263,32 +281,67 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           );
         })()}
 
-        {/* 편집 완료된 결과들 */}
+        {/* 편집 완료된 결과들 (최신순) */}
         {session.status === 'done' && doneResults.length > 0 && (
           <div className="space-y-2">
-            {doneResults.map((result) => {
+            <h2 className="text-sm font-semibold text-gray-400">
+              편집 결과 <span className="text-gray-600 font-normal">{doneResults.length}개</span>
+            </h2>
+            {[...doneResults]
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+              .map((result, idx) => {
               const mode = parseModeFromPath(result.storage_path);
               const modeLabel = mode ? MODE_LABELS[mode] || mode : '편집 결과';
+              const promptText = parsePromptFromResult(result);
+              const isLatest = idx === 0;
               return (
-                <div key={result.id} className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
-                  <span className="text-lg">
-                    {mode === 'director' ? '🎬' : '✅'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">
-                      {modeLabel}
-                      {result.duration_ms && (
-                        <span className="text-gray-400 font-normal ml-2">{formatDuration(result.duration_ms)}</span>
-                      )}
-                    </p>
+                <div
+                  key={result.id}
+                  className={`rounded-xl p-3 space-y-1.5 ${
+                    isLatest
+                      ? 'bg-green-900/40 border-2 border-green-500/50'
+                      : 'bg-gray-900/60 border border-gray-700/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">
+                      {mode === 'director' ? '🎬' : mode === 'prompt' ? '✨' : '✅'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">
+                          {promptText ? 'AI 프롬프트' : modeLabel}
+                        </p>
+                        {isLatest && (
+                          <span className="text-[10px] font-bold bg-green-500 text-black px-1.5 py-0.5 rounded">
+                            최신
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {result.duration_ms && (
+                          <span className="text-xs text-gray-500">{formatDuration(result.duration_ms)}</span>
+                        )}
+                        <span className="text-xs text-gray-600">{formatRelativeTime(result.created_at)}</span>
+                      </div>
+                    </div>
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${result.storage_path}`}
+                      download
+                      className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0 ${
+                        isLatest
+                          ? 'bg-green-600 hover:bg-green-500'
+                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      다운로드
+                    </a>
                   </div>
-                  <a
-                    href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/studio-clips/${result.storage_path}`}
-                    download
-                    className="bg-green-600 hover:bg-green-500 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
-                  >
-                    다운로드
-                  </a>
+                  {promptText && (
+                    <p className="text-xs text-purple-300/80 bg-purple-900/20 rounded-lg px-2.5 py-1.5 truncate">
+                      &ldquo;{promptText}&rdquo;
+                    </p>
+                  )}
                 </div>
               );
             })}
