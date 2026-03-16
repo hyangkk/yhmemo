@@ -108,8 +108,32 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     n_clips = len(clips)
-    # 총 단계: 클립별 다운로드(N) + 클립별 분석(N) + 세그먼트 계산(1) + 인코딩(1) + 업로드(1)
-    total_steps = n_clips + n_clips + 3
+
+    # 프롬프트 모드: storage_path 덮어쓰기 전에 먼저 파싱
+    prompt_opts = None
+    if mode == "prompt":
+        result_row = sb.table("studio_results").select("storage_path").eq("id", result_id).single().execute()
+        sp = result_row.data.get("storage_path", "") if result_row.data else ""
+        prompt_text = ""
+        if sp.startswith("mode:prompt:"):
+            parts = sp.split(":", 2)
+            if len(parts) >= 3:
+                prompt_text = parts[2]
+                if prompt_text.endswith(":audio=best"):
+                    prompt_text = prompt_text[:-len(":audio=best")]
+
+        if prompt_text:
+            print(f"[studio] 프롬프트 파싱: '{prompt_text}'", flush=True)
+            prompt_opts = _parse_prompt_with_ai(prompt_text)
+            print(f"[studio] 파싱 결과: {prompt_opts}", flush=True)
+            mode = prompt_opts["base_mode"]
+            audio_mode = prompt_opts.get("audio_mode", audio_mode)
+        else:
+            prompt_opts = {"bgm": False, "interval": 3.0}
+
+    # 총 단계: 다운로드(N) + 분석(N) + 세그먼트(1) + 인코딩(1) + [BGM(1)] + 업로드(1)
+    has_bgm = prompt_opts and prompt_opts.get("bgm", False)
+    total_steps = n_clips + n_clips + 3 + (1 if has_bgm else 0)
 
     try:
         # 1~N. 클립 개별 다운로드
@@ -152,31 +176,6 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
 
         progress_cb = {"on_analyze": on_analyze, "on_segments": on_segments, "on_encode": on_encode}
 
-        # 프롬프트 모드: 자연어 → 편집 옵션 파싱
-        prompt_opts = None
-        if mode == "prompt":
-            # storage_path에서 프롬프트 텍스트 추출
-            result_row = sb.table("studio_results").select("storage_path").eq("id", result_id).single().execute()
-            sp = result_row.data.get("storage_path", "") if result_row.data else ""
-            # 포맷: "mode:prompt:텍스트" 또는 "mode:prompt:텍스트:audio=best"
-            prompt_text = ""
-            if sp.startswith("mode:prompt:"):
-                parts = sp.split(":", 2)
-                if len(parts) >= 3:
-                    prompt_text = parts[2]
-                    # :audio=best 접미사 제거
-                    if prompt_text.endswith(":audio=best"):
-                        prompt_text = prompt_text[:-len(":audio=best")]
-
-            if prompt_text:
-                print(f"[studio] 프롬프트 파싱: '{prompt_text}'", flush=True)
-                prompt_opts = _parse_prompt_with_ai(prompt_text)
-                print(f"[studio] 파싱 결과: {prompt_opts}", flush=True)
-                mode = prompt_opts["base_mode"]
-                audio_mode = prompt_opts.get("audio_mode", audio_mode)
-            else:
-                prompt_opts = {"bgm": False, "interval": 3.0}
-
         if len(local_files) == 1:
             on_analyze(0)
             on_segments()
@@ -201,7 +200,9 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             _edit_auto_cut(local_files, str(output_path), interval=interval, progress=progress_cb, audio_mode=audio_mode)
 
         # BGM 추가 (프롬프트에서 요청된 경우)
-        if prompt_opts and prompt_opts.get("bgm"):
+        if has_bgm:
+            bgm_step = n_clips * 2 + 3
+            _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
             bgm_style = prompt_opts.get("bgm_style", "ambient")
             bgm_volume = prompt_opts.get("bgm_volume", 0.15)
             print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
@@ -853,18 +854,27 @@ def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambie
     """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
     duration = _get_duration(video_path) or 30.0
     bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
+    print(f"[studio] BGM 파일: {bgm_path} (영상 {duration:.1f}초)", flush=True)
 
-    # BGM을 영상 길이에 맞추고 볼륨 조절 후 원본 오디오와 믹싱
+    # BGM 길이 확인
+    bgm_duration = _get_duration(bgm_path) or 0
+    print(f"[studio] BGM 길이: {bgm_duration:.1f}초", flush=True)
+
+    # BGM이 영상보다 짧으면 반복, 길면 자르기
+    # -stream_loop로 BGM 반복 (aloop보다 안정적)
+    loop_count = max(0, int(duration / bgm_duration) + 1) if bgm_duration > 0 else 0
+
     _run_ffmpeg([
         "-i", video_path,
-        "-i", bgm_path,
+        "-stream_loop", str(loop_count), "-i", bgm_path,
         "-filter_complex",
-        f"[1:a]aloop=loop=-1:size=48000*{int(duration)+1},atrim=0:{duration:.3f},"
+        f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
         f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2[bgm];"
         f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[outa]",
         "-map", "0:v", "-map", "[outa]",
-        "-c:v", "copy",  # 비디오는 재인코딩 없이 복사
+        "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
         str(output_path),
     ])
 
