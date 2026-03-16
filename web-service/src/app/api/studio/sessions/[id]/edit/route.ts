@@ -7,10 +7,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { mode, audio_mode } = await req.json();
+  const { mode, audio_mode, prompt } = await req.json();
 
-  if (!mode || !['auto', 'director', 'split', 'pip'].includes(mode)) {
+  if (!mode || !['auto', 'director', 'split', 'pip', 'prompt'].includes(mode)) {
     return NextResponse.json({ error: '잘못된 편집 모드' }, { status: 400 });
+  }
+
+  if (mode === 'prompt' && !prompt) {
+    return NextResponse.json({ error: '프롬프트를 입력해주세요' }, { status: 400 });
   }
 
   const supabase = getServiceSupabase();
@@ -30,7 +34,9 @@ export async function POST(
     .from('studio_results')
     .insert({
       session_id: id,
-      storage_path: `mode:${mode}${audio_mode === 'best' ? ':audio=best' : ''}`,
+      storage_path: mode === 'prompt'
+        ? `mode:prompt:${prompt}${audio_mode === 'best' ? ':audio=best' : ''}`
+        : `mode:${mode}${audio_mode === 'best' ? ':audio=best' : ''}`,
       status: 'processing',
     })
     .select()
