@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import type { StudioSession, StudioClip, StudioDevice, StudioResult } from '@/lib/studio';
+import PromptChat from '@/components/studio/PromptChat';
 
 interface SessionData {
   session: StudioSession;
@@ -44,6 +45,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [editingStartTime, setEditingStartTime] = useState(() => Date.now());
   const [finalizeCalled, setFinalizeCalled] = useState(false);
   const [audioMode, setAudioMode] = useState<'each' | 'best'>('each');
+  const [addingTestClip, setAddingTestClip] = useState(false);
 
   // 편집 중 경과 시간 타이머
   useEffect(() => {
@@ -328,6 +330,33 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
+        {/* 프롬프트 채팅 (done 상태 + 클립 2개 이상) */}
+        {session.status === 'done' && clips.length >= 2 && (
+          <PromptChat
+            sessionId={sessionId}
+            clipCount={clips.length}
+            disabled={session.status !== 'done'}
+            onEditRequested={() => {
+              setEditingElapsed(0);
+              setEditingStartTime(Date.now());
+              setData(prev => prev ? {
+                ...prev,
+                session: { ...prev.session, status: 'editing' },
+              } : prev);
+              setPollKey(k => k + 1);
+            }}
+          />
+        )}
+
+        {/* 편집 중일 때도 채팅 표시 (비활성 상태) */}
+        {session.status === 'editing' && clips.length >= 2 && (
+          <PromptChat
+            sessionId={sessionId}
+            clipCount={clips.length}
+            disabled={true}
+          />
+        )}
+
         {/* 편집 모드 선택 (done 상태에서만 + 클립이 2개 이상일 때) */}
         {session.status === 'done' && clips.length >= 2 && (
           <div className="space-y-2">
@@ -434,6 +463,38 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 </span>
               </div>
             ))}
+
+            {/* 테스트 영상 추가 버튼 */}
+            <button
+              disabled={addingTestClip || session.status === 'editing'}
+              onClick={async () => {
+                setAddingTestClip(true);
+                try {
+                  const res = await fetch(`/api/studio/sessions/${sessionId}/test-clip`, { method: 'POST' });
+                  if (res.ok) {
+                    setPollKey(k => k + 1);
+                  } else {
+                    const err = await res.json().catch(() => ({ error: '실패' }));
+                    alert(err.error || '테스트 영상 추가 실패');
+                  }
+                } finally {
+                  setAddingTestClip(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-600 hover:border-gray-400 text-gray-400 hover:text-gray-300 text-sm transition disabled:opacity-30"
+            >
+              {addingTestClip ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-gray-400/30 border-t-gray-400 rounded-full animate-spin" />
+                  추가 중...
+                </>
+              ) : (
+                <>
+                  <span>+</span>
+                  테스트 영상 추가
+                </>
+              )}
+            </button>
           </div>
         </div>
 
