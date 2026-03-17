@@ -864,15 +864,19 @@ def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambie
     # -stream_loop로 BGM 반복 (aloop보다 안정적)
     loop_count = max(0, int(duration / bgm_duration) + 1) if bgm_duration > 0 else 0
 
-    # amix의 normalize=0으로 자동 볼륨 감소 방지
-    # 원본 음성은 그대로 유지, BGM만 지정 볼륨으로 믹싱
+    # amerge+pan으로 수동 믹싱 (amix의 자동 normalize 문제 회피)
+    # amerge: 2개 스테레오 → 4채널(origL,origR,bgmL,bgmR)
+    # pan: c0=origL+bgmL, c1=origR+bgmR → 원본 100% + BGM 볼륨 유지
+    fade_out_st = max(0, duration - 2)
     _run_ffmpeg([
         "-i", video_path,
         "-stream_loop", str(loop_count), "-i", bgm_path,
         "-filter_complex",
+        f"[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[orig];"
         f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
-        f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[outa]",
+        f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+        f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={fade_out_st}:d=2[bgm];"
+        f"[orig][bgm]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3[outa]",
         "-map", "0:v", "-map", "[outa]",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
