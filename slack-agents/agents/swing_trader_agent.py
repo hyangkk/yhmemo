@@ -101,6 +101,7 @@ class SwingTraderAgent(BaseAgent):
         self._trade_stats: dict | None = None
         self._recent_lessons: list[str] = []
         self._daily_report_sent = False
+        self._research_insights: str = ""
 
     def _now(self) -> datetime:
         return datetime.now(KST)
@@ -448,6 +449,9 @@ class SwingTraderAgent(BaseAgent):
 ## 최근 매매 교훈 (반드시 참고)
 {lessons_text}
 
+## 투자 리서치 인사이트
+{self._research_insights or "없음"}
+
 ## 매매 규칙
 - 스윙 트레이딩: 매도 후 재매수도 가능 (단, 비용 고려)
 - 매수 수수료 0.015%, 매도 수수료 0.015% + 거래세 0.18%
@@ -787,12 +791,38 @@ class SwingTraderAgent(BaseAgent):
         try:
             self._trade_stats = await self._analyzer.get_stock_stats(days=30)
             self._recent_lessons = await self._analyzer.get_recent_lessons(days=7)
+            self._research_insights = await self._load_research_insights()
             logger.info(
                 f"[swing] 학습 데이터 로드: {len(self._trade_stats)}종목, "
                 f"{len(self._recent_lessons)}개 교훈"
             )
         except Exception as e:
             logger.warning(f"[swing] 학습 데이터 로드 실패: {e}")
+
+    async def _load_research_insights(self) -> str:
+        """투자 리서치 에이전트의 최근 분석 결과 로드"""
+        if not self.supabase:
+            return ""
+        try:
+            resp = self.supabase.table("collected_items").select(
+                "title,summary,created_at"
+            ).eq("source", "invest_research").order(
+                "created_at", desc=True
+            ).limit(3).execute()
+
+            if not resp.data:
+                return ""
+
+            lines = []
+            for item in resp.data:
+                title = item.get("title", "")
+                summary = item.get("summary", "")
+                if summary:
+                    lines.append(f"- [{title}] {summary[:200]}")
+            return "\n".join(lines) if lines else ""
+        except Exception as e:
+            logger.warning(f"[swing] 리서치 인사이트 로드 실패: {e}")
+            return ""
 
     async def _send_daily_journal(self):
         """장 마감 후 AI 매매일지 작성 + 교훈 추출"""

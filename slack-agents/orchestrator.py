@@ -58,6 +58,7 @@ from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
+from agents.invest_research_agent import InvestResearchAgent
 from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
@@ -276,6 +277,7 @@ async def main():
     market_info = MarketInfoAgent(**common_kwargs)
     swing_trader = SwingTraderAgent(ls_client=ls_client, **common_kwargs)
     bulletin = BulletinAgent(**common_kwargs)
+    invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
 
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
@@ -286,7 +288,7 @@ async def main():
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "diary_daily_alert", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
-                        "bulletin"]:
+                        "bulletin", "invest_research"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
@@ -1443,6 +1445,7 @@ async def main():
         quote.stop()
         proactive.stop()
         swing_trader.stop()
+        invest_research.stop()
         # invest.stop()          # 비활성화됨
         # invest_report.stop()   # 비활성화됨
 
@@ -1488,6 +1491,7 @@ async def main():
         "market_info": lambda: asyncio.create_task(market_info.start(), name="market_info"),
         "swing_trader": lambda: asyncio.create_task(swing_trader.start(), name="swing_trader"),
         "bulletin": lambda: asyncio.create_task(bulletin.start(), name="bulletin"),
+        "invest_research": lambda: asyncio.create_task(invest_research.start(), name="invest_research"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
