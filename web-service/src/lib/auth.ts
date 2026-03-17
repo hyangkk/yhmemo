@@ -72,10 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     const sb = getBrowserSupabase();
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
     await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${siteUrl}/auth/callback`,
       },
     });
   }, []);
