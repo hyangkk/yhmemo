@@ -474,16 +474,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   >
                     🎶 신나는
                   </button>
-                  <button
-                    onClick={() => setSelectedBgm('lofi')}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
-                      selectedBgm === 'lofi'
-                        ? 'bg-indigo-900/50 border-indigo-500/60 text-indigo-300'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
-                    }`}
-                  >
-                    🎧 로파이
-                  </button>
                 </div>
               </div>
 
@@ -574,9 +564,8 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 disabled={!!editingMode}
                 onClick={() => {
                   const bgmMap: Record<string, string> = {
-                    calm: '잔잔한 배경음악 넣어줘',
+                    calm: '잔잔한 클래식 배경음악 넣어줘',
                     upbeat: '신나는 배경음악 넣어줘',
-                    lofi: '로파이 배경음악 넣어줘',
                   };
                   const subtitleMap: Record<string, string> = {
                     blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',

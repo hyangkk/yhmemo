@@ -815,18 +815,18 @@ _NOTE_FREQ = {
 # 스타일별 코드 진행 & 설정
 _BGM_PRESETS = {
     "ambient": {
-        # I → V → vi → IV (C → G → Am → F) - 팝 진행
+        # I → IV → V → I (C → F → G → C) - 클래식 정통 진행, 아름답고 잔잔한 느낌
         "chords": [
-            ["C4", "E4", "G4"],       # C
-            ["G3", "B3", "D4"],       # G
-            ["A3", "C4", "E4"],       # Am
-            ["F3", "A3", "C4"],       # F
+            ["C4", "E4", "G4"],       # C (토닉)
+            ["F3", "A3", "C4"],       # F (서브도미넌트)
+            ["G3", "B3", "D4"],       # G (도미넌트)
+            ["C4", "E4", "G4"],       # C (해결)
         ],
-        "bass_notes": ["C3", "G3", "A3", "F3"],
-        "bpm": 70,
-        "arp_pattern": "up",        # 아르페지오 상행
+        "bass_notes": ["C3", "F3", "G3", "C3"],
+        "bpm": 60,
+        "arp_pattern": "up",        # 아르페지오 상행 (클래식 느낌)
         "waveform": "soft_sine",    # 부드러운 사인파
-        "reverb_mix": 0.3,
+        "reverb_mix": 0.35,
     },
     "upbeat": {
         # I → IV → V → vi (C → F → G → Am) - 밝은 진행
@@ -841,20 +841,6 @@ _BGM_PRESETS = {
         "arp_pattern": "up_down",   # 상행-하행 아르페지오
         "waveform": "triangle",     # 트라이앵글파 (밝은 느낌)
         "reverb_mix": 0.15,
-    },
-    "chill": {
-        # ii7 → V7 → Imaj7 → vi7 (Dm7 → G7 → Cmaj7 → Am7) - 재즈/로파이 진행
-        "chords": [
-            ["D4", "F4", "A4", "C5"],  # Dm7
-            ["G3", "B3", "D4", "F4"],  # G7
-            ["C4", "E4", "G4", "B4"],  # Cmaj7
-            ["A3", "C4", "E4", "G4"],  # Am7
-        ],
-        "bass_notes": ["D3", "G3", "C3", "A3"],
-        "bpm": 80,
-        "arp_pattern": "broken",    # 브로큰 코드 (랜덤 순서)
-        "waveform": "warm_sine",    # 따뜻한 사인파 (약간 디튠)
-        "reverb_mix": 0.35,
     },
 }
 
@@ -893,7 +879,7 @@ def _generate_bgm(duration: float, style: str = "ambient") -> str:
     코드 진행, 아르페지오, 베이스라인, ADSR 엔벨로프 포함.
     WAV 생성 후 FFmpeg로 MP3 변환.
 
-    style: ambient (잔잔), upbeat (경쾌), chill (로파이/재즈)
+    style: ambient (잔잔/클래식), upbeat (경쾌/신나는)
     """
     cache_key = f"bgm_v2_{style}_{int(duration)}.mp3"
     cached = BGM_CACHE_DIR / cache_key
@@ -1065,9 +1051,8 @@ def _download_pixabay_bgm(duration: float, style: str = "ambient") -> str | None
 
     # 스타일별 검색어 매핑
     search_map = {
-        "ambient": "ambient background calm",
+        "ambient": "classical beautiful calm piano",
         "upbeat": "upbeat happy energetic",
-        "chill": "lofi chill relaxing",
     }
     query = search_map.get(style, "background music")
 
@@ -1241,7 +1226,7 @@ def _parse_prompt(prompt_text: str) -> dict:
         {
             "base_mode": "auto"|"director"|"split"|"pip",
             "bgm": True|False,
-            "bgm_style": "ambient"|"upbeat"|"chill",
+            "bgm_style": "ambient"|"upbeat",
             "bgm_volume": 0.5,
             "interval": 3.0,  # 카메라 전환 주기 (초)
             "audio_mode": "each"|"best",
@@ -1265,8 +1250,9 @@ def _parse_prompt(prompt_text: str) -> dict:
         opts["bgm"] = True
         if any(kw in text for kw in ["경쾌", "신나", "밝은", "활기", "upbeat", "energetic"]):
             opts["bgm_style"] = "upbeat"
-        elif any(kw in text for kw in ["차분", "잔잔", "조용", "로파이", "chill", "calm", "lofi"]):
-            opts["bgm_style"] = "chill"
+        elif any(kw in text for kw in ["차분", "잔잔", "조용", "클래식", "고전", "아름다운", "calm", "classical",
+                                        "로파이", "chill", "lofi"]):
+            opts["bgm_style"] = "ambient"
 
     # 편집 모드 감지
     if any(kw in text for kw in ["감독", "메인 카메라", "리액션", "director"]):
@@ -1312,12 +1298,12 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
 - bgm: 배경음악/BGM/음악 언급 시 true
-- bgm_style: 경쾌/신나는=upbeat, 차분/잔잔=chill, 그외=ambient
+- bgm_style: 경쾌/신나는=upbeat, 차분/잔잔/클래식/로파이/chill=ambient (2가지만 지원)
 - interval: 카메라 전환 주기(초), 기본 3
 - audio_mode: 최적음성/좋은마이크=best, 그외=each
 - subtitle: 자막/자동자막/caption/subtitle 언급 시. 검은배경/검은 배경/박스=blackBg, 테두리/외곽선/outline=outline, 그외 자막 언급=blackBg"""}],
@@ -1332,6 +1318,9 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
         result.setdefault("base_mode", "auto")
         result.setdefault("bgm", False)
         result.setdefault("bgm_style", "ambient")
+        # chill은 삭제됨 → ambient로 교정
+        if result.get("bgm_style") not in ("ambient", "upbeat"):
+            result["bgm_style"] = "ambient"
         result.setdefault("bgm_volume", 0.5)
         result.setdefault("interval", 3.0)
         result.setdefault("audio_mode", "each")
@@ -1350,6 +1339,17 @@ def _transcribe_audio_groq(audio_path: str) -> list[dict]:
     Returns: [{"start": 0.0, "end": 1.5, "text": "안녕하세요"}, ...]
     """
     api_key = os.environ.get("GROQ_API_KEY", "")
+    if not api_key:
+        # Supabase secrets_vault에서 런타임 로드 시도
+        try:
+            sb = _get_supabase()
+            row = sb.table("secrets_vault").select("value").eq("key", "GROQ_API_KEY").single().execute()
+            if row.data:
+                api_key = row.data["value"]
+                os.environ["GROQ_API_KEY"] = api_key
+                print("[studio] GROQ_API_KEY를 secrets_vault에서 로드 완료", flush=True)
+        except Exception as e:
+            print(f"[studio] secrets_vault에서 GROQ_API_KEY 로드 실패: {e}", flush=True)
     if not api_key:
         print("[studio] GROQ_API_KEY 없음, 자막 건너뜀", flush=True)
         return []
