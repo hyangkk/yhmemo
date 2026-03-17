@@ -32,6 +32,9 @@ export default function Home() {
         </div>
       </header>
 
+      {/* 최근 촬영 */}
+      <RecentSessions />
+
       {/* Strategy Rooms Grid */}
       <section className="max-w-5xl mx-auto px-4 pb-20">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -40,9 +43,6 @@ export default function Home() {
           ))}
         </div>
       </section>
-
-      {/* 최근 촬영 */}
-      <RecentSessions />
 
       {/* Footer */}
       <footer className="max-w-5xl mx-auto px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-500">
