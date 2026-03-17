@@ -772,69 +772,335 @@ def _simple_concat(files: list[str], output: str):
 
 # ── BGM (배경음악) ─────────────────────────────────────
 
+import math
+import struct
+import wave
+import random
+
 BGM_CACHE_DIR = DATA_DIR / "bgm_cache"
 BGM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# 음계 주파수 (Hz) - C3~C6
+_NOTE_FREQ = {
+    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61,
+    "G3": 196.00, "A3": 220.00, "B3": 246.94,
+    "C4": 261.63, "D4": 293.66, "E4": 329.63, "F4": 349.23,
+    "G4": 392.00, "A4": 440.00, "B4": 493.88,
+    "C5": 523.25, "D5": 587.33, "E5": 659.25, "F5": 698.46,
+    "G5": 783.99, "A5": 880.00, "B5": 987.77,
+    "C6": 1046.50,
+}
+
+# 스타일별 코드 진행 & 설정
+_BGM_PRESETS = {
+    "ambient": {
+        # I → V → vi → IV (C → G → Am → F) - 팝 진행
+        "chords": [
+            ["C4", "E4", "G4"],       # C
+            ["G3", "B3", "D4"],       # G
+            ["A3", "C4", "E4"],       # Am
+            ["F3", "A3", "C4"],       # F
+        ],
+        "bass_notes": ["C3", "G3", "A3", "F3"],
+        "bpm": 70,
+        "arp_pattern": "up",        # 아르페지오 상행
+        "waveform": "soft_sine",    # 부드러운 사인파
+        "reverb_mix": 0.3,
+    },
+    "upbeat": {
+        # I → IV → V → vi (C → F → G → Am) - 밝은 진행
+        "chords": [
+            ["C4", "E4", "G4"],       # C
+            ["F4", "A4", "C5"],       # F
+            ["G4", "B4", "D5"],       # G
+            ["A4", "C5", "E5"],       # Am
+        ],
+        "bass_notes": ["C3", "F3", "G3", "A3"],
+        "bpm": 120,
+        "arp_pattern": "up_down",   # 상행-하행 아르페지오
+        "waveform": "triangle",     # 트라이앵글파 (밝은 느낌)
+        "reverb_mix": 0.15,
+    },
+    "chill": {
+        # ii7 → V7 → Imaj7 → vi7 (Dm7 → G7 → Cmaj7 → Am7) - 재즈/로파이 진행
+        "chords": [
+            ["D4", "F4", "A4", "C5"],  # Dm7
+            ["G3", "B3", "D4", "F4"],  # G7
+            ["C4", "E4", "G4", "B4"],  # Cmaj7
+            ["A3", "C4", "E4", "G4"],  # Am7
+        ],
+        "bass_notes": ["D3", "G3", "C3", "A3"],
+        "bpm": 80,
+        "arp_pattern": "broken",    # 브로큰 코드 (랜덤 순서)
+        "waveform": "warm_sine",    # 따뜻한 사인파 (약간 디튠)
+        "reverb_mix": 0.35,
+    },
+}
+
+
+def _adsr_envelope(t: float, note_dur: float,
+                   attack: float = 0.05, decay: float = 0.1,
+                   sustain_level: float = 0.7, release: float = 0.1) -> float:
+    """ADSR 엔벨로프: 어택-디케이-서스테인-릴리즈"""
+    if t < attack:
+        return t / attack
+    elif t < attack + decay:
+        return 1.0 - (1.0 - sustain_level) * ((t - attack) / decay)
+    elif t < note_dur - release:
+        return sustain_level
+    elif t < note_dur:
+        return sustain_level * (1.0 - (t - (note_dur - release)) / release)
+    return 0.0
+
+
+def _oscillator(phase: float, waveform: str = "soft_sine") -> float:
+    """다양한 파형 생성"""
+    if waveform == "triangle":
+        # 트라이앵글파 (부드럽지만 밝은 느낌)
+        return 2.0 * abs(2.0 * (phase / (2 * math.pi) % 1.0) - 1.0) - 1.0
+    elif waveform == "warm_sine":
+        # 디튠된 사인파 2개 합성 (따뜻한 느낌)
+        return 0.7 * math.sin(phase) + 0.3 * math.sin(phase * 1.003)
+    else:
+        # soft_sine: 기본 사인파 + 약한 2배음
+        return 0.85 * math.sin(phase) + 0.15 * math.sin(phase * 2)
+
 
 def _generate_bgm(duration: float, style: str = "ambient") -> str:
-    """FFmpeg lavfi로 배경음악 생성 (로열티프리)
+    """Python wave 모듈로 실제 음악적 BGM 생성
 
-    style:
-      - ambient: 잔잔한 앰비언트 패드 (기본)
-      - upbeat: 경쾌한 리듬감 있는 BGM
-      - chill: 차분한 로파이 느낌
+    코드 진행, 아르페지오, 베이스라인, ADSR 엔벨로프 포함.
+    WAV 생성 후 FFmpeg로 MP3 변환.
+
+    style: ambient (잔잔), upbeat (경쾌), chill (로파이/재즈)
     """
-    cache_key = f"bgm_{style}_{int(duration)}.mp3"
+    cache_key = f"bgm_v2_{style}_{int(duration)}.mp3"
     cached = BGM_CACHE_DIR / cache_key
     if cached.exists():
         return str(cached)
 
-    if style == "upbeat":
-        # C-E-G 메이저 코드 + 리듬 패턴 (경쾌)
-        lavfi = (
-            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.12[c];"
-            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.10[e];"
-            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.09[g];"
-            f"sine=frequency=523.25:duration={duration}:sample_rate=48000,volume=0.06[c2];"
-            # 리듬 펄스 (4비트 느낌)
-            f"sine=frequency=130.81:duration={duration}:sample_rate=48000,volume=0.08,"
-            f"aeval='val(0)*abs(sin(2*PI*2*t))'[bass];"
-            f"[c][e]amix=inputs=2[ce];[ce][g]amix=inputs=2[ceg];"
-            f"[ceg][c2]amix=inputs=2[chord];[chord][bass]amix=inputs=2,"
-            f"atempo=1.0,afade=t=in:d=2,afade=t=out:st={max(0,duration-3)}:d=3"
-        )
-    elif style == "chill":
-        # Am7 코드 (차분한 느낌) + 느린 페이드
-        lavfi = (
-            f"sine=frequency=220.00:duration={duration}:sample_rate=48000,volume=0.10[a];"
-            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.08[c];"
-            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.07[e];"
-            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.05[g];"
-            f"[a][c]amix=inputs=2[ac];[ac][e]amix=inputs=2[ace];[ace][g]amix=inputs=2,"
-            f"atempo=1.0,afade=t=in:d=3,afade=t=out:st={max(0,duration-4)}:d=4"
-        )
-    else:
-        # ambient: C 메이저 코드 패드 (잔잔)
-        lavfi = (
-            f"sine=frequency=261.63:duration={duration}:sample_rate=48000,volume=0.08[c];"
-            f"sine=frequency=329.63:duration={duration}:sample_rate=48000,volume=0.06[e];"
-            f"sine=frequency=392.00:duration={duration}:sample_rate=48000,volume=0.05[g];"
-            f"[c][e]amix=inputs=2[ce];[ce][g]amix=inputs=2,"
-            f"afade=t=in:d=2,afade=t=out:st={max(0,duration-3)}:d=3"
-        )
+    preset = _BGM_PRESETS.get(style, _BGM_PRESETS["ambient"])
+    sample_rate = 48000
+    total_samples = int(duration * sample_rate)
+    samples = [0.0] * total_samples
 
-    _run_ffmpeg(["-f", "lavfi", "-i", lavfi, "-c:a", "libmp3lame", "-b:a", "128k", str(cached)])
+    chords = preset["chords"]
+    bass_notes = preset["bass_notes"]
+    bpm = preset["bpm"]
+    waveform = preset["waveform"]
+    arp_pattern = preset["arp_pattern"]
+    reverb_mix = preset["reverb_mix"]
+
+    beat_dur = 60.0 / bpm  # 1비트 길이 (초)
+    bar_dur = beat_dur * 4  # 1마디 = 4비트
+    num_chords = len(chords)
+
+    # 시드 고정 (같은 스타일이면 같은 음악)
+    rng = random.Random(42 + hash(style))
+
+    # ── 1. 패드 (코드 전체음) ──
+    pad_volume = 0.06
+    for si in range(total_samples):
+        t = si / sample_rate
+        bar_index = int(t / bar_dur) % num_chords
+        chord = chords[bar_index]
+        t_in_bar = t % bar_dur
+
+        env = _adsr_envelope(t_in_bar, bar_dur, attack=0.3, decay=0.2,
+                             sustain_level=0.6, release=0.3)
+        val = 0.0
+        for note_name in chord:
+            freq = _NOTE_FREQ[note_name]
+            phase = 2 * math.pi * freq * t
+            val += _oscillator(phase, waveform)
+        samples[si] += val / len(chord) * pad_volume * env
+
+    # ── 2. 아르페지오 ──
+    arp_volume = 0.09
+    notes_per_beat = 2 if style == "upbeat" else 1
+    arp_note_dur = beat_dur / notes_per_beat
+
+    for si in range(total_samples):
+        t = si / sample_rate
+        bar_index = int(t / bar_dur) % num_chords
+        chord = chords[bar_index]
+        t_in_bar = t % bar_dur
+
+        # 아르페지오 순서 결정
+        if arp_pattern == "up":
+            note_seq = list(chord)
+        elif arp_pattern == "up_down":
+            note_seq = list(chord) + list(reversed(chord[1:-1])) if len(chord) > 2 else list(chord) * 2
+        else:  # broken
+            note_seq = list(chord)
+            rng_bar = random.Random(42 + bar_index)
+            rng_bar.shuffle(note_seq)
+
+        # 아르페지오 노트별로 추가 (비트 단위)
+        total_arp_notes = int(4 * notes_per_beat)
+        arp_idx = int(t_in_bar / arp_note_dur) % total_arp_notes
+        note_in_seq = arp_idx % len(note_seq)
+        t_in_note = t_in_bar - arp_idx * arp_note_dur
+
+        if 0 <= t_in_note < arp_note_dur:
+            env = _adsr_envelope(t_in_note, arp_note_dur,
+                                 attack=0.02, decay=0.05,
+                                 sustain_level=0.4, release=0.05)
+            freq = _NOTE_FREQ[note_seq[note_in_seq]]
+            # 아르페지오는 1옥타브 위
+            freq *= 2.0
+            phase = 2 * math.pi * freq * t
+            samples[si] += _oscillator(phase, waveform) * arp_volume * env
+
+    # ── 3. 베이스라인 ──
+    bass_volume = 0.10
+    for si in range(total_samples):
+        t = si / sample_rate
+        bar_index = int(t / bar_dur) % num_chords
+        bass_note = bass_notes[bar_index]
+        bass_freq = _NOTE_FREQ[bass_note]
+        t_in_bar = t % bar_dur
+
+        # 베이스: 마디 시작에 강, 반박에 약하게
+        if style == "upbeat":
+            # 8비트 베이스 (각 비트마다)
+            beat_idx = int(t_in_bar / beat_dur)
+            t_in_beat = t_in_bar - beat_idx * beat_dur
+            env = _adsr_envelope(t_in_beat, beat_dur,
+                                 attack=0.01, decay=0.15,
+                                 sustain_level=0.3, release=0.05)
+            # 루트 - 5도 패턴
+            if beat_idx % 2 == 1:
+                bass_freq *= 1.5  # 5도 위
+        else:
+            # 긴 베이스 노트 (마디 전체)
+            env = _adsr_envelope(t_in_bar, bar_dur,
+                                 attack=0.05, decay=0.3,
+                                 sustain_level=0.5, release=0.2)
+
+        phase = 2 * math.pi * bass_freq * t
+        # 베이스는 사인파 (깨끗한 저음)
+        samples[si] += math.sin(phase) * bass_volume * env
+
+    # ── 4. 리버브 효과 (딜레이 믹스) ──
+    if reverb_mix > 0:
+        delay_samples_1 = int(0.08 * sample_rate)  # 80ms
+        delay_samples_2 = int(0.15 * sample_rate)  # 150ms
+        reverb = [0.0] * total_samples
+        for si in range(total_samples):
+            val = samples[si]
+            if si >= delay_samples_1:
+                val += samples[si - delay_samples_1] * 0.4
+            if si >= delay_samples_2:
+                val += samples[si - delay_samples_2] * 0.2
+            reverb[si] = val
+        for si in range(total_samples):
+            samples[si] = samples[si] * (1 - reverb_mix) + reverb[si] * reverb_mix
+
+    # ── 5. 페이드 인/아웃 ──
+    fade_in_dur = 2.0
+    fade_out_dur = 3.0
+    fade_in_samples = int(fade_in_dur * sample_rate)
+    fade_out_samples = int(fade_out_dur * sample_rate)
+    for si in range(min(fade_in_samples, total_samples)):
+        samples[si] *= si / fade_in_samples
+    for si in range(min(fade_out_samples, total_samples)):
+        idx = total_samples - 1 - si
+        if idx >= 0:
+            samples[idx] *= si / fade_out_samples
+
+    # ── 6. 노멀라이즈 ──
+    peak = max(abs(s) for s in samples) if samples else 1.0
+    if peak > 0:
+        normalize_factor = 0.9 / peak
+        samples = [s * normalize_factor for s in samples]
+
+    # ── 7. WAV 저장 → MP3 변환 ──
+    wav_path = BGM_CACHE_DIR / f"bgm_v2_{style}_{int(duration)}.wav"
+    with wave.open(str(wav_path), "w") as wf:
+        wf.setnchannels(2)  # 스테레오
+        wf.setsampwidth(2)  # 16bit
+        wf.setframerate(sample_rate)
+        for s in samples:
+            val = max(-1.0, min(1.0, s))
+            packed = struct.pack("<h", int(val * 32767))
+            wf.writeframes(packed * 2)  # L+R 동일
+
+    _run_ffmpeg(["-i", str(wav_path), "-c:a", "libmp3lame", "-b:a", "192k", str(cached)])
+    wav_path.unlink(missing_ok=True)
+
+    print(f"[studio] BGM 생성 완료: style={style}, duration={duration:.1f}s", flush=True)
     return str(cached)
 
 
+def _download_pixabay_bgm(duration: float, style: str = "ambient") -> str | None:
+    """Pixabay API에서 무료 로열티프리 음악 다운로드
+
+    PIXABAY_API_KEY 환경변수 필요. 없으면 None 반환.
+    """
+    api_key = os.environ.get("PIXABAY_API_KEY")
+    if not api_key:
+        return None
+
+    # 스타일별 검색어 매핑
+    search_map = {
+        "ambient": "ambient background calm",
+        "upbeat": "upbeat happy energetic",
+        "chill": "lofi chill relaxing",
+    }
+    query = search_map.get(style, "background music")
+
+    cache_key = f"pixabay_{style}.mp3"
+    cached = BGM_CACHE_DIR / cache_key
+    if cached.exists():
+        return str(cached)
+
+    try:
+        import urllib.request
+        import urllib.parse
+        import json
+
+        url = (
+            f"https://pixabay.com/api/videos/music/"
+            f"?key={api_key}&q={urllib.parse.quote(query)}"
+            f"&per_page=5&order=popular"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "StudioBot/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+
+        hits = data.get("hits", [])
+        if not hits:
+            print(f"[studio] Pixabay 검색 결과 없음: {query}", flush=True)
+            return None
+
+        # 첫 번째 결과 다운로드
+        audio_url = hits[0].get("audio", {}).get("url") or hits[0].get("url")
+        if not audio_url:
+            return None
+
+        print(f"[studio] Pixabay BGM 다운로드: {audio_url[:80]}...", flush=True)
+        urllib.request.urlretrieve(audio_url, str(cached))
+
+        if cached.exists() and cached.stat().st_size > 1000:
+            print(f"[studio] Pixabay BGM 다운로드 완료: {cached.stat().st_size} bytes", flush=True)
+            return str(cached)
+
+        cached.unlink(missing_ok=True)
+        return None
+    except Exception as e:
+        print(f"[studio] Pixabay BGM 다운로드 실패: {e}", flush=True)
+        cached.unlink(missing_ok=True)
+        return None
+
+
 def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
-    """Supabase Storage에서 BGM 찾기, 없으면 생성"""
+    """BGM 조달 우선순위: Supabase Storage → Pixabay API → Python 생성"""
+    # 1순위: Supabase Storage (사용자 업로드 BGM)
     try:
         sb = _get_supabase()
-        # studio-clips/bgm/ 폴더에서 BGM 파일 검색
         files = sb.storage.from_("studio-clips").list("bgm")
         if files:
-            # 스타일에 맞는 파일 찾기
             for f in files:
                 name = f.get("name", "")
                 if style in name.lower() and (name.endswith(".mp3") or name.endswith(".m4a")):
@@ -843,7 +1109,6 @@ def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
                         data = sb.storage.from_("studio-clips").download(f"bgm/{name}")
                         local_path.write_bytes(data)
                     return str(local_path)
-            # 스타일 무관하게 아무 BGM 파일이라도 사용
             for f in files:
                 name = f.get("name", "")
                 if name.endswith(".mp3") or name.endswith(".m4a"):
@@ -853,9 +1118,14 @@ def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
                         local_path.write_bytes(data)
                     return str(local_path)
     except Exception as e:
-        print(f"[studio] BGM 스토리지 조회 실패 (생성으로 대체): {e}", flush=True)
+        print(f"[studio] BGM 스토리지 조회 실패: {e}", flush=True)
 
-    # 스토리지에 없으면 FFmpeg로 생성
+    # 2순위: Pixabay API (무료 로열티프리 음악)
+    pixabay_path = _download_pixabay_bgm(duration, style)
+    if pixabay_path:
+        return pixabay_path
+
+    # 3순위: Python으로 직접 음악 생성
     return _generate_bgm(duration, style)
 
 
