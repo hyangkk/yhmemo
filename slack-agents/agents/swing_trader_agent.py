@@ -96,6 +96,11 @@ class SwingTraderAgent(BaseAgent):
         self._trade_log: list[dict] = []
         self._http = httpx.AsyncClient(timeout=15.0)
         self._enabled = os.environ.get("SWING_TRADER_ENABLED", "false").lower() == "true"
+        # 학습 사이클
+        self._analyzer = None  # lazy init
+        self._trade_stats: dict | None = None
+        self._recent_lessons: list[str] = []
+        self._daily_report_sent = False
 
     def _now(self) -> datetime:
         return datetime.now(KST)
@@ -138,6 +143,9 @@ class SwingTraderAgent(BaseAgent):
             self._last_date = today
             self._daily_trade_count = 0
             self._last_report_hour = -1
+            self._daily_report_sent = False
+            # 학습 데이터 로드 (하루 1회)
+            await self._load_learning_data()
 
         self._cycle += 1
         self.loop_interval = self._adaptive_interval()
@@ -148,6 +156,8 @@ class SwingTraderAgent(BaseAgent):
             "is_market": self._is_market_hours(),
             "is_pre_market": self._is_pre_market(),
             "days_to_target": self._days_to_target(),
+            "trade_stats": self._trade_stats,
+            "recent_lessons": self._recent_lessons,
         }
 
         # 1) 뉴스/공시 수집 (항상)
@@ -280,6 +290,16 @@ class SwingTraderAgent(BaseAgent):
         is_market = ctx.get("is_market", False)
         is_pre = ctx.get("is_pre_market", False)
 
+        # 장 마감 직후 매매일지 작성 (15:30~16:00 사이 1회)
+        now = self._now()
+        if (not is_market and not is_pre
+                and not self._daily_report_sent
+                and self._trade_log
+                and now.weekday() < 5
+                and 15 <= now.hour <= 16):
+            self._daily_report_sent = True
+            return {"type": "daily_journal"}
+
         # 장중(09:00~15:30)에만 매매 판단
         if is_market:
             return await self._think_market(ctx)
@@ -399,6 +419,15 @@ class SwingTraderAgent(BaseAgent):
         if self._overnight_plan:
             plan_text = f"\n## 야간 분석 결과\n{self._overnight_plan.get('summary', '없음')}"
 
+        # 과거 성과 + 교훈
+        history_text = "데이터 없음"
+        if self._analyzer and ctx.get("trade_stats"):
+            history_text = self._analyzer.format_stats_for_prompt(ctx["trade_stats"])
+
+        lessons_text = "없음"
+        if ctx.get("recent_lessons"):
+            lessons_text = "\n".join(f"- {l}" for l in ctx["recent_lessons"][:5])
+
         prompt = f"""당신은 한국 주식 스윙 트레이딩 AI입니다.
 목표: {self.config['target_date']}(금) 장 마감 시 평가액 극대화 (D-{days_left})
 
@@ -412,6 +441,12 @@ class SwingTraderAgent(BaseAgent):
 ## 최근 뉴스/공시
 {chr(10).join(news_lines) if news_lines else '  최근 뉴스 없음'}
 {plan_text}
+
+## 과거 매매 성과 (최근 30일)
+{history_text}
+
+## 최근 매매 교훈 (반드시 참고)
+{lessons_text}
 
 ## 매매 규칙
 - 스윙 트레이딩: 매도 후 재매수도 가능 (단, 비용 고려)
@@ -508,6 +543,8 @@ class SwingTraderAgent(BaseAgent):
             await self._execute_pre_market(decision.get("plan", {}))
         elif dtype == "overnight_analysis":
             await self._analyze_overnight(decision)
+        elif dtype == "daily_journal":
+            await self._send_daily_journal()
 
     async def _execute_trades(self, actions: list[dict]):
         """매매 주문 실행 (장중에만)"""
@@ -549,9 +586,9 @@ class SwingTraderAgent(BaseAgent):
                     "order_no": order_no, "reason": reason,
                 })
 
-                # Supabase 기록
+                # Supabase 기록 (학습용 필드 포함)
                 try:
-                    self.supabase.table("auto_trade_log").insert({
+                    record = {
                         "trade_time": self._now().isoformat(),
                         "action": action_str,
                         "stock_code": code,
@@ -560,7 +597,17 @@ class SwingTraderAgent(BaseAgent):
                         "success": success,
                         "order_no": order_no,
                         "reason": f"[스윙] {reason}",
-                    }).execute()
+                    }
+                    # 매도 시 수익률 기록
+                    if action_str == "매도" and code in self._holdings:
+                        h = self._holdings[code]
+                        record["pnl_pct"] = h.get("수익률", 0)
+                        record["price"] = h.get("현재가", 0)
+                    elif action_str == "매수":
+                        price_data = self._last_prices.get(code, {})
+                        record["price"] = price_data.get("현재가", 0)
+                    record["agent_name"] = "swing_trader"
+                    self.supabase.table("auto_trade_log").insert(record).execute()
                 except Exception as e:
                     logger.warning(f"[swing] DB 기록 실패: {e}")
 
@@ -725,6 +772,134 @@ class SwingTraderAgent(BaseAgent):
             logger.warning("[swing] 야간 분석 JSON 파싱 실패")
         except Exception as e:
             logger.error(f"[swing] 야간 분석 오류: {e}")
+
+    # ── 학습 사이클 ──────────────────────────────────────
+
+    async def _load_learning_data(self):
+        """하루 최초 가동 시 과거 성과 + 교훈 로드"""
+        if not self._analyzer and self.supabase:
+            from agents.trade_history_analyzer import TradeHistoryAnalyzer
+            self._analyzer = TradeHistoryAnalyzer(self.supabase)
+
+        if not self._analyzer:
+            return
+
+        try:
+            self._trade_stats = await self._analyzer.get_stock_stats(days=30)
+            self._recent_lessons = await self._analyzer.get_recent_lessons(days=7)
+            logger.info(
+                f"[swing] 학습 데이터 로드: {len(self._trade_stats)}종목, "
+                f"{len(self._recent_lessons)}개 교훈"
+            )
+        except Exception as e:
+            logger.warning(f"[swing] 학습 데이터 로드 실패: {e}")
+
+    async def _send_daily_journal(self):
+        """장 마감 후 AI 매매일지 작성 + 교훈 추출"""
+        if not self._trade_log:
+            return
+
+        if not self._analyzer and self.supabase:
+            from agents.trade_history_analyzer import TradeHistoryAnalyzer
+            self._analyzer = TradeHistoryAnalyzer(self.supabase)
+
+        today = self._now().strftime("%Y-%m-%d")
+
+        # 1) 기본 보고서
+        total = len(self._trade_log)
+        buys = [t for t in self._trade_log if t["action"] == "매수"]
+        sells = [t for t in self._trade_log if t["action"] == "매도"]
+
+        win_count = sum(1 for t in sells if "익절" in t.get("reason", "").lower() and t["success"])
+        loss_count = sum(1 for t in sells if "손절" in t.get("reason", "").lower() and t["success"])
+
+        # 잔고 조회
+        balance = {}
+        if self.ls and self.ls.is_configured:
+            balance = await self.ls.get_balance()
+        summary = balance.get("summary", {})
+        total_asset = summary.get("추정순자산", 0)
+        pnl = summary.get("추정손익", 0)
+
+        report = (
+            f"📊 *[스윙트레이딩] {today} 매매일지*\n"
+            f"총 거래: {total}건 (매수 {len(buys)}, 매도 {len(sells)})\n"
+            f"추정순자산: {total_asset:,}원 | 추정손익: {pnl:,}원\n\n"
+        )
+        for t in self._trade_log[-20:]:
+            s = "✅" if t["success"] else "❌"
+            report += f"{s} {t['time'][11:19]} {t['action']} {t['name']} {t['qty']}주 - {t['reason']}\n"
+
+        await self.say(report, self.CHANNEL)
+
+        # 2) AI 분석 + 교훈 추출
+        trade_lines = "\n".join(
+            f"{t['time'][11:19]} {t['action']} {t['name']}({t['code']}) {t['qty']}주 - {t['reason']}"
+            for t in self._trade_log
+        )
+
+        prompt = f"""당신은 스윙 트레이딩 코치입니다. 오늘의 매매 내역을 분석하고 교훈을 추출하세요.
+
+## 오늘 매매 내역 ({today})
+{trade_lines}
+
+## 통계
+- 총 거래: {total}건 | 익절: {win_count}건 | 손절: {loss_count}건
+- 추정순자산: {total_asset:,}원 | 추정손익: {pnl:,}원
+
+## 분석 요청
+1. 잘한 점 / 못한 점 정리
+2. 구체적 교훈 3~5개 (내일 매매에 바로 적용 가능)
+3. 내일 전략 제안
+
+## 응답 (JSON만)
+{{"lessons": ["교훈1", ...], "strategy_notes": "내일 전략", "good_points": [...], "bad_points": [...]}}"""
+
+        try:
+            resp = await self.ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text.strip()
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            analysis = json.loads(text)
+
+            # trade_journal에 저장
+            if self._analyzer:
+                analysis["total_trades"] = total
+                analysis["win_count"] = win_count
+                analysis["loss_count"] = loss_count
+                analysis["total_pnl"] = pnl
+                analysis["net_asset"] = total_asset
+                analysis["raw_analysis"] = text
+                await self._analyzer.save_journal(today, analysis)
+
+            # 슬랙에 교훈 보고
+            lessons = analysis.get("lessons", [])
+            if lessons:
+                msg = f"📝 *[스윙트레이딩] {today} 매매 교훈*\n"
+                for lesson in lessons:
+                    msg += f"• {lesson}\n"
+                strategy = analysis.get("strategy_notes", "")
+                if strategy:
+                    msg += f"\n📋 *내일 전략*: {strategy}"
+                await self.say(msg, self.CHANNEL)
+
+            logger.info(f"[swing] 매매일지 완료: {len(lessons)}개 교훈")
+
+        except json.JSONDecodeError:
+            logger.warning("[swing] 매매일지 JSON 파싱 실패")
+        except Exception as e:
+            logger.error(f"[swing] 매매일지 오류: {e}")
+
+        # 로그 초기화
+        self._trade_log = []
 
     # ── 정리 ───────────────────────────────────────────
 
