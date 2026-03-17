@@ -50,24 +50,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const sb = getBrowserSupabase();
 
-    // 현재 세션 확인
-    const getSession = async () => {
-      try {
-        const { data: { session } } = await sb.auth.getSession();
-        if (session?.user) {
-          const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
-          setUser(profile || null);
-        }
-      } catch (e) {
-        console.error('세션 확인 실패:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    getSession();
-
-    // Auth 상태 변경 리스너
-    const { data: { subscription } } = sb.auth.onAuthStateChange(async (_event, session) => {
+    // onAuthStateChange만 사용 (Supabase 권장 패턴)
+    // getSession()은 새로고침 시 localStorage 로드 전에 null을 반환할 수 있어 제거
+    const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
       try {
         if (session?.user) {
           const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
@@ -76,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
         }
       } catch (e) {
-        console.error('인증 상태 변경 처리 실패:', e);
+        console.error('인증 상태 처리 실패:', e);
         setUser(null);
       } finally {
         setLoading(false);
