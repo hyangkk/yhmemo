@@ -49,26 +49,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const sb = getBrowserSupabase();
+    let ignore = false;
 
-    // onAuthStateChange만 사용 (Supabase 권장 패턴)
-    // getSession()은 새로고침 시 localStorage 로드 전에 null을 반환할 수 있어 제거
-    const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
-      try {
-        if (session?.user) {
-          const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
-          setUser(profile || null);
-        } else {
-          setUser(null);
-        }
-      } catch (e) {
-        console.error('인증 상태 처리 실패:', e);
+    // 프로필 조회 (onAuthStateChange 콜백 밖에서 실행 — 데드락 방지)
+    const fetchProfile = (userId: string) => {
+      sb.from('profiles').select('*').eq('id', userId).single()
+        .then(({ data: profile }) => {
+          if (!ignore) {
+            setUser(profile || null);
+            setLoading(false);
+          }
+        })
+        .catch(() => {
+          if (!ignore) {
+            setUser(null);
+            setLoading(false);
+          }
+        });
+    };
+
+    // ⚠️ 콜백은 반드시 동기 함수! async 쓰면 Supabase 내부 락 데드락 발생
+    const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
+      if (ignore) return;
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
         setUser(null);
-      } finally {
         setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      ignore = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signInWithGoogle = useCallback(async () => {

@@ -123,7 +123,12 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
   const { project, members, clips, results } = data;
   const isOwner = user?.id === project.owner_id;
   const doneResults = results.filter(r => r.status === 'done');
-  const processingResult = results.find(r => r.status === 'processing');
+  // 30분 이상 processing 상태면 멈춘 것으로 판단 (표시 안 함)
+  const STALE_THRESHOLD_MS = 30 * 60 * 1000;
+  const processingResult = results.find(r =>
+    r.status === 'processing' &&
+    (Date.now() - new Date(r.created_at).getTime()) < STALE_THRESHOLD_MS
+  );
 
   // 멤버별 클립 그룹핑
   const clipsByMember = new Map<string, ProjectClip[]>();
