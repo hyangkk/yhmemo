@@ -3,7 +3,6 @@
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import type { StudioSession, StudioClip, StudioDevice, StudioResult } from '@/lib/studio';
-import PromptChat from '@/components/studio/PromptChat';
 import { supabase } from '@/lib/supabase';
 
 interface SessionData {
@@ -67,6 +66,9 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [audioMode, setAudioMode] = useState<'each' | 'best'>('each');
   const [addingTestClip, setAddingTestClip] = useState(false);
   const [hostChecked, setHostChecked] = useState(false);
+  const [selectedBgm, setSelectedBgm] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<string>('auto');
+  const [promptText, setPromptText] = useState('');
 
   // 호스트 카메라 기기만 결과 페이지 접근 가능 (촬영 참여자인 경우)
   useEffect(() => {
@@ -401,135 +403,184 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
-        {/* 프롬프트 채팅 (done 상태 + 클립 2개 이상) */}
+        {/* 편집 설정 패널 (done 상태 + 클립 2개 이상) */}
         {session.status === 'done' && clips.length >= 2 && (
-          <PromptChat
-            sessionId={sessionId}
-            clipCount={clips.length}
-            disabled={session.status !== 'done'}
-            onEditRequested={() => {
-              setEditingElapsed(0);
-              setEditingStartTime(Date.now());
-              setData(prev => prev ? {
-                ...prev,
-                session: { ...prev.session, status: 'editing' },
-              } : prev);
-              setPollKey(k => k + 1);
-            }}
-          />
-        )}
-
-        {/* 편집 중일 때도 채팅 표시 (비활성 상태) */}
-        {session.status === 'editing' && clips.length >= 2 && (
-          <PromptChat
-            sessionId={sessionId}
-            clipCount={clips.length}
-            disabled={true}
-          />
-        )}
-
-        {/* 편집 모드 선택 (done 상태에서만 + 클립이 2개 이상일 때) */}
-        {session.status === 'done' && clips.length >= 2 && (
-          <div className="space-y-2">
-            {/* 음성 설정 */}
-            <div>
-              <h2 className="text-sm font-semibold text-gray-400 mb-1.5">음성 설정</h2>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setAudioMode('each')}
-                  className={`p-2.5 rounded-xl text-left transition border ${
-                    audioMode === 'each'
-                      ? 'bg-blue-900/40 border-blue-500/50'
-                      : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
-                  }`}
-                >
-                  <p className="text-sm font-semibold">🎙️ 각 영상 음성</p>
-                  <p className="text-[11px] text-gray-400 mt-0.5">화면에 맞는 카메라 음성</p>
-                </button>
-                <button
-                  onClick={() => setAudioMode('best')}
-                  className={`p-2.5 rounded-xl text-left transition border ${
-                    audioMode === 'best'
-                      ? 'bg-blue-900/40 border-blue-500/50'
-                      : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
-                  }`}
-                >
-                  <p className="text-sm font-semibold">🔊 최적 음성 하나</p>
-                  <p className="text-[11px] text-gray-400 mt-0.5">가장 좋은 마이크 음성만</p>
-                </button>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-gray-800">
+              <span className="text-sm font-semibold text-gray-300">편집 설정</span>
+            </div>
+            <div className="p-3 space-y-3">
+              {/* 편집 모드 */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">편집 모드</h3>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => setSelectedMode('auto')}
+                    className={`p-2 rounded-lg text-left transition border ${
+                      selectedMode === 'auto'
+                        ? 'bg-purple-900/40 border-purple-500/50'
+                        : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold">🔄 교차편집</p>
+                    <p className="text-[11px] text-gray-400">3초마다 카메라 전환</p>
+                  </button>
+                  <button
+                    onClick={() => setSelectedMode('director')}
+                    className={`p-2 rounded-lg text-left transition border ${
+                      selectedMode === 'director'
+                        ? 'bg-purple-900/40 border-purple-500/50'
+                        : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold">🎬 감독 모드</p>
+                    <p className="text-[11px] text-gray-400">메인 + 리액션 컷</p>
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* 배경음악 추가 */}
-            <h2 className="text-sm font-semibold text-gray-400">배경음악 추가</h2>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                disabled={!!editingMode}
-                onClick={() => requestEdit('prompt', '잔잔한 배경음악 넣어줘')}
-                className="p-2.5 rounded-xl text-left transition bg-teal-900/30 border border-teal-500/30 hover:bg-teal-900/50 disabled:opacity-50"
-              >
-                <p className="text-sm font-semibold">🎵 잔잔한 음악</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">차분하고 편안한 분위기</p>
-              </button>
-              <button
-                disabled={!!editingMode}
-                onClick={() => requestEdit('prompt', '신나는 배경음악 넣어줘')}
-                className="p-2.5 rounded-xl text-left transition bg-pink-900/30 border border-pink-500/30 hover:bg-pink-900/50 disabled:opacity-50"
-              >
-                <p className="text-sm font-semibold">🎶 신나는 음악</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">경쾌하고 활기찬 분위기</p>
-              </button>
-              <button
-                disabled={!!editingMode}
-                onClick={() => requestEdit('prompt', '로파이 배경음악 넣어줘')}
-                className="p-2.5 rounded-xl text-left transition bg-indigo-900/30 border border-indigo-500/30 hover:bg-indigo-900/50 disabled:opacity-50"
-              >
-                <p className="text-sm font-semibold">🎧 로파이/칠</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">감성적인 로파이 느낌</p>
-              </button>
-              <button
-                disabled={!!editingMode}
-                onClick={() => requestEdit('prompt', '배경음악 넣어줘')}
-                className="p-2.5 rounded-xl text-left transition bg-gray-800 border border-gray-600 hover:bg-gray-700 disabled:opacity-50"
-              >
-                <p className="text-sm font-semibold">🎼 기본 BGM</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">무난한 배경음악</p>
-              </button>
-            </div>
+              {/* 배경음악 */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">배경음악</h3>
+                <div className="flex gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => setSelectedBgm(null)}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedBgm === null
+                        ? 'bg-gray-700 border-gray-500 text-white'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    없음
+                  </button>
+                  <button
+                    onClick={() => setSelectedBgm('calm')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedBgm === 'calm'
+                        ? 'bg-teal-900/50 border-teal-500/60 text-teal-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🎵 잔잔한
+                  </button>
+                  <button
+                    onClick={() => setSelectedBgm('upbeat')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedBgm === 'upbeat'
+                        ? 'bg-pink-900/50 border-pink-500/60 text-pink-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🎶 신나는
+                  </button>
+                  <button
+                    onClick={() => setSelectedBgm('lofi')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedBgm === 'lofi'
+                        ? 'bg-indigo-900/50 border-indigo-500/60 text-indigo-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🎧 로파이
+                  </button>
+                  <button
+                    onClick={() => setSelectedBgm('default')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedBgm === 'default'
+                        ? 'bg-gray-600 border-gray-400 text-white'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🎼 기본
+                  </button>
+                </div>
+              </div>
 
-            <h2 className="text-sm font-semibold text-gray-400">다른 모드로 편집</h2>
-            <div className="grid grid-cols-2 gap-2">
+              {/* 음성 설정 */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">음성</h3>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => setAudioMode('each')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      audioMode === 'each'
+                        ? 'bg-blue-900/40 border-blue-500/50 text-blue-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🎙️ 각 영상 음성
+                  </button>
+                  <button
+                    onClick={() => setAudioMode('best')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      audioMode === 'best'
+                        ? 'bg-blue-900/40 border-blue-500/50 text-blue-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    🔊 최적 음성만
+                  </button>
+                </div>
+              </div>
+
+              {/* 추가 지시사항 (프롬프트) */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">추가 지시사항 <span className="text-gray-600 font-normal">(선택)</span></h3>
+                <input
+                  type="text"
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  placeholder="예: 5초 간격으로 전환해줘"
+                  className="w-full bg-gray-800 text-white text-sm rounded-lg px-3 py-2 outline-none placeholder-gray-500 border border-gray-700 focus:border-purple-500/50 transition"
+                />
+              </div>
+
+              {/* 편집하기 버튼 */}
               <button
                 disabled={!!editingMode}
-                onClick={() => requestEdit('auto')}
-                className={`p-3 rounded-xl text-left transition ${
-                  completedModes.has('auto')
-                    ? 'bg-gray-800 border border-gray-700'
-                    : 'bg-purple-900/30 border border-purple-500/30 hover:bg-purple-900/50'
-                } disabled:opacity-50`}
+                onClick={() => {
+                  const bgmMap: Record<string, string> = {
+                    calm: '잔잔한 배경음악 넣어줘',
+                    upbeat: '신나는 배경음악 넣어줘',
+                    lofi: '로파이 배경음악 넣어줘',
+                    default: '배경음악 넣어줘',
+                  };
+                  const modeMap: Record<string, string> = {
+                    auto: '교차편집',
+                    director: '감독 모드로 편집',
+                  };
+
+                  // BGM이나 추가 프롬프트가 있으면 prompt 모드
+                  const hasBgm = selectedBgm && bgmMap[selectedBgm];
+                  const hasPrompt = promptText.trim();
+
+                  if (hasBgm || hasPrompt) {
+                    const parts: string[] = [];
+                    parts.push(modeMap[selectedMode] || '교차편집');
+                    if (hasBgm) parts.push(bgmMap[selectedBgm!]);
+                    if (hasPrompt) parts.push(promptText.trim());
+                    requestEdit('prompt', parts.join(', '));
+                  } else {
+                    requestEdit(selectedMode);
+                  }
+                }}
+                className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 py-3 rounded-xl text-sm font-bold transition"
               >
-                <p className="text-sm font-semibold">🔄 3초 교차편집</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">3초마다 카메라 전환</p>
-                {completedModes.has('auto') && (
-                  <p className="text-[10px] text-green-500 mt-1">완료됨</p>
-                )}
-              </button>
-              <button
-                disabled={!!editingMode}
-                onClick={() => requestEdit('director')}
-                className={`p-3 rounded-xl text-left transition ${
-                  completedModes.has('director')
-                    ? 'bg-gray-800 border border-gray-700'
-                    : 'bg-orange-900/30 border border-orange-500/30 hover:bg-orange-900/50'
-                } disabled:opacity-50`}
-              >
-                <p className="text-sm font-semibold">🎬 AI 감독 모드</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">메인 카메라 + 리액션 컷</p>
-                {completedModes.has('director') && (
-                  <p className="text-[10px] text-green-500 mt-1">완료됨</p>
-                )}
+                {editingMode ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    편집 준비 중...
+                  </span>
+                ) : '편집하기'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* 편집 중일 때 설정 패널 비활성 표시 */}
+        {session.status === 'editing' && clips.length >= 2 && (
+          <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-3 opacity-50">
+            <p className="text-sm text-gray-500 text-center">편집이 완료되면 다시 설정할 수 있습니다</p>
           </div>
         )}
 
