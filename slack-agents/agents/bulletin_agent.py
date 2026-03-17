@@ -64,7 +64,7 @@ class BulletinAgent(BaseAgent):
             name="bulletin",
             description="학교/문화센터/공공기관 게시판을 모니터링하여 새 게시글을 알려주는 에이전트",
             slack_channel=SlackClient.CHANNEL_GENERAL,
-            loop_interval=21600,  # 6시간마다 실행
+            loop_interval=3600,  # 1시간마다 루프 (게시판별 check_interval로 실제 주기 제어)
             **kwargs,
         )
         # SSL 검증 비활성화 + 구형 사이트 호환 (보안 레벨 낮춤)
@@ -169,6 +169,8 @@ class BulletinAgent(BaseAgent):
                         for col_sql in [
                             "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS use_playwright BOOLEAN DEFAULT FALSE",
                             "ALTER TABLE bulletin_posts ADD COLUMN IF NOT EXISTS content TEXT DEFAULT ''",
+                            "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS check_interval INTEGER DEFAULT 86400",
+                            "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ",
                         ]:
                             try:
                                 cur.execute(col_sql)
@@ -206,6 +208,9 @@ class BulletinAgent(BaseAgent):
         for board in boards:
             try:
                 posts = await self._scrape_board(board)
+                # 스크래핑 시도했으면 last_checked_at 갱신 (성공 여부 무관)
+                await self._update_last_checked(board)
+
                 if not posts:
                     logger.info(f"[bulletin] {board['name']}: 게시글을 가져오지 못함")
                     continue
@@ -257,18 +262,46 @@ class BulletinAgent(BaseAgent):
     # ── 게시판 목록 로드 ─────────────────────────────────
 
     async def _load_boards(self) -> list[dict]:
-        """Supabase bulletin_boards 테이블에서 활성 게시판 목록 로드"""
+        """Supabase bulletin_boards 테이블에서 활성 게시판 목록 로드 (check_interval 기반 필터)"""
         def _sync_load():
             try:
                 result = self.supabase.table("bulletin_boards").select("*").eq(
                     "active", True
                 ).execute()
-                return result.data or []
+                all_boards = result.data or []
+
+                # check_interval 기준으로 체크할 게시판만 필터
+                now = datetime.now(timezone.utc)
+                due_boards = []
+                for board in all_boards:
+                    interval = board.get("check_interval") or 86400  # 기본 24시간
+                    last_checked = board.get("last_checked_at")
+                    if last_checked:
+                        # ISO-8601 파싱 (표준 라이브러리)
+                        last_dt = datetime.fromisoformat(last_checked.replace("Z", "+00:00"))
+                        if (now - last_dt).total_seconds() < interval:
+                            logger.info(f"[bulletin] {board['name']}: 아직 체크 주기 안 됨, 건너뜀")
+                            continue
+                    due_boards.append(board)
+
+                return due_boards
             except Exception as e:
                 logger.error(f"[bulletin] 게시판 목록 로드 실패: {e}")
                 return []
 
         return await asyncio.to_thread(_sync_load)
+
+    async def _update_last_checked(self, board: dict):
+        """게시판의 last_checked_at을 현재 시각으로 갱신"""
+        def _sync_update():
+            try:
+                self.supabase.table("bulletin_boards").update({
+                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", board["id"]).execute()
+            except Exception as e:
+                logger.error(f"[bulletin] last_checked_at 갱신 실패: {e}")
+
+        await asyncio.to_thread(_sync_update)
 
     # ── HTTP 요청 (urllib + 쿠키 대응) ─────────────────
 
@@ -554,7 +587,8 @@ class BulletinAgent(BaseAgent):
             self._pw = None
 
     async def _pw_fetch_html(self, url: str, wait_selector: str = None) -> str:
-        """Playwright로 URL에 접근하여 렌더링된 HTML 반환"""
+        """Playwright로 URL에 접근하여 렌더링된 HTML 반환.
+        iframe이 감지되면 iframe 내부 HTML을 반환."""
         await self._ensure_playwright()
 
         context = await self._pw_browser.new_context(
@@ -580,6 +614,16 @@ class BulletinAgent(BaseAgent):
             logger.info(f"[bulletin/pw] 접속 중: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
+            # form auto-submit 페이지: 네비게이션(form.submit) 완료 대기
+            # (eminwon.yongin.go.kr 고시공고: init() → search() → form.submit())
+            if "eminwon" in url or "OfrNotAncmt" in url:
+                try:
+                    logger.info("[bulletin/pw] form auto-submit 네비게이션 대기 중...")
+                    await page.wait_for_navigation(wait_until="domcontentloaded", timeout=15000)
+                    logger.info("[bulletin/pw] form submit 네비게이션 완료")
+                except Exception:
+                    logger.info("[bulletin/pw] 네비게이션 타임아웃, 계속 진행")
+
             # 추가 대기: 특정 셀렉터가 나타날 때까지 또는 고정 대기
             if wait_selector:
                 try:
@@ -589,7 +633,25 @@ class BulletinAgent(BaseAgent):
             else:
                 await asyncio.sleep(3)  # JS 렌더링 대기
 
+            # iframe 감지 — 게시판 콘텐츠가 iframe에 있는 경우 (용인시 고시공고 등)
             html = await page.content()
+            frames = page.frames
+            if len(frames) > 1:
+                for frame in frames[1:]:  # 메인 프레임 제외
+                    frame_url = frame.url or ""
+                    # 게시판 iframe 패턴 감지
+                    if any(kw in frame_url for kw in ["eminwon", "boardList", "OfrNotAncmt", "emwp"]):
+                        try:
+                            await frame.wait_for_load_state("domcontentloaded", timeout=10000)
+                            await asyncio.sleep(2)  # AJAX 렌더링 대기
+                            frame_html = await frame.content()
+                            if len(frame_html) > len(html) * 0.1 and "boardDefalut" in frame_html:
+                                logger.info(f"[bulletin/pw] iframe 감지: {frame_url[:80]} ({len(frame_html)}자)")
+                                html = frame_html
+                                break
+                        except Exception as e:
+                            logger.warning(f"[bulletin/pw] iframe 접근 실패: {e}")
+
             logger.info(f"[bulletin/pw] HTML 수신: {len(html)}자")
             return html
         finally:
@@ -681,6 +743,20 @@ class BulletinAgent(BaseAgent):
         use_playwright = board.get("use_playwright", False)
         debug_info = ""
 
+        # 용인시 고시공고: iframe URL을 Playwright로 접근 (form auto-submit 필요)
+        YONGIN_GOSI_IFRAME_URL = (
+            "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp"
+            "?not_ancmt_se_code=01,04&homepage_pbs_yn=Y&subCheck=Y"
+            "&ofr_pageSize=10&jndinm=OfrNotAncmtEJB&context=NTIS&list_gubun=&epcCheck=Y"
+        )
+        if parser_type == "yongin_gosi" or (
+            "yiNwStable02_01" in url and "yongin.go.kr" in url
+        ):
+            parser_type = "yongin_gosi"
+            url = YONGIN_GOSI_IFRAME_URL
+            use_playwright = True  # form auto-submit은 Playwright 필요
+            logger.info(f"[bulletin] 용인시 고시공고: iframe URL + Playwright 사용")
+
         _error_patterns = ["bad request", "403 forbidden", "access denied",
                            "502 bad gateway", "서버 오류", "접근이 거부"]
 
@@ -720,6 +796,9 @@ class BulletinAgent(BaseAgent):
             try:
                 css_sel = board.get("css_selector", "")
                 wait_sel = css_sel if css_sel else None
+                # 고시공고: form auto-submit 결과의 테이블 row를 기다림
+                if parser_type == "yongin_gosi":
+                    wait_sel = "table.boardDefalut tbody tr td a"
                 html = await self._pw_fetch_html(url, wait_selector=wait_sel)
                 if _is_error_page(html):
                     raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
@@ -737,14 +816,23 @@ class BulletinAgent(BaseAgent):
 
         base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
 
-        # 파서 타입에 따라 분기
-        if parser_type == "table":
+        # 특수 게시판 파서 분기
+        if parser_type == "yongin_gosi":
+            posts = self._parse_yongin_gosi(soup, base_url, board)
+        elif parser_type == "yongin_event":
+            posts = self._parse_yongin_event(soup, base_url, board)
+        elif parser_type == "table":
             posts = self._parse_table_board(soup, base_url, board)
         elif parser_type == "list":
             posts = self._parse_list_board(soup, base_url, board)
         else:
-            # auto: 테이블 → 리스트 → 링크 폴백
-            posts = self._parse_table_board(soup, base_url, board)
+            # auto: 특수 패턴 감지 → 테이블 → 리스트 → 링크 폴백
+            if soup.select_one("table.boardDefalut"):
+                posts = self._parse_yongin_gosi(soup, base_url, board)
+            elif soup.select_one("div.event_list") or soup.select_one("ul.event_list"):
+                posts = self._parse_yongin_event(soup, base_url, board)
+            else:
+                posts = self._parse_table_board(soup, base_url, board)
             if not posts:
                 posts = self._parse_list_board(soup, base_url, board)
             if not posts:
@@ -1175,6 +1263,224 @@ class BulletinAgent(BaseAgent):
                 "hash": content_hash,
             })
 
+        return posts[:20]
+
+    # ── 용인시 고시공고 파서 (eminwon.yongin.go.kr) ──────
+
+    def _parse_yongin_gosi(self, soup, base_url: str, board: dict) -> list[dict]:
+        """용인시 고시공고 전용 파서 (table.boardDefalut 구조)
+        iframe 내부 HTML에서 게시글 목록 추출.
+        상세 페이지는 searchDetail(no) → form POST 방식이라 직접 URL 구성.
+        """
+        posts = []
+        table = soup.select_one("table.boardDefalut")
+        if not table:
+            # 폴백: 일반 테이블 파서
+            return self._parse_table_board(soup, base_url, board)
+
+        rows = table.select("tbody tr")
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) < 3:
+                continue
+
+            # 컬럼: 번호 | 고시공고번호 | 제목 | 담당부서 | 등록일 | 게재기간 | 조회수
+            title_cell = cells[2] if len(cells) > 2 else cells[1]
+            a_tag = title_cell.find("a")
+            if not a_tag:
+                continue
+
+            title = a_tag.get_text(strip=True)
+            if not title or len(title) < 2:
+                continue
+
+            # searchDetail('고시번호') onclick에서 번호 추출
+            onclick = a_tag.get("onclick", "")
+            notice_no = ""
+            m = re.search(r"searchDetail\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", onclick)
+            if m:
+                notice_no = m.group(1)
+
+            # 상세 페이지 URL 구성 (eminwon.yongin.go.kr action URL)
+            detail_url = ""
+            if notice_no:
+                detail_url = (
+                    "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
+                    f"?not_ancmt_mgt_no={notice_no}&method=selectOfrNotAncmt"
+                )
+
+            # 고시공고번호 (두 번째 컬럼)
+            gosi_no = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+
+            # 날짜 (등록일 = 5번째 컬럼)
+            date_str = cells[4].get_text(strip=True) if len(cells) > 4 else ""
+
+            # 담당부서
+            dept = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+
+            content_hash = hashlib.sha256(
+                f"{board['id']}:{title}:{notice_no or date_str}".encode()
+            ).hexdigest()[:16]
+
+            post = {
+                "title": f"[{gosi_no}] {title}" if gosi_no else title[:200],
+                "url": detail_url,
+                "date": date_str[:30],
+                "hash": content_hash,
+            }
+            if dept:
+                post["content"] = f"담당부서: {dept}"
+            posts.append(post)
+
+        logger.info(f"[bulletin] 용인시 고시공고 파서: {len(posts)}건")
+        return posts
+
+    # ── 용인시 문화행사 파서 ───────────────────────────────
+
+    def _parse_yongin_event(self, soup, base_url: str, board: dict) -> list[dict]:
+        """용인시 문화행사 전용 파서 (카드/리스트 형태).
+        BD_selectClturEventPfmcytList.do 페이지 구조 대응.
+        다양한 카드형 레이아웃 패턴을 시도.
+        """
+        posts = []
+
+        # 1차: 이벤트 리스트 구조 (div/ul 기반 카드)
+        card_selectors = [
+            "ul.event_list > li",
+            "div.event_list > div",
+            "ul.culture_list > li",
+            "div.culture_list > div",
+            "ul.card_list > li",
+            "div.card_list > div",
+            "ul.board_gallery > li",
+            "div.board_gallery > div",
+            "ul.thumb_list > li",
+            "div.thumb_list > div",
+            # 공공기관 일반 패턴
+            "div.list_area > ul > li",
+            "div.galViewList > ul > li",
+            "div.bbs_gallery > ul > li",
+        ]
+
+        items = []
+        for sel in card_selectors:
+            items = soup.select(sel)
+            if items:
+                logger.info(f"[bulletin] 문화행사: 셀렉터 '{sel}'로 {len(items)}건 발견")
+                break
+
+        # 2차: 테이블 기반 폴백
+        if not items:
+            table_posts = self._parse_table_board(soup, base_url, board)
+            if table_posts:
+                return table_posts
+
+        # 3차: 링크 패턴으로 이벤트 추출 (BD_selectClturEventPfmcyt 패턴)
+        if not items:
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag.get("href", "")
+                text = a_tag.get_text(strip=True)
+                onclick = a_tag.get("onclick", "")
+
+                # 이벤트 상세 패턴 감지
+                is_event = bool(re.search(
+                    r"(ClturEvent|EventPfmcyt|eventView|event_view|q_cltrEvntNo)",
+                    href + onclick, re.I
+                ))
+                if is_event and len(text) > 3:
+                    if not href.startswith("http"):
+                        href = urljoin(base_url, href)
+                    # onclick에서 이벤트 번호 추출
+                    if href.startswith("javascript"):
+                        ev_match = re.search(r"['\"]([^'\"]*(?:View|Detail)[^'\"]*)['\"]", onclick)
+                        if ev_match:
+                            href = urljoin(base_url, ev_match.group(1))
+                        else:
+                            href = ""
+
+                    # 날짜 추출 (부모 요소에서)
+                    parent = a_tag.parent
+                    date_str = ""
+                    if parent:
+                        date_match = re.search(r"(\d{4}[-./]\d{1,2}[-./]\d{1,2})", parent.get_text())
+                        if date_match:
+                            date_str = date_match.group(1)
+
+                    content_hash = hashlib.sha256(
+                        f"{board['id']}:{text}:{href or date_str}".encode()
+                    ).hexdigest()[:16]
+
+                    posts.append({
+                        "title": text[:200],
+                        "url": href,
+                        "date": date_str,
+                        "hash": content_hash,
+                    })
+
+            if posts:
+                logger.info(f"[bulletin] 문화행사 링크 패턴: {len(posts)}건")
+                return posts[:20]
+
+        # 카드 아이템 파싱
+        for item in items:
+            a_tag = item.find("a")
+            title = ""
+            link = ""
+
+            if a_tag:
+                # 제목 추출: 제목 전용 태그 또는 링크 텍스트
+                title_el = item.select_one(".tit, .title, .name, h3, h4, strong, .subject")
+                if title_el:
+                    title = title_el.get_text(strip=True)
+                else:
+                    title = a_tag.get_text(strip=True)
+
+                href = a_tag.get("href", "")
+                if href and not href.startswith("http") and not href.startswith("javascript"):
+                    href = urljoin(base_url, href)
+                link = href if not href.startswith("javascript") else ""
+            else:
+                # 링크 없는 카드
+                title_el = item.select_one(".tit, .title, .name, h3, h4, strong, .subject")
+                if title_el:
+                    title = title_el.get_text(strip=True)
+
+            if not title or len(title) < 2:
+                continue
+
+            # 날짜 추출
+            date_str = ""
+            date_el = item.select_one(".date, .period, .day, .time, .duration")
+            if date_el:
+                date_str = date_el.get_text(strip=True)
+            else:
+                date_match = re.search(r"(\d{4}[-./]\d{1,2}[-./]\d{1,2})", item.get_text())
+                if date_match:
+                    date_str = date_match.group(1)
+
+            # 이미지 URL
+            img = item.find("img")
+            img_url = ""
+            if img:
+                img_src = img.get("src", "")
+                if img_src and not img_src.startswith("data:"):
+                    img_url = urljoin(base_url, img_src) if not img_src.startswith("http") else img_src
+
+            content_hash = hashlib.sha256(
+                f"{board['id']}:{title}:{link or date_str}".encode()
+            ).hexdigest()[:16]
+
+            post = {
+                "title": title[:200],
+                "url": link,
+                "date": date_str[:30],
+                "hash": content_hash,
+            }
+            if img_url:
+                post["thumbnail"] = img_url
+            posts.append(post)
+
+        logger.info(f"[bulletin] 문화행사 카드 파서: {len(posts)}건")
         return posts[:20]
 
     # ── 새 글 필터링 ─────────────────────────────────────

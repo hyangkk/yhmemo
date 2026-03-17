@@ -13,6 +13,9 @@
 const ALLOWED_DOMAINS = [
   "yicare.or.kr",
   "www.yicare.or.kr",
+  "gcm.ggcf.kr",
+  "www.yongin.go.kr",
+  "eminwon.yongin.go.kr",
 ];
 
 const CORS_HEADERS = {
