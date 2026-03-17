@@ -60,9 +60,11 @@ export async function POST(
     .eq('session_id', id);
 
   if (clips && clips.length > 0) {
+    // 업로드 완료 → done 상태로 전환 (편집 설정 패널 표시)
+    // 사용자가 설정 후 "편집하기" 클릭 시 editing으로 전환됨
     await supabase
       .from('studio_sessions')
-      .update({ status: 'editing', updated_at: new Date().toISOString() })
+      .update({ status: 'done', updated_at: new Date().toISOString() })
       .eq('id', id);
   } else {
     await supabase
