@@ -100,6 +100,24 @@ async function handleRequest(request) {
     var bytes = new Uint8Array(buffer);
     var ct = resp.headers.get("content-type") || "";
 
+    // 바이너리 콘텐츠(이미지 등)는 base64로 반환
+    if (/^(image|audio|video|application\/octet|application\/pdf)/i.test(ct)) {
+      var binary = "";
+      for (var i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      var base64 = btoa(binary);
+      return new Response(JSON.stringify({
+        status: resp.status,
+        base64: base64,
+        content_type: ct,
+        url: resp.url || url,
+      }), {
+        status: 200,
+        headers: Object.assign({"Content-Type": "application/json; charset=utf-8"}, CORS_HEADERS)
+      });
+    }
+
     // 인코딩 감지 및 디코딩 (EUC-KR 한국 사이트 대응)
     var html = "";
     if (ct.toLowerCase().indexOf("euc-kr") >= 0 || ct.toLowerCase().indexOf("cp949") >= 0) {
