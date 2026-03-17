@@ -1,95 +1,8 @@
 import Link from "next/link";
+import { getDashboardData } from "@/lib/dashboard-data";
+import type { DashboardData } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
-
-interface Service {
-  id: string;
-  name: string;
-  platform: string;
-  region: string;
-  description: string;
-  category: string;
-  status: string;
-  health: Record<string, unknown> | null;
-}
-
-interface SlackAgent {
-  id: string;
-  name: string;
-  icon: string;
-  group: string;
-  status: string;
-  tasks_24h: { total: number; completed: number; failed: number };
-  hr: Record<string, unknown> | null;
-}
-
-interface GhAgent {
-  id: string;
-  name: string;
-  schedule: string;
-  group: string;
-  status: string;
-  lastRun: {
-    name: string;
-    status: string;
-    conclusion: string | null;
-    created_at: string;
-    html_url: string;
-  } | null;
-}
-
-interface Commit {
-  sha: string;
-  message: string;
-  date: string;
-  url: string;
-}
-
-interface ActionRun {
-  id: number;
-  name: string;
-  status: string;
-  conclusion: string | null;
-  created_at: string;
-  html_url: string;
-  head_branch: string;
-}
-
-interface DashboardData {
-  services: Service[];
-  slackAgents: SlackAgent[];
-  ghAgents: GhAgent[];
-  recentActions: ActionRun[];
-  recentCommits: Commit[];
-  cost: { date: string; total_usd: number } | null;
-  summary: {
-    totalServices: number;
-    totalSlackAgents: number;
-    totalGhAgents: number;
-    orchestratorOnline: boolean;
-    tasks24h: number;
-  };
-  updatedAt: string;
-}
-
-function getBaseUrl() {
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL) return process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  return "http://localhost:3000";
-}
-
-async function fetchDashboard(): Promise<DashboardData | null> {
-  try {
-    const base = getBaseUrl();
-    const res = await fetch(`${base}/api/dashboard`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { color: string; label: string; pulse: boolean }> = {
@@ -126,14 +39,15 @@ function TimeAgo({ date }: { date: string }) {
 }
 
 export default async function DashboardPage() {
-  const data = await fetchDashboard();
-
-  if (!data) {
+  let data: DashboardData;
+  try {
+    data = await getDashboardData();
+  } catch (err) {
     return (
       <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-2">대시보드 로딩 실패</h1>
-          <p className="text-gray-400">API에 연결할 수 없습니다.</p>
+          <p className="text-gray-400">{String(err)}</p>
         </div>
       </main>
     );
@@ -142,7 +56,7 @@ export default async function DashboardPage() {
   const { services, slackAgents, ghAgents, recentActions, recentCommits, summary } = data;
 
   // 에이전트 그룹별 분류
-  const agentGroups: Record<string, SlackAgent[]> = {};
+  const agentGroups: Record<string, typeof slackAgents> = {};
   for (const agent of slackAgents) {
     if (!agentGroups[agent.group]) agentGroups[agent.group] = [];
     agentGroups[agent.group].push(agent);
@@ -155,7 +69,7 @@ export default async function DashboardPage() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" className="text-gray-400 hover:text-white text-sm">
-              AI 전략실
+              YH Hub
             </Link>
             <span className="text-gray-600">/</span>
             <h1 className="text-lg font-bold">프로젝트 관리 대시보드</h1>
@@ -281,9 +195,8 @@ export default async function DashboardPage() {
           </div>
         </section>
 
-        {/* 최근 활동 (Actions + Commits) 2열 */}
+        {/* 최근 활동 2열 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* 최근 배포/Actions */}
           <section>
             <SectionHeader title="최근 GitHub Actions" description="배포 및 워크플로우 실행 기록" />
             <div className="rounded-xl border border-gray-800 bg-gray-900/30 divide-y divide-gray-800">
@@ -305,7 +218,6 @@ export default async function DashboardPage() {
             </div>
           </section>
 
-          {/* 최근 커밋 */}
           <section>
             <SectionHeader title="최근 커밋" description="main 브랜치 코드 변경 이력" />
             <div className="rounded-xl border border-gray-800 bg-gray-900/30 divide-y divide-gray-800">
@@ -375,8 +287,7 @@ export default async function DashboardPage() {
       {/* 푸터 */}
       <footer className="border-t border-gray-800 mt-12">
         <div className="max-w-7xl mx-auto px-4 py-6 text-center text-xs text-gray-500">
-          <p>프로젝트 관리 대시보드 — AI 전략실 운영 현황을 실시간으로 모니터링합니다.</p>
-          <p className="mt-1">자동 새로고침: 페이지 로드 시 최신 데이터 조회 | Powered by Next.js + Supabase</p>
+          <p>프로젝트 관리 대시보드 — 운영 현황을 실시간으로 모니터링합니다.</p>
         </div>
       </footer>
     </main>
