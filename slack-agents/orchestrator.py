@@ -65,6 +65,7 @@ from core.conversation_memory import save_turn, build_chat_context, get_user_sum
 from core.tools import TOOL_DEFINITIONS, execute_tool_calls
 from core import agent_tracker
 from core.agent_hr import AgentHR
+from core.invest_monitor import InvestMonitor
 
 # ── 로깅 설정 ──────────────────────────────────────────
 
@@ -279,6 +280,13 @@ async def main():
     bulletin = BulletinAgent(**common_kwargs)
     invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
 
+    # ── 투자 모니터링 시스템 ───────────────────────────────
+    invest_monitor = InvestMonitor(
+        supabase_client=supabase,
+        ls_client=ls_client,
+        ai_think_fn=curator.ai_think,
+    )
+
     # ── 인사관리 (HR) 시스템 ─────────────────────────────
     agent_hr = AgentHR(
         ai_think_fn=curator.ai_think,
@@ -290,6 +298,9 @@ async def main():
                         "fortune", "message_bus", "auto_trader", "market_info",
                         "bulletin", "invest_research"]:
         agent_hr.ensure_registered(_agent_name)
+
+    # ProactiveAgent의 evaluator에 invest_monitor 주입
+    proactive.evaluator._invest_monitor = invest_monitor
 
     # ── Level 5: 동적 에이전트 시작 ──────────────────────
     # ProactiveAgent의 agent_factory가 초기화된 후, 기존 동적 에이전트를 로드+시작
@@ -465,6 +476,22 @@ async def main():
     slack.on_command("인사평가", cmd_hr_eval)
     slack.on_command("인사현황", cmd_hr_status)
     slack.on_command("연봉", cmd_salary)
+
+    # "!투자현황" → 투자 에이전트 종합 모니터링 보고서
+    async def cmd_invest_status(args: str, user: str, channel: str, thread_ts: str = None):
+        await _reply(channel, "📊 투자 에이전트 현황 분석 중...", thread_ts)
+        try:
+            days = 7
+            if args.strip().isdigit():
+                days = min(int(args.strip()), 30)
+            evaluation = await invest_monitor.evaluate_invest_agents(days=days)
+            report = invest_monitor.format_report(evaluation)
+            await _reply(channel, report, thread_ts)
+        except Exception as e:
+            logger.error(f"[invest_monitor] 투자현황 보고 실패: {e}")
+            await _reply(channel, f"투자현황 조회 실패: {e}", thread_ts)
+
+    slack.on_command("투자현황", cmd_invest_status)
 
     # "!게시판" → 게시판 스크래핑 즉시 실행 / 새 게시판 등록
     async def cmd_bulletin(args: str, user: str, channel: str, thread_ts: str = None):
@@ -982,6 +1009,7 @@ async def main():
 - diary_quote: 생각일기 한마디, 생각일기 실행, 일기에서 한마디
 - diary_daily_alert: 생각일기 분석, 일기 분석알림, 일기 분석해줘, 오늘 일기 분석
 - fortune: 운세 보기, 오늘의 운세
+- invest_status: 투자 에이전트 현황, 매매 성과, 투자 보고서, 트레이딩 성적, "투자 에이전트 어때?", "매매 성과 보여줘", "투자현황", "에이전트 수준 평가", "자율거래 성과", "스윙트레이딩 성적" 등. 투자/매매/트레이딩 에이전트의 성과·승률·등급을 종합 모니터링
 - hr_eval: 인사평가 실행, 에이전트 평가, 성과 평가, "인사평가 해줘", "에이전트들 평가해봐"
 - hr_status: 인사현황, 연봉 조회, 에이전트 인사카드, "연봉 랭킹", "인사 현황 보여줘", "에이전트 연봉", "누가 제일 많이 받아?" hr_target 필드에 특정 에이전트명 (없으면 전체)
 - hr_salary: 연봉 조정, "연봉 올려줘", "연봉 깎아", hr_target(에이전트명), hr_amount(조정액, 만원), hr_reason(사유)
@@ -1004,7 +1032,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|diary_daily_alert|fortune|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|diary_daily_alert|fortune|invest_status|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -1086,6 +1114,9 @@ async def main():
             elif action == "fortune":
                 await cmd_fortune(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "운세 전송 완료"
+            elif action == "invest_status":
+                await cmd_invest_status(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "투자현황 보고 완료"
             elif action == "hr_eval":
                 await cmd_hr_eval(args="", user=user, channel=channel, thread_ts=thread_ts)
                 result_text = "인사평가 완료"
@@ -1586,6 +1617,16 @@ async def main():
                     logger.info("[HR] 일일 자동 인사평가 완료")
             except Exception as e:
                 logger.error(f"[HR] 자동 인사평가 실패: {e}")
+
+        # 7. 매일 16:00 KST 투자 에이전트 정기 모니터링 (장 마감 후)
+        if now.strftime("%H:%M") == "16:00":
+            try:
+                evaluation = await invest_monitor.evaluate_invest_agents(days=7)
+                report = invest_monitor.format_report(evaluation)
+                await slack.send_message(SlackClient.CHANNEL_INVEST, report)
+                logger.info("[invest_monitor] 일일 투자 에이전트 모니터링 보고 완료")
+            except Exception as e:
+                logger.error(f"[invest_monitor] 정기 모니터링 실패: {e}")
 
         # ai-agent-logs에도 이슈가 있을 때만 전송
         if issues or restarts:
