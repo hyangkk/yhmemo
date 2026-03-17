@@ -4,7 +4,7 @@ WORKDIR /app
 
 # 시스템 의존성
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ffmpeg && \
+    git curl ffmpeg libass-dev fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 
 # Python 패키지 설치
