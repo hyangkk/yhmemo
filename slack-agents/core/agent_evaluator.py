@@ -36,10 +36,13 @@ def _now() -> datetime:
 class AgentEvaluator:
     """에이전트 성과 평가자 — 마스터의 인사 시스템"""
 
-    def __init__(self, agent_factory=None, task_delegation=None, ai_think_fn=None):
+    def __init__(self, agent_factory=None, task_delegation=None, ai_think_fn=None,
+                 invest_monitor=None):
         self._factory = agent_factory
         self._delegation = task_delegation
         self._ai_think = ai_think_fn
+        self._invest_monitor = invest_monitor
+        self._last_invest_eval = None  # 캐시: 마지막 투자 평가 결과
         self._eval_file = os.path.join(DATA_DIR, "agent_evaluations.json")
         self._evals = self._load()
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -134,14 +137,34 @@ class AgentEvaluator:
             reliability = self._delegation.get_agent_reliability(agent_name)
             metrics["delegation_reliability"] = reliability
 
-        # 4. 종합 점수 (가중 평균 — 가동률 포함)
+        # 4. 투자 에이전트 전용 메트릭 반영
+        invest_agents = {"auto_trader", "swing_trader", "invest_research"}
+        if agent_name in invest_agents and self._last_invest_eval:
+            invest_grade = self._last_invest_eval.get("grades", {}).get(agent_name, {})
+            if invest_grade and invest_grade.get("grade") != "-":
+                metrics["invest_grade"] = invest_grade.get("grade", "-")
+                metrics["invest_score"] = invest_grade.get("score", 0)
+                metrics["invest_reasons"] = invest_grade.get("reasons", [])
+
+        # 5. 종합 점수 (가중 평균 — 가동률 포함)
         uptime_score = metrics["uptime_pct"] / 100.0  # 0~1 스케일
-        metrics["composite_score"] = (
-            uptime_score * 0.25 +
-            metrics["cycle_success_rate"] * 0.35 +
-            metrics["delegation_reliability"] * 0.2 +
-            (1.0 - min(1.0, metrics["error_rate"] * 5)) * 0.2  # 에러 20%이상이면 0점
-        )
+
+        if agent_name in invest_agents and metrics.get("invest_score"):
+            # 투자 에이전트: 투자 성과를 가중치에 포함 (30%)
+            metrics["composite_score"] = (
+                uptime_score * 0.15 +
+                metrics["cycle_success_rate"] * 0.20 +
+                metrics["delegation_reliability"] * 0.05 +
+                (1.0 - min(1.0, metrics["error_rate"] * 5)) * 0.15 +
+                metrics["invest_score"] * 0.45  # 투자 성과 45%
+            )
+        else:
+            metrics["composite_score"] = (
+                uptime_score * 0.25 +
+                metrics["cycle_success_rate"] * 0.35 +
+                metrics["delegation_reliability"] * 0.2 +
+                (1.0 - min(1.0, metrics["error_rate"] * 5)) * 0.2  # 에러 20%이상이면 0점
+            )
 
         return metrics
 
@@ -167,6 +190,14 @@ class AgentEvaluator:
         agent_tracker에 등록된 모든 에이전트(정적+동적)를 평가한다.
         """
         evaluations = {}
+
+        # 0. 투자 에이전트 평가 사전 실행 (개별 평가 시 참조)
+        if self._invest_monitor:
+            try:
+                self._last_invest_eval = await self._invest_monitor.evaluate_invest_agents(days=7)
+            except Exception as e:
+                logger.warning(f"[evaluator] 투자 평가 실패: {e}")
+                self._last_invest_eval = None
 
         # 1. agent_tracker에 등록된 모든 에이전트 (정적+동적 포함)
         tracker_data = agent_tracker.get_summary_for_report()
@@ -210,6 +241,13 @@ class AgentEvaluator:
                     "name": name, "grade": grade, "score": score,
                 })
 
+        # 투자 에이전트 상세 성과 추가
+        if self._last_invest_eval:
+            review["invest_evaluation"] = {
+                "grades": self._last_invest_eval.get("grades", {}),
+                "ai_analysis": self._last_invest_eval.get("ai_analysis", ""),
+            }
+
         # AI 리뷰 (선택적)
         if self._ai_think and evaluations:
             try:
@@ -218,6 +256,7 @@ class AgentEvaluator:
                         "grade": ev.get("grade"),
                         "score": ev.get("metrics", {}).get("composite_score"),
                         "cycles": ev.get("metrics", {}).get("total_cycles", 0),
+                        "invest_grade": ev.get("metrics", {}).get("invest_grade", ""),
                     }
                     for name, ev in evaluations.items()
                 }
