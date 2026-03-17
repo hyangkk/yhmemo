@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
 
 interface SessionWithResult {
   id: string;
@@ -38,13 +37,13 @@ export default function RecentSessions() {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
-        .from('studio_sessions')
-        .select('id, title, status, created_at, studio_results(id, storage_path, duration_ms, status), studio_clips(id)')
-        .in('status', ['done', 'editing'])
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setSessions((data as SessionWithResult[]) || []);
+      try {
+        const res = await fetch('/api/studio/sessions/recent');
+        if (res.ok) {
+          const data = await res.json();
+          setSessions(data || []);
+        }
+      } catch {}
       setLoading(false);
     }
     load();
