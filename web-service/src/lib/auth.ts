@@ -7,11 +7,15 @@ import React from 'react';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// 브라우저용 Supabase 클라이언트 (Auth 포함)
+// 브라우저용 Supabase 클라이언트 (PKCE flow 사용)
 let browserClient: ReturnType<typeof createClient> | null = null;
 export function getBrowserSupabase() {
   if (!browserClient) {
-    browserClient = createClient(supabaseUrl, supabaseAnonKey);
+    browserClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        flowType: 'pkce',
+      },
+    });
   }
   return browserClient;
 }
