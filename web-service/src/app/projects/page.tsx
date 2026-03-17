@@ -45,13 +45,21 @@ export default function ProjectsPage() {
   }, []);
 
   const loadProjects = useCallback(async () => {
-    const token = await getToken();
-    if (!token) return;
-    const res = await fetch('/api/projects', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) setProjects(await res.json());
-    setLoading(false);
+    try {
+      const token = await getToken();
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+      const res = await fetch('/api/projects', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setProjects(await res.json());
+    } catch {
+      // 네트워크 에러 등
+    } finally {
+      setLoading(false);
+    }
   }, [getToken]);
 
   useEffect(() => {

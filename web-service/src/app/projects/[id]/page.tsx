@@ -79,14 +79,15 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
     return () => clearInterval(interval);
   }, [loadData, pollKey]);
 
-  // 편집 중 경과 시간 타이머
+  // 편집 중 경과 시간 타이머 (processingResult 존재 여부로 편집 중 판단)
+  const isProcessing = !!data?.results.find(r => r.status === 'processing');
   useEffect(() => {
-    if (!data || data.project.status !== 'editing') return;
+    if (!isProcessing) return;
     const timer = setInterval(() => {
       setEditingElapsed(Math.floor((Date.now() - editingStartTime) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [data?.project.status, editingStartTime]);
+  }, [isProcessing, editingStartTime]);
 
   const requestEdit = async (mode: string, prompt?: string) => {
     setEditingMode(mode);
