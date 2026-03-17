@@ -76,11 +76,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     const sb = getBrowserSupabase();
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
     await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${siteUrl}/auth/callback`,
+        redirectTo: 'https://web-service-ruby.vercel.app/auth/callback',
       },
     });
   }, []);
