@@ -25,10 +25,25 @@ export async function GET(
     supabase.from('project_results').select('*').eq('project_id', id).order('created_at', { ascending: false }),
   ]);
 
+  // 30분 이상 processing 상태인 결과를 error로 자동 전환
+  const staleThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const resultList = results.data || [];
+  const staleResults = resultList.filter(
+    (r: { status: string; created_at: string }) => r.status === 'processing' && r.created_at < staleThreshold
+  );
+  if (staleResults.length > 0) {
+    await supabase
+      .from('project_results')
+      .update({ status: 'error' })
+      .in('id', staleResults.map((r: { id: string }) => r.id));
+    // 상태 반영
+    staleResults.forEach((r: { status: string }) => { r.status = 'error'; });
+  }
+
   return NextResponse.json({
     project,
     members: members.data || [],
     clips: clips.data || [],
-    results: results.data || [],
+    results: resultList,
   });
 }
