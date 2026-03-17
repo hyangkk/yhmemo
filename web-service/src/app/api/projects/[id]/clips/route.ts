@@ -13,7 +13,14 @@ export async function POST(
   // phase=url → signed upload URL 발급
   if (body.phase === 'url') {
     const { memberId, clipId, ext } = body;
-    const storagePath = `projects/${projectId}/${memberId}_${clipId}.${ext || 'webm'}`;
+    // 경로 순회 공격 방지: UUID 형식 검증 + 확장자 화이트리스트
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(memberId) || !uuidRegex.test(clipId)) {
+      return NextResponse.json({ error: 'memberId/clipId 형식이 올바르지 않습니다' }, { status: 400 });
+    }
+    const allowedExts = ['webm', 'mp4', 'mov', 'avi'];
+    const safeExt = allowedExts.includes(ext) ? ext : 'webm';
+    const storagePath = `projects/${projectId}/${memberId}_${clipId}.${safeExt}`;
 
     await supabase.storage.from('studio-clips').remove([storagePath]);
 

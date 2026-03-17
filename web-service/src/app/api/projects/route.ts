@@ -35,8 +35,11 @@ export async function GET(req: NextRequest) {
     `);
 
   // projectIds가 비어있으면 owner_id만으로 필터 (빈 in.()은 PostgREST 에러)
-  if (projectIds.length > 0) {
-    query = query.or(`owner_id.eq.${user.id},id.in.(${projectIds.join(',')})`);
+  // UUID 형식 검증으로 쿼리 인젝션 방지
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const safeProjectIds = projectIds.filter(id => uuidRegex.test(id));
+  if (safeProjectIds.length > 0) {
+    query = query.or(`owner_id.eq.${user.id},id.in.(${safeProjectIds.join(',')})`);
   } else {
     query = query.eq('owner_id', user.id);
   }
