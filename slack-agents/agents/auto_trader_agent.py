@@ -107,6 +107,11 @@ class AutoTraderAgent(BaseAgent):
         self._buy_times: dict[str, datetime] = {}  # 종목코드 → 매수 시각
         self._enabled = os.environ.get("AUTO_TRADER_ENABLED", "false").lower() == "true"
         self._reported_today = False
+        # 학습 사이클
+        self._analyzer = None  # lazy init (supabase 필요)
+        self._trade_stats: dict | None = None
+        self._recent_lessons: list[str] = []
+        self._stats_loaded_date = ""
 
     def _now_kst(self) -> datetime:
         return datetime.now(KST)
@@ -155,6 +160,8 @@ class AutoTraderAgent(BaseAgent):
         self._reported_today = False
         if not self._session_start:
             self._session_start = self._now_kst()
+            # 학습 데이터 로드 (하루 1회)
+            await self._load_learning_data()
             await self.log("🤖 자율 거래 에이전트 가동 시작")
 
         self._cycle += 1
@@ -201,6 +208,8 @@ class AutoTraderAgent(BaseAgent):
             "news": market_news,
             "is_force_sell": self._is_force_sell_time(),
             "is_no_buy": self._is_no_buy_time(),
+            "trade_stats": self._trade_stats,
+            "recent_lessons": self._recent_lessons,
         }
 
     # ── Think ──────────────────────────────────────────
@@ -241,6 +250,8 @@ class AutoTraderAgent(BaseAgent):
                     "code": code,
                     "qty": h["잔고수량"],
                     "reason": f"손절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
+                    "pnl_pct": pnl_pct,
+                    "hold_minutes": held_minutes,
                 })
             # 최소 보유시간 미만이면 익절 보류 (패닉셀 방지)
             elif held_minutes < min_hold:
@@ -252,6 +263,8 @@ class AutoTraderAgent(BaseAgent):
                     "code": code,
                     "qty": h["잔고수량"],
                     "reason": f"익절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
+                    "pnl_pct": pnl_pct,
+                    "hold_minutes": held_minutes,
                 })
             # 절반 익절
             elif pnl_pct >= self.config["half_profit_pct"]:
@@ -261,6 +274,8 @@ class AutoTraderAgent(BaseAgent):
                     "code": code,
                     "qty": half,
                     "reason": f"절반 익절: {pnl_pct:.1f}% (보유 {held_minutes:.0f}분)",
+                    "pnl_pct": pnl_pct,
+                    "hold_minutes": held_minutes,
                 })
 
         # 3) 매수 금지 시간이면 매도만 실행
@@ -376,6 +391,15 @@ class AutoTraderAgent(BaseAgent):
 
         trend_text = "\n".join(trend_summary) if trend_summary else "분봉 데이터 없음"
 
+        # 과거 성과 + 교훈 텍스트 구성
+        history_text = "데이터 없음"
+        if self._analyzer and context.get("trade_stats"):
+            history_text = self._analyzer.format_stats_for_prompt(context["trade_stats"])
+
+        lessons_text = "없음"
+        if context.get("recent_lessons"):
+            lessons_text = "\n".join(f"- {l}" for l in context["recent_lessons"][:5])
+
         prompt = f"""당신은 한국 주식 데이트레이딩 AI입니다. 현재 시장 데이터를 분석하고 매수할 종목을 추천하세요.
 
 ## 현재 시세 (호가 스프레드 포함)
@@ -392,6 +416,12 @@ class AutoTraderAgent(BaseAgent):
 
 ## 최근 뉴스
 {news_summary}
+
+## 과거 매매 성과 (최근 30일)
+{history_text}
+
+## 최근 매매 교훈 (반드시 참고)
+{lessons_text}
 
 ## 매매 규칙 (반드시 준수)
 - 등락률 +2%~+5% 구간의 초기 모멘텀 종목 선호
@@ -534,9 +564,9 @@ class AutoTraderAgent(BaseAgent):
                 }
                 self._trade_log.append(log_entry)
 
-                # Supabase 기록 (비용 포함)
+                # Supabase 기록 (비용 + 학습용 필드 포함)
                 try:
-                    self.supabase.table("auto_trade_log").insert({
+                    record = {
                         "trade_time": self._now_kst().isoformat(),
                         "action": action_str,
                         "stock_code": code,
@@ -546,7 +576,16 @@ class AutoTraderAgent(BaseAgent):
                         "order_no": order_no,
                         "reason": f"{reason} | {order_type} | 비용:{cost['총비용']:,}원",
                         "error_msg": result.get("에러", ""),
-                    }).execute()
+                    }
+                    # 학습용 추가 필드 (컬럼 없어도 무시됨)
+                    if price_now or limit_price:
+                        record["price"] = price_now or limit_price
+                    if action.get("pnl_pct") is not None:
+                        record["pnl_pct"] = action["pnl_pct"]
+                    if action.get("hold_minutes") is not None:
+                        record["hold_minutes"] = int(action["hold_minutes"])
+                    record["agent_name"] = "auto_trader"
+                    self.supabase.table("auto_trade_log").insert(record).execute()
                 except Exception as e:
                     logger.warning(f"[auto_trader] DB 기록 실패: {e}")
 
@@ -607,6 +646,9 @@ class AutoTraderAgent(BaseAgent):
 
         await self.log(report)
 
+        # AI 매매 분석 + 교훈 추출
+        await self._generate_daily_analysis(today, total_trades, buys, sells, errors, pnl, total_asset)
+
         # 노션 저장 (AI 에이전트 결과물 DB)
         try:
             notion_db_id = os.environ.get(
@@ -644,3 +686,125 @@ class AutoTraderAgent(BaseAgent):
         self._trade_log = []
         self._session_start = None
         self._cycle = 0
+
+    # ── 학습 사이클 ────────────────────────────────────
+
+    async def _load_learning_data(self):
+        """하루 최초 가동 시 과거 성과 + 교훈 로드"""
+        today = self._now_kst().strftime("%Y-%m-%d")
+        if self._stats_loaded_date == today:
+            return  # 이미 로드됨
+
+        if not self._analyzer and self.supabase:
+            from agents.trade_history_analyzer import TradeHistoryAnalyzer
+            self._analyzer = TradeHistoryAnalyzer(self.supabase)
+
+        if not self._analyzer:
+            return
+
+        try:
+            self._trade_stats = await self._analyzer.get_stock_stats(days=30)
+            self._recent_lessons = await self._analyzer.get_recent_lessons(days=7)
+            self._stats_loaded_date = today
+            stats_count = len(self._trade_stats)
+            lessons_count = len(self._recent_lessons)
+            logger.info(
+                f"[auto_trader] 학습 데이터 로드: {stats_count}종목 통계, {lessons_count}개 교훈"
+            )
+        except Exception as e:
+            logger.warning(f"[auto_trader] 학습 데이터 로드 실패: {e}")
+
+    async def _generate_daily_analysis(
+        self, today: str, total_trades: int,
+        buys: list, sells: list, errors: list,
+        pnl: int, total_asset: int,
+    ):
+        """AI가 당일 매매를 분석하고 교훈/전략 추출 → trade_journal에 저장"""
+        if not self._analyzer:
+            if self.supabase:
+                from agents.trade_history_analyzer import TradeHistoryAnalyzer
+                self._analyzer = TradeHistoryAnalyzer(self.supabase)
+            else:
+                return
+
+        # 거래 내역 텍스트 구성
+        trade_lines = []
+        win_count = 0
+        loss_count = 0
+        for t in self._trade_log:
+            status = "성공" if t["success"] else "실패"
+            line = f"{t['time'][11:19]} {t['action']} {t['name']}({t['code']}) {t['qty']}주 [{status}] {t['reason']}"
+            trade_lines.append(line)
+            reason = t.get("reason", "").lower()
+            if t["action"] == "매도" and t["success"]:
+                if "익절" in reason:
+                    win_count += 1
+                elif "손절" in reason:
+                    loss_count += 1
+
+        if not trade_lines:
+            return
+
+        trades_text = "\n".join(trade_lines)
+
+        prompt = f"""당신은 데이트레이딩 코치입니다. 오늘의 매매 내역을 분석하고 교훈을 추출하세요.
+
+## 오늘 매매 내역 ({today})
+{trades_text}
+
+## 통계
+- 총 거래: {total_trades}건 (매수 {len(buys)}, 매도 {len(sells)})
+- 익절: {win_count}건, 손절: {loss_count}건
+- 추정손익: {pnl:,}원
+- 추정순자산: {total_asset:,}원
+
+## 분석 요청
+1. 잘한 점 정리
+2. 못한 점 / 개선할 점 정리
+3. 구체적 교훈 3~5개 추출 (내일 매매에 바로 적용할 수 있는 실전적 교훈)
+4. 내일 전략 제안 (매수/매도/관망 방향, 주의해야 할 종목)
+
+## 응답 (JSON만)
+{{"lessons": ["교훈1", "교훈2", ...], "strategy_notes": "내일 전략 한 문단", "good_points": ["잘한점1", ...], "bad_points": ["개선점1", ...]}}"""
+
+        try:
+            resp = await self.ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text.strip()
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            analysis = json.loads(text)
+
+            # trade_journal에 저장
+            analysis["total_trades"] = total_trades
+            analysis["win_count"] = win_count
+            analysis["loss_count"] = loss_count
+            analysis["total_pnl"] = pnl
+            analysis["net_asset"] = total_asset
+            analysis["raw_analysis"] = text
+            await self._analyzer.save_journal(today, analysis)
+
+            # 슬랙에 교훈 보고
+            lessons = analysis.get("lessons", [])
+            if lessons:
+                msg = f"📝 *[자율거래] {today} 매매 교훈*\n"
+                for lesson in lessons:
+                    msg += f"• {lesson}\n"
+                strategy = analysis.get("strategy_notes", "")
+                if strategy:
+                    msg += f"\n📋 *내일 전략*: {strategy}"
+                await self.log(msg)
+
+            logger.info(f"[auto_trader] 매매 분석 완료: {len(lessons)}개 교훈 추출")
+
+        except json.JSONDecodeError:
+            logger.warning("[auto_trader] 매매 분석 JSON 파싱 실패")
+        except Exception as e:
+            logger.error(f"[auto_trader] 매매 분석 오류: {e}")
