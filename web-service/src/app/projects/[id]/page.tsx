@@ -64,6 +64,8 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
   const [audioMode, setAudioMode] = useState<'each' | 'best'>('each');
   const [promptText, setPromptText] = useState('');
   const [pollKey, setPollKey] = useState(0);
+  const [editingElapsed, setEditingElapsed] = useState(0);
+  const [editingStartTime, setEditingStartTime] = useState(() => Date.now());
 
   const loadData = useCallback(async () => {
     const res = await fetch(`/api/projects/${projectId}?_t=${Date.now()}`);
@@ -77,8 +79,19 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
     return () => clearInterval(interval);
   }, [loadData, pollKey]);
 
+  // 편집 중 경과 시간 타이머
+  useEffect(() => {
+    if (!data || data.project.status !== 'editing') return;
+    const timer = setInterval(() => {
+      setEditingElapsed(Math.floor((Date.now() - editingStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data?.project.status, editingStartTime]);
+
   const requestEdit = async (mode: string, prompt?: string) => {
     setEditingMode(mode);
+    setEditingElapsed(0);
+    setEditingStartTime(Date.now());
     try {
       const body: Record<string, string> = { mode, audio_mode: audioMode };
       if (prompt) body.prompt = prompt;
@@ -150,14 +163,48 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
 
       <div className="max-w-2xl mx-auto p-3 space-y-3">
         {/* 편집 중 상태 */}
-        {processingResult && (
-          <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3">
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin shrink-0" />
-              <p className="text-sm font-medium">영상 편집 중...</p>
+        {processingResult && (() => {
+          const rawPath = processingResult.storage_path || '';
+          const stepMatch = rawPath.match(/^step:(\d+)\/(\d+):(.+)$/);
+          const step = stepMatch
+            ? { step: parseInt(stepMatch[1]), total: parseInt(stepMatch[2]), description: stepMatch[3] }
+            : null;
+          const modeMatch = rawPath.match(/^mode:(\w+)/);
+          const currentMode = modeMatch ? MODE_LABELS[modeMatch[1]] || modeMatch[1] : null;
+          return (
+            <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">
+                    영상 편집 중
+                    {currentMode && !step && (
+                      <span className="text-purple-300 ml-2">{currentMode}</span>
+                    )}
+                    {step && (
+                      <span className="text-purple-300 ml-2">
+                        {step.step}/{step.total} · {step.description}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <span className="text-gray-500 text-xs font-mono shrink-0">
+                  {Math.floor(editingElapsed / 60)}:{(editingElapsed % 60).toString().padStart(2, '0')}
+                </span>
+              </div>
+              {step ? (
+                <div className="w-full h-1.5 bg-purple-900/50 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full transition-all duration-500"
+                    style={{ width: `${(step.step / step.total) * 100}%` }}
+                  />
+                </div>
+              ) : (
+                <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* 편집 결과 */}
         {doneResults.length > 0 && (
