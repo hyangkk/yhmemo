@@ -484,16 +484,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   >
                     🎧 로파이
                   </button>
-                  <button
-                    onClick={() => setSelectedBgm('default')}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
-                      selectedBgm === 'default'
-                        ? 'bg-gray-600 border-gray-400 text-white'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
-                    }`}
-                  >
-                    🎼 기본
-                  </button>
                 </div>
               </div>
 
@@ -587,7 +577,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     calm: '잔잔한 배경음악 넣어줘',
                     upbeat: '신나는 배경음악 넣어줘',
                     lofi: '로파이 배경음악 넣어줘',
-                    default: '배경음악 넣어줘',
                   };
                   const subtitleMap: Record<string, string> = {
                     blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',

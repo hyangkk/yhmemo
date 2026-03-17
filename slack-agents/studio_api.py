@@ -131,9 +131,10 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         else:
             prompt_opts = {"bgm": False, "interval": 3.0}
 
-    # 총 단계: 다운로드(N) + 분석(N) + 세그먼트(1) + 인코딩(1) + [BGM(1)] + 업로드(1)
+    # 총 단계: 다운로드(N) + 분석(N) + 세그먼트(1) + 인코딩(1) + [BGM(1)] + [자막(1)] + 업로드(1)
     has_bgm = prompt_opts and prompt_opts.get("bgm", False)
-    total_steps = n_clips + n_clips + 3 + (1 if has_bgm else 0)
+    has_subtitle = prompt_opts and prompt_opts.get("subtitle", False)
+    total_steps = n_clips + n_clips + 3 + (1 if has_bgm else 0) + (1 if has_subtitle else 0)
 
     try:
         # 1~N. 클립 개별 다운로드
@@ -221,6 +222,26 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
                 print(f"[studio] BGM 적용 실패: {bgm_err}, 원본 유지", flush=True)
                 bgm_output.unlink(missing_ok=True)
                 # BGM 실패해도 원본 영상은 유지하여 편집 결과 전달
+
+        # 자막 추가 (프롬프트에서 요청된 경우)
+        if has_subtitle:
+            subtitle_step_num = n_clips * 2 + 3 + (1 if has_bgm else 0)
+            _update_edit_step(sb, result_id, subtitle_step_num, total_steps, "자막 생성 중 (음성인식)")
+            subtitle_style = prompt_opts.get("subtitle", "blackBg") if prompt_opts else "blackBg"
+            print(f"[studio] 자막 추가: style={subtitle_style}", flush=True)
+            subtitle_output = work_dir / f"result_{result_id}_sub.mp4"
+            try:
+                success = _add_subtitles_to_video(str(output_path), str(subtitle_output), subtitle_style)
+                if success and subtitle_output.exists() and subtitle_output.stat().st_size > 0:
+                    output_path.unlink(missing_ok=True)
+                    subtitle_output.rename(output_path)
+                    print("[studio] 자막 적용 완료", flush=True)
+                else:
+                    print("[studio] 자막 출력 없음, 원본 유지", flush=True)
+                    subtitle_output.unlink(missing_ok=True)
+            except Exception as sub_err:
+                print(f"[studio] 자막 적용 실패: {sub_err}, 원본 유지", flush=True)
+                subtitle_output.unlink(missing_ok=True)
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
@@ -1234,6 +1255,7 @@ def _parse_prompt(prompt_text: str) -> dict:
         "bgm_volume": 0.5,
         "interval": 3.0,
         "audio_mode": "each",
+        "subtitle": False,
     }
 
     # 배경음악 감지
@@ -1266,6 +1288,14 @@ def _parse_prompt(prompt_text: str) -> dict:
     if any(kw in text for kw in ["최적 음성", "좋은 마이크", "best", "하나의 음성"]):
         opts["audio_mode"] = "best"
 
+    # 자막 감지
+    subtitle_keywords = ["자막", "subtitle", "caption", "자동 자막", "자동자막"]
+    if any(kw in text for kw in subtitle_keywords):
+        if any(kw in text for kw in ["테두리", "외곽선", "outline"]):
+            opts["subtitle"] = "outline"
+        else:
+            opts["subtitle"] = "blackBg"
+
     return opts
 
 
@@ -1282,14 +1312,15 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
 - bgm: 배경음악/BGM/음악 언급 시 true
 - bgm_style: 경쾌/신나는=upbeat, 차분/잔잔=chill, 그외=ambient
 - interval: 카메라 전환 주기(초), 기본 3
-- audio_mode: 최적음성/좋은마이크=best, 그외=each"""}],
+- audio_mode: 최적음성/좋은마이크=best, 그외=each
+- subtitle: 자막/자동자막/caption/subtitle 언급 시. 검은배경/검은 배경/박스=blackBg, 테두리/외곽선/outline=outline, 그외 자막 언급=blackBg"""}],
         )
         import json
         text = response.content[0].text.strip()
@@ -1304,10 +1335,177 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
         result.setdefault("bgm_volume", 0.5)
         result.setdefault("interval", 3.0)
         result.setdefault("audio_mode", "each")
+        result.setdefault("subtitle", False)
         return result
     except Exception as e:
         print(f"[studio] AI 프롬프트 파싱 실패, 키워드 매칭으로 대체: {e}", flush=True)
         return _parse_prompt(prompt_text)
+
+
+# ── 자막 (Subtitle) ────────────────────────────────────
+
+def _transcribe_audio_groq(audio_path: str) -> list[dict]:
+    """Groq Whisper API로 음성 인식 (무료, 빠름)
+
+    Returns: [{"start": 0.0, "end": 1.5, "text": "안녕하세요"}, ...]
+    """
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    if not api_key:
+        print("[studio] GROQ_API_KEY 없음, 자막 건너뜀", flush=True)
+        return []
+
+    import json
+
+    with open(audio_path, "rb") as f:
+        audio_data = f.read()
+
+    # Groq Whisper API (OpenAI 호환)
+    import urllib.request
+    import io
+
+    # multipart/form-data 직접 구성 (추가 패키지 없이)
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    body = b""
+    # model 필드
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="model"\r\n\r\n'
+    body += b"whisper-large-v3-turbo\r\n"
+    # response_format 필드
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="response_format"\r\n\r\n'
+    body += b"verbose_json\r\n"
+    # language 필드
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="language"\r\n\r\n'
+    body += b"ko\r\n"
+    # timestamp_granularities[] 필드
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
+    body += b"segment\r\n"
+    # file 필드
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="file"; filename="audio.mp3"\r\n'
+    body += b"Content-Type: audio/mpeg\r\n\r\n"
+    body += audio_data
+    body += b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read())
+        segments = result.get("segments", [])
+        print(f"[studio] Whisper 인식 완료: {len(segments)}개 세그먼트", flush=True)
+        return [{"start": s["start"], "end": s["end"], "text": s["text"].strip()} for s in segments if s.get("text", "").strip()]
+    except Exception as e:
+        print(f"[studio] Groq Whisper API 실패: {e}", flush=True)
+        return []
+
+
+def _generate_ass_subtitle(segments: list[dict], style: str, output_path: str):
+    """ASS 자막 파일 생성
+
+    style: "blackBg" (검은 반투명 배경) | "outline" (검은 테두리)
+    """
+    # ASS 스타일 정의
+    if style == "outline":
+        # 흰색 글씨 + 검은 테두리 (BorderStyle=1: 외곽선+그림자)
+        style_line = (
+            "Style: Default,Noto Sans CJK KR,28,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+            "-1,0,0,0,100,100,0,0,1,3,1,2,20,20,40,1"
+        )
+    else:
+        # 흰색 글씨 + 검은 반투명 배경 박스 (BorderStyle=3: 불투명 박스)
+        style_line = (
+            "Style: Default,Noto Sans CJK KR,28,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,"
+            "-1,0,0,0,100,100,0,0,3,2,0,2,20,20,40,1"
+        )
+
+    # ASS 파일 작성
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1280",
+        "PlayResY: 720",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        style_line,
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+
+    for seg in segments:
+        start_t = _format_ass_time(seg["start"])
+        end_t = _format_ass_time(seg["end"])
+        text = seg["text"].replace("\n", "\\N")
+        lines.append(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{text}")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"[studio] ASS 자막 생성: {len(segments)}줄 → {output_path}", flush=True)
+
+
+def _format_ass_time(seconds: float) -> str:
+    """초 → ASS 타임스탬프 (H:MM:SS.CC)"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    cs = int((seconds % 1) * 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _add_subtitles_to_video(video_path: str, output_path: str, subtitle_style: str):
+    """영상에 자막 오버레이 (음성인식 → ASS 자막 → FFmpeg 번인)"""
+    work_dir = Path(video_path).parent
+    audio_path = str(work_dir / "subtitle_audio.mp3")
+    ass_path = str(work_dir / "subtitle.ass")
+
+    # 1. 오디오 추출
+    print("[studio] 자막: 오디오 추출 중", flush=True)
+    _run_ffmpeg(["-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4",
+                 "-ar", "16000", "-ac", "1", audio_path])
+
+    # 오디오 파일 크기 확인
+    audio_size = Path(audio_path).stat().st_size if Path(audio_path).exists() else 0
+    if audio_size < 1000:
+        print(f"[studio] 자막: 오디오 파일 너무 작음 ({audio_size} bytes), 자막 건너뜀", flush=True)
+        return False
+
+    # 2. 음성 인식
+    print("[studio] 자막: 음성 인식 중 (Groq Whisper)", flush=True)
+    segments = _transcribe_audio_groq(audio_path)
+    if not segments:
+        print("[studio] 자막: 인식된 텍스트 없음, 건너뜀", flush=True)
+        return False
+
+    # 3. ASS 자막 파일 생성
+    _generate_ass_subtitle(segments, subtitle_style, ass_path)
+
+    # 4. FFmpeg로 자막 번인 (ASS 필터)
+    print("[studio] 자막: FFmpeg 번인 중", flush=True)
+    # ASS 경로의 특수문자 이스케이프 (FFmpeg filter_complex용)
+    escaped_ass = ass_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    _run_ffmpeg([
+        "-i", video_path,
+        "-vf", f"ass={escaped_ass}",
+        "-c:a", "copy",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        output_path,
+    ])
+
+    print("[studio] 자막 적용 완료", flush=True)
+    return True
 
 
 def _check_ffmpeg() -> bool:
