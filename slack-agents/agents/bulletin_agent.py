@@ -846,7 +846,7 @@ class BulletinAgent(BaseAgent):
             # auto: 특수 패턴 감지 → 테이블 → 리스트 → 링크 폴백
             if soup.select_one("table.boardDefalut"):
                 posts = self._parse_yongin_gosi(soup, base_url, board)
-            elif soup.select_one("div.event_list") or soup.select_one("ul.event_list"):
+            elif soup.select_one("div.gallery_bbs_list4") or soup.select_one("div.gallery_bbs_list"):
                 posts = self._parse_yongin_event(soup, base_url, board)
             else:
                 posts = self._parse_table_board(soup, base_url, board)
@@ -1496,129 +1496,124 @@ class BulletinAgent(BaseAgent):
     # ── 용인시 문화행사 파서 ───────────────────────────────
 
     def _parse_yongin_event(self, soup, base_url: str, board: dict) -> list[dict]:
-        """용인시 문화행사 전용 파서 (카드/리스트 형태).
-        BD_selectClturEventPfmcytList.do 페이지 구조 대응.
-        다양한 카드형 레이아웃 패턴을 시도.
+        """용인시 문화행사 전용 파서.
+        구조: div.gallery_bbs_list4 > ul > li (갤러리 카드형)
+        각 li 안에: .gallery_bbs_img img, .gallery_bbs_txt p.tit,
+        a[href*="BD_selectClturEventPfmcyt.do"] 상세 링크
         """
         posts = []
 
-        # 1차: 이벤트 리스트 구조 (div/ul 기반 카드)
-        card_selectors = [
-            "ul.event_list > li",
-            "div.event_list > div",
-            "ul.culture_list > li",
-            "div.culture_list > div",
-            "ul.card_list > li",
-            "div.card_list > div",
-            "ul.board_gallery > li",
-            "div.board_gallery > div",
-            "ul.thumb_list > li",
-            "div.thumb_list > div",
-            # 공공기관 일반 패턴
-            "div.list_area > ul > li",
-            "div.galViewList > ul > li",
-            "div.bbs_gallery > ul > li",
-        ]
+        # 1차: 정확한 셀렉터 (gallery_bbs_list4)
+        items = soup.select("div.gallery_bbs_list4 > ul > li")
 
-        items = []
-        for sel in card_selectors:
-            items = soup.select(sel)
-            if items:
-                logger.info(f"[bulletin] 문화행사: 셀렉터 '{sel}'로 {len(items)}건 발견")
-                break
-
-        # 2차: 테이블 기반 폴백
+        # 2차: 일반 갤러리 패턴 폴백
         if not items:
-            table_posts = self._parse_table_board(soup, base_url, board)
-            if table_posts:
-                return table_posts
+            for sel in ["div.gallery_bbs_list4 li", "div.gallery_bbs_list li",
+                        "div.gallery_list li", "ul.gallery_list > li",
+                        "div.event_list li", "div.culture_list li"]:
+                items = soup.select(sel)
+                if items:
+                    break
 
-        # 3차: 링크 패턴으로 이벤트 추출 (BD_selectClturEventPfmcyt 패턴)
+        # 3차: BD_selectClturEventPfmcyt 링크 패턴 폴백
         if not items:
+            seen = set()
             for a_tag in soup.find_all("a", href=True):
                 href = a_tag.get("href", "")
-                text = a_tag.get_text(strip=True)
-                onclick = a_tag.get("onclick", "")
-
-                # 이벤트 상세 패턴 감지
-                is_event = bool(re.search(
-                    r"(ClturEvent|EventPfmcyt|eventView|event_view|q_cltrEvntNo)",
-                    href + onclick, re.I
-                ))
-                if is_event and len(text) > 3:
-                    if not href.startswith("http"):
-                        href = urljoin(base_url, href)
-                    # onclick에서 이벤트 번호 추출
-                    if href.startswith("javascript"):
-                        ev_match = re.search(r"['\"]([^'\"]*(?:View|Detail)[^'\"]*)['\"]", onclick)
-                        if ev_match:
-                            href = urljoin(base_url, ev_match.group(1))
-                        else:
-                            href = ""
-
-                    # 날짜 추출 (부모 요소에서)
-                    parent = a_tag.parent
-                    date_str = ""
-                    if parent:
-                        date_match = re.search(r"(\d{4}[-./]\d{1,2}[-./]\d{1,2})", parent.get_text())
-                        if date_match:
-                            date_str = date_match.group(1)
-
-                    content_hash = hashlib.sha256(
-                        f"{board['id']}:{text}:{href or date_str}".encode()
-                    ).hexdigest()[:16]
-
-                    posts.append({
-                        "title": text[:200],
-                        "url": href,
-                        "date": date_str,
-                        "hash": content_hash,
-                    })
+                if "BD_selectClturEventPfmcyt.do" in href and href != "#":
+                    text = a_tag.get_text(strip=True)
+                    if len(text) > 2 and text not in seen:
+                        seen.add(text)
+                        full_url = urljoin(base_url, href) if not href.startswith("http") else href
+                        # 부모에서 날짜 추출
+                        parent = a_tag.parent
+                        date_str = ""
+                        if parent:
+                            dm = re.search(r"(\d{4}\.\d{2}\.\d{2})", parent.get_text())
+                            if dm:
+                                date_str = dm.group(1)
+                        content_hash = hashlib.sha256(
+                            f"{board['id']}:{text}:{full_url}".encode()
+                        ).hexdigest()[:16]
+                        posts.append({"title": text[:200], "url": full_url, "date": date_str, "hash": content_hash})
 
             if posts:
                 logger.info(f"[bulletin] 문화행사 링크 패턴: {len(posts)}건")
                 return posts[:20]
 
+            # 4차: 테이블 폴백
+            return self._parse_table_board(soup, base_url, board)
+
         # 카드 아이템 파싱
         for item in items:
-            a_tag = item.find("a")
+            # 제목: p.tit
             title = ""
-            link = ""
-
-            if a_tag:
-                # 제목 추출: 제목 전용 태그 또는 링크 텍스트
-                title_el = item.select_one(".tit, .title, .name, h3, h4, strong, .subject")
-                if title_el:
-                    title = title_el.get_text(strip=True)
-                else:
-                    title = a_tag.get_text(strip=True)
-
-                href = a_tag.get("href", "")
-                if href and not href.startswith("http") and not href.startswith("javascript"):
-                    href = urljoin(base_url, href)
-                link = href if not href.startswith("javascript") else ""
+            title_el = item.select_one(".gallery_bbs_txt p.tit")
+            if title_el:
+                title = title_el.get_text(strip=True)
             else:
-                # 링크 없는 카드
-                title_el = item.select_one(".tit, .title, .name, h3, h4, strong, .subject")
+                title_el = item.select_one(".tit, .title, h3, h4, strong")
                 if title_el:
                     title = title_el.get_text(strip=True)
 
             if not title or len(title) < 2:
                 continue
 
-            # 날짜 추출
+            # 상세 링크: BD_selectClturEventPfmcyt.do 포함하는 a 태그 (href="#" 제외)
+            link = ""
+            for a in item.find_all("a", href=True):
+                href = a.get("href", "")
+                if "BD_selectClturEventPfmcyt.do" in href and href != "#":
+                    link = urljoin(base_url, href) if not href.startswith("http") else href
+                    break
+            if not link:
+                # 일반 링크 폴백
+                for a in item.find_all("a", href=True):
+                    href = a.get("href", "")
+                    if href and href != "#" and not href.startswith("javascript"):
+                        link = urljoin(base_url, href) if not href.startswith("http") else href
+                        break
+
+            # 카테고리 (bbs_label)
+            category = ""
+            label_el = item.select_one(".bbs_label")
+            if label_el:
+                category = label_el.get_text(strip=True)
+
+            # 행사기간 (첫번째 li의 마지막 span)
             date_str = ""
-            date_el = item.select_one(".date, .period, .day, .time, .duration")
-            if date_el:
-                date_str = date_el.get_text(strip=True)
-            else:
-                date_match = re.search(r"(\d{4}[-./]\d{1,2}[-./]\d{1,2})", item.get_text())
-                if date_match:
-                    date_str = date_match.group(1)
+            meta_items = item.select(".gallery_bbs_txt ul li")
+            for mi in meta_items:
+                text = mi.get_text(strip=True)
+                if "행사기간" in text or "기간" in text:
+                    spans = mi.find_all("span")
+                    if len(spans) >= 2:
+                        date_str = spans[-1].get_text(strip=True)
+                    else:
+                        dm = re.search(r"(\d{4}\.\d{2}\.\d{2}\s*~\s*\d{4}\.\d{2}\.\d{2})", text)
+                        if dm:
+                            date_str = dm.group(1)
+                    break
+            if not date_str:
+                dm = re.search(r"(\d{4}\.\d{2}\.\d{2})", item.get_text())
+                if dm:
+                    date_str = dm.group(1)
+
+            # 장소
+            venue = ""
+            for mi in meta_items:
+                text = mi.get_text(strip=True)
+                if "장소" in text:
+                    el = mi.select_one(".ellipsis, span:last-child")
+                    if el:
+                        venue = el.get_text(strip=True)
+                    break
 
             # 이미지 URL
-            img = item.find("img")
             img_url = ""
+            img = item.select_one(".gallery_bbs_img img")
+            if not img:
+                img = item.find("img")
             if img:
                 img_src = img.get("src", "")
                 if img_src and not img_src.startswith("data:"):
@@ -1629,11 +1624,13 @@ class BulletinAgent(BaseAgent):
             ).hexdigest()[:16]
 
             post = {
-                "title": title[:200],
+                "title": f"[{category}] {title}" if category else title[:200],
                 "url": link,
-                "date": date_str[:30],
+                "date": date_str[:50],
                 "hash": content_hash,
             }
+            if venue:
+                post["content"] = f"장소: {venue}"
             if img_url:
                 post["thumbnail"] = img_url
             posts.append(post)
