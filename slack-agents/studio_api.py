@@ -204,7 +204,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             bgm_step = n_clips * 2 + 3
             _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
             bgm_style = prompt_opts.get("bgm_style", "ambient")
-            bgm_volume = prompt_opts.get("bgm_volume", 0.15)
+            bgm_volume = prompt_opts.get("bgm_volume", 0.3)
             print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
             bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
             _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
@@ -850,7 +850,7 @@ def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
     return _generate_bgm(duration, style)
 
 
-def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.15):
+def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.3):
     """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
     duration = _get_duration(video_path) or 30.0
     bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
@@ -864,13 +864,15 @@ def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambie
     # -stream_loop로 BGM 반복 (aloop보다 안정적)
     loop_count = max(0, int(duration / bgm_duration) + 1) if bgm_duration > 0 else 0
 
+    # amix의 normalize=0으로 자동 볼륨 감소 방지
+    # 원본 음성은 그대로 유지, BGM만 지정 볼륨으로 믹싱
     _run_ffmpeg([
         "-i", video_path,
         "-stream_loop", str(loop_count), "-i", bgm_path,
         "-filter_complex",
         f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
         f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[outa]",
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[outa]",
         "-map", "0:v", "-map", "[outa]",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
@@ -889,7 +891,7 @@ def _parse_prompt(prompt_text: str) -> dict:
             "base_mode": "auto"|"director"|"split"|"pip",
             "bgm": True|False,
             "bgm_style": "ambient"|"upbeat"|"chill",
-            "bgm_volume": 0.15,
+            "bgm_volume": 0.3,
             "interval": 3.0,  # 카메라 전환 주기 (초)
             "audio_mode": "each"|"best",
         }
@@ -899,7 +901,7 @@ def _parse_prompt(prompt_text: str) -> dict:
         "base_mode": "auto",
         "bgm": False,
         "bgm_style": "ambient",
-        "bgm_volume": 0.15,
+        "bgm_volume": 0.3,
         "interval": 3.0,
         "audio_mode": "each",
     }
@@ -949,7 +951,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.1~0.3, "interval": 1~30, "audio_mode": "each"|"best"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.2~0.5, "interval": 1~30, "audio_mode": "each"|"best"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
