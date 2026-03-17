@@ -63,11 +63,12 @@ export default function ProjectsPage() {
   }, [getToken]);
 
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (authLoading) return; // 인증 확인 중에는 아무것도 하지 않음
+    if (!user) {
       router.replace('/login');
       return;
     }
-    if (user) loadProjects();
+    loadProjects();
   }, [user, authLoading, router, loadProjects]);
 
   const createProject = async () => {
