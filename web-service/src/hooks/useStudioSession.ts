@@ -137,6 +137,9 @@ export function useStudioSession(sessionId: string | null): UseStudioSessionRetu
     const device = data as StudioDevice;
     setMyDevice(device);
 
+    // device_id를 localStorage에 저장 (결과 페이지에서 호스트 확인용)
+    try { localStorage.setItem(`studio_device_${sid}`, device.id); } catch {}
+
     // 로컬 devices 배열에도 즉시 추가 (Realtime 대기 없이)
     setDevices(prev => {
       if (prev.some(d => d.id === device.id)) return prev;

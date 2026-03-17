@@ -137,8 +137,13 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
   // 녹화 완료 → 업로드 (최대 3회 재시도)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
+    // 호스트 → 결과 페이지, 게스트 → 홈으로 이동
     const goToResult = () => {
-      router.push(`/studio/${sessionId}/result`);
+      if (isHost) {
+        router.push(`/studio/${sessionId}/result`);
+      } else {
+        router.push('/studio');
+      }
     };
 
     // device가 없거나 녹화된 데이터가 없으면 바로 결과 페이지로
@@ -215,7 +220,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     }
 
     goToResult();
-  }, [sessionId, router, getSignedUrl, uploadWithXHR]);
+  }, [sessionId, router, getSignedUrl, uploadWithXHR, isHost]);
 
   if (loading) {
     return (

@@ -4,6 +4,7 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import type { StudioSession, StudioClip, StudioDevice, StudioResult } from '@/lib/studio';
 import PromptChat from '@/components/studio/PromptChat';
+import { supabase } from '@/lib/supabase';
 
 interface SessionData {
   session: StudioSession;
@@ -65,6 +66,20 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [finalizeCalled, setFinalizeCalled] = useState(false);
   const [audioMode, setAudioMode] = useState<'each' | 'best'>('each');
   const [addingTestClip, setAddingTestClip] = useState(false);
+  const [hostChecked, setHostChecked] = useState(false);
+
+  // 호스트 카메라 기기만 결과 페이지 접근 가능 (촬영 참여자인 경우)
+  useEffect(() => {
+    if (!data) return;
+    const myDeviceId = localStorage.getItem(`studio_device_${sessionId}`);
+    // 촬영에 참여한 기기인데 호스트가 아니면 → 홈으로
+    if (myDeviceId && data.session.host_device_id !== myDeviceId) {
+      router.replace('/studio');
+      return;
+    }
+    // 참여하지 않은 기기(홈에서 직접 접근) 또는 호스트 → 허용
+    setHostChecked(true);
+  }, [data, sessionId, router]);
 
   // 편집 중 경과 시간 타이머
   useEffect(() => {
@@ -150,7 +165,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     }
   };
 
-  if (loading) {
+  if (loading || !hostChecked) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
