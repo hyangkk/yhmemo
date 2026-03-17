@@ -103,7 +103,7 @@ class BulletinAgent(BaseAgent):
         self._notion_api_key = os.environ.get("NOTION_API_KEY", "")
         self._notion_db_id = os.environ.get(
             "BULLETIN_NOTION_DB_ID",
-            "1e21114e-6491-814f-9771-000b489f49c7",  # AI 에이전트 결과물 DB
+            "1e21114e-6491-8101-8b67-ca52d78a8fb0",  # AI 에이전트 결과물 DB
         )
         # Supabase Storage 설정
         self._supabase_url = os.environ.get(
@@ -743,7 +743,10 @@ class BulletinAgent(BaseAgent):
         use_playwright = board.get("use_playwright", False)
         debug_info = ""
 
-        # 용인시 고시공고: iframe URL을 Playwright로 접근 (form auto-submit 필요)
+        # 용인시 고시공고: form POST action URL로 직접 목록 조회
+        YONGIN_GOSI_ACTION_URL = (
+            "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
+        )
         YONGIN_GOSI_IFRAME_URL = (
             "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp"
             "?not_ancmt_se_code=01,04&homepage_pbs_yn=Y&subCheck=Y"
@@ -753,9 +756,23 @@ class BulletinAgent(BaseAgent):
             "yiNwStable02_01" in url and "yongin.go.kr" in url
         ):
             parser_type = "yongin_gosi"
+            # 1순위: form POST로 직접 목록 조회 (Playwright 불필요)
+            try:
+                html = await self._fetch_yongin_gosi_list()
+                if html and "boardDefalut" in html:
+                    logger.info(f"[bulletin] 용인시 고시공고: form POST 성공 ({len(html)}자)")
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, "html.parser")
+                    posts = self._parse_yongin_gosi(soup, "https://eminwon.yongin.go.kr", board)
+                    if posts:
+                        await self._enrich_posts_with_content(posts, use_vercel=True)
+                    return posts, ""
+            except Exception as e:
+                logger.warning(f"[bulletin] 고시공고 form POST 실패: {e}")
+            # 2순위: Playwright로 iframe URL 접근
             url = YONGIN_GOSI_IFRAME_URL
-            use_playwright = True  # form auto-submit은 Playwright 필요
-            logger.info(f"[bulletin] 용인시 고시공고: iframe URL + Playwright 사용")
+            use_playwright = True
+            logger.info(f"[bulletin] 용인시 고시공고: Playwright 폴백")
 
         _error_patterns = ["bad request", "403 forbidden", "access denied",
                            "502 bad gateway", "서버 오류", "접근이 거부"]
@@ -944,6 +961,15 @@ class BulletinAgent(BaseAgent):
             if not post_url:
                 continue
             try:
+                # 용인시 고시공고: form POST로 상세 조회
+                if post_url.startswith("yongin_gosi:"):
+                    notice_no = post_url.split(":", 1)[1]
+                    content_text = await self._fetch_yongin_gosi_detail(notice_no)
+                    post["content"] = content_text[:5000]
+                    logger.info(f"[bulletin] 고시공고 상세 추출: {post['title'][:30]}... ({len(content_text)}자)")
+                    await asyncio.sleep(1)
+                    continue
+
                 if use_vercel:
                     # 프록시로 HTML 가져와서 BeautifulSoup 파싱
                     html = await self._fetch_via_proxy(post_url)
@@ -1265,58 +1291,189 @@ class BulletinAgent(BaseAgent):
 
         return posts[:20]
 
+    # ── 용인시 고시공고 form POST 직접 조회 ─────────────
+
+    async def _fetch_yongin_gosi_list(self) -> str:
+        """용인시 고시공고 action URL에 form POST로 목록 HTML 가져오기"""
+        from urllib.parse import urlencode
+
+        action_url = "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
+        form_data = {
+            "method": "selectListOfrNotAncmt",
+            "methodnm": "selectListOfrNotAncmtHomepage",
+            "not_ancmt_se_code": "01,04",
+            "homepage_pbs_yn": "Y",
+            "subCheck": "Y",
+            "jndinm": "OfrNotAncmtEJB",
+            "context": "NTIS",
+            "epcCheck": "Y",
+            "pageIndex": "",
+            "ofr_pageSize": "10",
+            "jspPageName": "OfrNotAncmtLSub.jsp",
+            "list_gubun": "",
+        }
+
+        def _sync_fetch():
+            ctx = ssl.create_default_context()
+            data = urlencode(form_data).encode("utf-8")
+            req = urllib.request.Request(action_url, data=data, method="POST", headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp",
+                "Origin": "https://eminwon.yongin.go.kr",
+            })
+            resp = urllib.request.urlopen(req, context=ctx, timeout=20)
+            raw = resp.read()
+            # 인코딩 감지
+            ct = resp.headers.get("Content-Type", "")
+            if "euc-kr" in ct.lower() or "cp949" in ct.lower():
+                return raw.decode("euc-kr", errors="replace")
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return raw.decode("euc-kr", errors="replace")
+
+        return await asyncio.to_thread(_sync_fetch)
+
+    async def _fetch_yongin_gosi_detail(self, notice_no: str) -> str:
+        """용인시 고시공고 상세 페이지를 form POST로 가져와서 본문 텍스트 반환"""
+        from urllib.parse import urlencode
+        from bs4 import BeautifulSoup as BS4
+
+        action_url = "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
+        form_data = {
+            "method": "selectOfrNotAncmt",
+            "methodnm": "selectOfrNotAncmtRegst",
+            "not_ancmt_mgt_no": notice_no,
+            "not_ancmt_se_code": "01,04",
+            "homepage_pbs_yn": "Y",
+            "subCheck": "Y",
+            "jndinm": "OfrNotAncmtEJB",
+            "context": "NTIS",
+            "epcCheck": "Y",
+            "jspPageName": "OfrNotAncmtLSub.jsp",
+        }
+
+        def _sync_fetch():
+            ctx = ssl.create_default_context()
+            data = urlencode(form_data).encode("utf-8")
+            req = urllib.request.Request(action_url, data=data, method="POST", headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp",
+                "Origin": "https://eminwon.yongin.go.kr",
+            })
+            resp = urllib.request.urlopen(req, context=ctx, timeout=20)
+            raw = resp.read()
+            ct = resp.headers.get("Content-Type", "")
+            if "euc-kr" in ct.lower():
+                html = raw.decode("euc-kr", errors="replace")
+            else:
+                try:
+                    html = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    html = raw.decode("euc-kr", errors="replace")
+
+            soup = BS4(html, "html.parser")
+
+            parts = []
+
+            # boardDefalutView 구조: h4(제목), dl(메타), .viewTxt(본문)
+            view = soup.select_one(".boardDefalutView")
+            if view:
+                # 메타 정보
+                for dl in view.find_all("dl"):
+                    dt = dl.find("dt")
+                    dds = dl.find_all("dd")
+                    if dt and dds:
+                        key = dt.get_text(strip=True)
+                        val = " / ".join(dd.get_text(strip=True) for dd in dds if dd.get_text(strip=True))
+                        if key and val and "첨부" not in key:
+                            parts.append(f"{key}: {val}")
+
+                # 본문 (.viewTxt)
+                vt = view.select_one(".viewTxt")
+                if vt:
+                    text = vt.get_text(separator="\n", strip=True)
+                    if text:
+                        parts.append("")
+                        parts.append(text)
+
+                # 첨부파일
+                for dl in view.find_all("dl"):
+                    dt = dl.find("dt")
+                    if dt and "첨부" in dt.get_text(strip=True):
+                        for dd in dl.find_all("dd"):
+                            a = dd.find("a")
+                            if a:
+                                parts.append(f"\n첨부: {a.get_text(strip=True)}")
+
+            if parts:
+                return "\n".join(parts)
+
+            # 폴백: "내용" th → td 패턴
+            for th in soup.find_all("th"):
+                if "내용" in th.get_text(strip=True):
+                    td = th.find_next_sibling("td")
+                    if td:
+                        text = td.get_text(separator="\n", strip=True)
+                        if text and len(text) > 5:
+                            return text
+
+            body = soup.find("body")
+            if body:
+                return body.get_text(separator="\n", strip=True)[:3000]
+            return ""
+
+        return await asyncio.to_thread(_sync_fetch)
+
     # ── 용인시 고시공고 파서 (eminwon.yongin.go.kr) ──────
 
     def _parse_yongin_gosi(self, soup, base_url: str, board: dict) -> list[dict]:
         """용인시 고시공고 전용 파서 (table.boardDefalut 구조)
-        iframe 내부 HTML에서 게시글 목록 추출.
-        상세 페이지는 searchDetail(no) → form POST 방식이라 직접 URL 구성.
+        컬럼: 번호 | 고시공고번호 | 제목 | 담당부서 | 등록일 | 게재기간 | 조회수
+        onclick이 <td>에 직접 있음: <td onclick="searchDetail('142120')">
         """
         posts = []
         table = soup.select_one("table.boardDefalut")
         if not table:
-            # 폴백: 일반 테이블 파서
             return self._parse_table_board(soup, base_url, board)
 
         rows = table.select("tbody tr")
         for row in rows:
             cells = row.find_all("td")
-            if len(cells) < 3:
+            if len(cells) < 5:
                 continue
 
-            # 컬럼: 번호 | 고시공고번호 | 제목 | 담당부서 | 등록일 | 게재기간 | 조회수
-            title_cell = cells[2] if len(cells) > 2 else cells[1]
-            a_tag = title_cell.find("a")
-            if not a_tag:
-                continue
-
-            title = a_tag.get_text(strip=True)
+            # 제목 (3번째 컬럼, index=2)
+            title_cell = cells[2]
+            title = title_cell.get_text(strip=True)
             if not title or len(title) < 2:
                 continue
 
-            # searchDetail('고시번호') onclick에서 번호 추출
-            onclick = a_tag.get("onclick", "")
+            # onclick은 <td>에 있거나 <a>에 있을 수 있음
+            onclick = title_cell.get("onclick", "")
+            a_tag = title_cell.find("a")
+            if not onclick and a_tag:
+                onclick = a_tag.get("onclick", "")
+                title = a_tag.get_text(strip=True)
+
+            # searchDetail('관리번호') 추출
             notice_no = ""
             m = re.search(r"searchDetail\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", onclick)
             if m:
                 notice_no = m.group(1)
 
-            # 상세 페이지 URL 구성 (eminwon.yongin.go.kr action URL)
-            detail_url = ""
-            if notice_no:
-                detail_url = (
-                    "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
-                    f"?not_ancmt_mgt_no={notice_no}&method=selectOfrNotAncmt"
-                )
+            # 고시공고번호 (2번째 컬럼)
+            gosi_no = cells[1].get_text(strip=True)
+            # 날짜 (5번째 컬럼, index=4)
+            date_str = cells[4].get_text(strip=True)
+            # 담당부서 (4번째 컬럼)
+            dept = cells[3].get_text(strip=True)
 
-            # 고시공고번호 (두 번째 컬럼)
-            gosi_no = cells[1].get_text(strip=True) if len(cells) > 1 else ""
-
-            # 날짜 (등록일 = 5번째 컬럼)
-            date_str = cells[4].get_text(strip=True) if len(cells) > 4 else ""
-
-            # 담당부서
-            dept = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+            # 상세 페이지: form POST이므로 URL을 직접 구성할 수 없음
+            # notice_no를 url 필드에 메타데이터로 저장 (추후 상세 조회 시 사용)
+            detail_url = f"yongin_gosi:{notice_no}" if notice_no else ""
 
             content_hash = hashlib.sha256(
                 f"{board['id']}:{title}:{notice_no or date_str}".encode()
@@ -1327,6 +1484,7 @@ class BulletinAgent(BaseAgent):
                 "url": detail_url,
                 "date": date_str[:30],
                 "hash": content_hash,
+                "notice_no": notice_no,
             }
             if dept:
                 post["content"] = f"담당부서: {dept}"
