@@ -92,17 +92,44 @@ async def get_edit_status(result_id: str):
     return result.data
 
 
-def _update_edit_step(sb, result_id: str, step: int, total: int, description: str):
+def _convert_project_clips(project_clips: list[dict]) -> list[dict]:
+    """프로젝트 클립을 스튜디오 클립 포맷으로 변환 (편집 함수 호환)
+
+    프로젝트 클립은 started_at 기준으로 시간순 정렬되어 있음.
+    각 멤버별로 가상의 device_id를 부여하여 멀티캠 편집 가능하게 함.
+    """
+    # 멤버별 가상 device_id 매핑
+    member_ids = list(dict.fromkeys(c["member_id"] for c in project_clips))
+    member_device_map = {mid: f"device_{i}" for i, mid in enumerate(member_ids)}
+
+    studio_clips = []
+    for c in project_clips:
+        studio_clips.append({
+            "id": c["id"],
+            "session_id": c["project_id"],
+            "device_id": member_device_map[c["member_id"]],
+            "storage_path": c["storage_path"],
+            "duration_ms": c.get("duration_ms", 0),
+            "file_size": c.get("file_size", 0),
+            "uploaded_at": c.get("uploaded_at", ""),
+            "started_at": c.get("started_at", ""),
+        })
+    return studio_clips
+
+
+def _update_edit_step(sb, result_id: str, step: int, total: int, description: str, table: str = "studio_results"):
     """편집 진행 단계를 DB에 기록 (프론트엔드 폴링용)"""
-    sb.table("studio_results").update({
+    sb.table(table).update({
         "storage_path": f"step:{step}/{total}:{description}",
     }).eq("id", result_id).execute()
     logger.info(f"[studio] 편집 진행: {step}/{total} - {description}")
 
 
-async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str, audio_mode: str = "each"):
+async def process_edit(session_id: str, result_id: str, clips: list[dict], mode: str, audio_mode: str = "each", is_project: bool = False):
     """FFmpeg로 영상 편집"""
     original_mode = mode  # 업로드 경로용 (prompt 모드 유지)
+    # 프로젝트인 경우 result 테이블명이 다름
+    result_table = "project_results" if is_project else "studio_results"
     sb = _get_supabase()
     work_dir = DATA_DIR / session_id
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -112,7 +139,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
     # 프롬프트 모드: storage_path 덮어쓰기 전에 먼저 파싱
     prompt_opts = None
     if mode == "prompt":
-        result_row = sb.table("studio_results").select("storage_path").eq("id", result_id).single().execute()
+        result_row = sb.table(result_table).select("storage_path").eq("id", result_id).single().execute()
         sp = result_row.data.get("storage_path", "") if result_row.data else ""
         prompt_text = ""
         if sp.startswith("mode:prompt:"):
@@ -256,19 +283,23 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             )
 
         duration = _get_duration(str(output_path))
-        sb.table("studio_results").update({
+        sb.table(result_table).update({
             "storage_path": result_storage_path,
             "duration_ms": int(duration * 1000) if duration else None,
             "status": "done",
         }).eq("id", result_id).execute()
 
-        sb.table("studio_sessions").update({"status": "done"}).eq("id", session_id).execute()
+        session_table = "projects" if is_project else "studio_sessions"
+        done_status = "active" if is_project else "done"
+        sb.table(session_table).update({"status": done_status}).eq("id", session_id).execute()
         logger.info(f"[studio] 편집 완료: session={session_id}")
 
     except Exception as e:
         logger.error(f"[studio] 편집 오류: {e}")
-        sb.table("studio_results").update({"status": "error"}).eq("id", result_id).execute()
-        sb.table("studio_sessions").update({"status": "done"}).eq("id", session_id).execute()
+        sb.table(result_table).update({"status": "error"}).eq("id", result_id).execute()
+        session_table = "projects" if is_project else "studio_sessions"
+        done_status = "active" if is_project else "done"
+        sb.table(session_table).update({"status": done_status}).eq("id", session_id).execute()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -1598,6 +1629,46 @@ def start_studio_server(port: int = 8000):
             except Exception as e:
                 print(f"[studio] 폴링 오류: {e}", flush=True)
                 logger.error(f"[studio] 폴링 오류: {e}")
+
+            # 프로젝트 편집 폴링 (status='editing'인 프로젝트)
+            try:
+                projects = sb.table("projects").select("id").eq("status", "editing").execute()
+                for proj in (projects.data or []):
+                    pid = proj["id"]
+                    results = sb.table("project_results").select("id,status,storage_path,created_at").eq("project_id", pid).execute()
+                    processing = [r for r in (results.data or []) if r["status"] == "processing"]
+
+                    if not processing:
+                        if results.data and any(r["status"] == "done" for r in results.data):
+                            sb.table("projects").update({"status": "active"}).eq("id", pid).execute()
+                        else:
+                            sb.table("projects").update({"status": "active"}).eq("id", pid).execute()
+                        continue
+
+                    for r in processing:
+                        sp = r.get("storage_path", "")
+                        if sp.startswith("step:"):
+                            created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                            age = datetime.now(timezone.utc) - created
+                            if age > timedelta(minutes=5):
+                                sb.table("project_results").update({"status": "error"}).eq("id", r["id"]).execute()
+                            continue
+                        if sp.startswith("mode:") or sp == "":
+                            mode_part = sp.split(":", 1)[1] if sp.startswith("mode:") else "auto"
+                            mode = mode_part.split(":")[0]
+                            audio_mode = "best" if "audio=best" in mode_part else "each"
+                            clips = sb.table("project_clips").select("*").eq("project_id", pid).order("started_at").execute()
+                            if clips.data:
+                                print(f"[studio] 프로젝트 {pid}: 타임라인 편집 시작 (모드={mode}, {len(clips.data)}개 클립)", flush=True)
+                                # 프로젝트 클립을 스튜디오 클립 포맷으로 변환
+                                studio_clips = _convert_project_clips(clips.data)
+                                asyncio.run(process_edit(pid, r["id"], studio_clips, mode, audio_mode, is_project=True))
+                                print(f"[studio] 프로젝트 {pid}: 편집 완료", flush=True)
+                                # 프로젝트를 active로 전환
+                                sb.table("projects").update({"status": "active", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", pid).execute()
+                            break
+            except Exception as e:
+                print(f"[studio] 프로젝트 폴링 오류: {e}", flush=True)
 
     t_server = threading.Thread(target=_run_server, daemon=True)
     t_server.start()

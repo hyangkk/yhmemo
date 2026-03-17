@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthWrapper } from "./auth-wrapper";
 
 export const metadata: Metadata = {
   title: "AI 전략실 — 데이터 기반 전략 인사이트",
@@ -37,7 +38,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="AI 전략실" />
       </head>
       <body className="antialiased">
-        {children}
+        <AuthWrapper>{children}</AuthWrapper>
       </body>
     </html>
   );
