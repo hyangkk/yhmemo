@@ -54,7 +54,7 @@ NEWS_SOURCES = {
 }
 
 DEFAULT_CONFIG = {
-    "target_date": "2026-03-13",           # 평가 목표일
+    "target_date": "2026-03-17",           # 평가 목표일
     "scan_tickers": list(STOCK_NAMES.keys()),
     "max_position_pct": 35,                # 종목당 최대 비중 (%)
     "max_stocks": 8,                       # 최대 보유 종목
