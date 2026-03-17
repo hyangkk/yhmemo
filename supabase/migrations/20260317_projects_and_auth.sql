@@ -83,11 +83,11 @@ CREATE TABLE IF NOT EXISTS payments (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
-  stripe_session_id text,
-  stripe_payment_intent text,
-  amount int NOT NULL,  -- 원 단위
-  currency varchar(10) NOT NULL DEFAULT 'krw',
-  feature text NOT NULL,  -- pro_edit, premium_edit
+  paddle_transaction_id text,
+  paddle_subscription_id text,
+  amount int NOT NULL,  -- cents 단위
+  currency varchar(10) NOT NULL DEFAULT 'usd',
+  feature text NOT NULL,  -- plus, pro_edit 등
   status varchar(20) NOT NULL DEFAULT 'pending',  -- pending, completed, failed
   created_at timestamptz DEFAULT now()
 );
