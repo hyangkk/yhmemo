@@ -163,6 +163,10 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
     has_subtitle = prompt_opts and prompt_opts.get("subtitle", False)
     total_steps = n_clips + n_clips + 3 + (1 if has_bgm else 0) + (1 if has_subtitle else 0)
 
+    # 프로젝트/스튜디오에 따라 올바른 테이블에 단계 기록
+    def update_step(step: int, total: int, desc: str):
+        _update_edit_step(sb, result_id, step, total, desc, table=result_table)
+
     try:
         # 1~N. 클립 개별 다운로드
         supabase_url = os.environ["SUPABASE_URL"]
@@ -171,8 +175,8 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         async with httpx.AsyncClient(timeout=120) as client:
             for i, clip in enumerate(sorted_clips):
                 step = i + 1
-                _update_edit_step(sb, result_id, step, total_steps,
-                                  f"클립 다운로드 중 ({i+1}/{n_clips})")
+                update_step(step, total_steps,
+                            f"클립 다운로드 중 ({i+1}/{n_clips})")
                 url = f"{supabase_url}/storage/v1/object/public/studio-clips/{clip['storage_path']}"
                 resp = await client.get(url)
                 if resp.status_code != 200:
@@ -187,18 +191,18 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         # N+1 ~ 2N. 클립별 영상 분석
         def on_analyze(clip_idx: int):
             step = n_clips + clip_idx + 1
-            _update_edit_step(sb, result_id, step, total_steps,
-                              f"오디오 분석 중 ({clip_idx+1}/{n_clips})")
+            update_step(step, total_steps,
+                        f"오디오 분석 중 ({clip_idx+1}/{n_clips})")
 
         # 2N+1. 세그먼트 계산
         def on_segments():
             step = n_clips * 2 + 1
-            _update_edit_step(sb, result_id, step, total_steps, "편집 구간 계산 중")
+            update_step(step, total_steps, "편집 구간 계산 중")
 
         # 2N+2. FFmpeg 인코딩
         def on_encode():
             step = n_clips * 2 + 2
-            _update_edit_step(sb, result_id, step, total_steps, "FFmpeg 인코딩 중")
+            update_step(step, total_steps, "FFmpeg 인코딩 중")
 
         output_path = work_dir / f"result_{result_id}.mp4"
 
@@ -230,7 +234,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         # 자막 추가 (프롬프트에서 요청된 경우) - BGM보다 먼저! (원본 오디오로 음성인식)
         if has_subtitle:
             subtitle_step_num = n_clips * 2 + 3
-            _update_edit_step(sb, result_id, subtitle_step_num, total_steps, "자막 생성 중 (음성인식)")
+            update_step(subtitle_step_num, total_steps, "자막 생성 중 (음성인식)")
             subtitle_style = prompt_opts.get("subtitle", "blackBg") if prompt_opts else "blackBg"
             # bool True가 올 수 있음 → 기본값으로 교정
             if subtitle_style is True or subtitle_style not in ("blackBg", "outline"):
@@ -253,7 +257,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         # BGM 추가 (프롬프트에서 요청된 경우) - 자막 후에! (음성이 묻히지 않도록)
         if has_bgm:
             bgm_step = n_clips * 2 + 3 + (1 if has_subtitle else 0)
-            _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
+            update_step(bgm_step, total_steps, "배경음악 적용 중")
             bgm_style = (prompt_opts or {}).get("bgm_style", "ambient")
             bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.07)
             print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
@@ -274,7 +278,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
                 # BGM 실패해도 원본 영상은 유지하여 편집 결과 전달
 
         # 마지막 단계: 결과 업로드
-        _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
+        update_step(total_steps, total_steps, "결과 업로드 중")
         result_storage_path = f"{session_id}/result_{result_id}_{original_mode}.mp4"
         with open(output_path, "rb") as f:
             sb.storage.from_("studio-clips").upload(
