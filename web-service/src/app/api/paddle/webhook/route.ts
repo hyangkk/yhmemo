@@ -44,8 +44,8 @@ export async function POST(req: NextRequest) {
       if (txId) {
         await supabase
           .from('payments')
-          .update({ status: 'completed', stripe_payment_intent: txId })
-          .eq('stripe_session_id', txId);
+          .update({ status: 'completed', paddle_transaction_id: txId })
+          .eq('paddle_transaction_id', txId);
       }
     }
   }

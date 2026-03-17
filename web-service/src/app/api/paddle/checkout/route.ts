@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     .insert({
       user_id: userId,
       project_id: projectId,
-      stripe_session_id: transactionId, // paddle transaction id 저장용
+      paddle_transaction_id: transactionId,
       feature: plan || 'plus',
       amount: 900, // $9 = 900 cents
       currency: 'usd',
