@@ -203,15 +203,24 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
         if has_bgm:
             bgm_step = n_clips * 2 + 3
             _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
-            bgm_style = prompt_opts.get("bgm_style", "ambient")
-            bgm_volume = prompt_opts.get("bgm_volume", 0.15)
+            bgm_style = (prompt_opts or {}).get("bgm_style", "ambient")
+            bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.5)
             print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
             bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
-            _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
-            # BGM 버전으로 교체
-            output_path.unlink(missing_ok=True)
-            bgm_output.rename(output_path)
-            print(f"[studio] BGM 적용 완료", flush=True)
+            try:
+                _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
+                # BGM 파일 검증 후 교체
+                if bgm_output.exists() and bgm_output.stat().st_size > 0:
+                    output_path.unlink(missing_ok=True)
+                    bgm_output.rename(output_path)
+                    print(f"[studio] BGM 적용 완료", flush=True)
+                else:
+                    print(f"[studio] BGM 출력 파일 없음/비어있음, 원본 유지", flush=True)
+                    bgm_output.unlink(missing_ok=True)
+            except Exception as bgm_err:
+                print(f"[studio] BGM 적용 실패: {bgm_err}, 원본 유지", flush=True)
+                bgm_output.unlink(missing_ok=True)
+                # BGM 실패해도 원본 영상은 유지하여 편집 결과 전달
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
@@ -850,33 +859,86 @@ def _fetch_or_generate_bgm(duration: float, style: str = "ambient") -> str:
     return _generate_bgm(duration, style)
 
 
-def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.15):
+def _has_audio_stream(video_path: str) -> bool:
+    """비디오 파일에 오디오 스트림이 있는지 확인"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, timeout=10)
+        return bool(result.stdout.strip())
+    except Exception:
+        return True  # 확인 불가 시 있다고 가정
+
+
+def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.5):
     """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
     duration = _get_duration(video_path) or 30.0
     bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
     print(f"[studio] BGM 파일: {bgm_path} (영상 {duration:.1f}초)", flush=True)
 
+    # BGM 파일 존재 및 크기 검증
+    bgm_file = Path(bgm_path)
+    if not bgm_file.exists() or bgm_file.stat().st_size < 100:
+        print(f"[studio] BGM 파일 손상/없음, 재생성: {bgm_path}", flush=True)
+        bgm_file.unlink(missing_ok=True)
+        bgm_path = _generate_bgm(duration, bgm_style)
+
     # BGM 길이 확인
     bgm_duration = _get_duration(bgm_path) or 0
     print(f"[studio] BGM 길이: {bgm_duration:.1f}초", flush=True)
 
-    # BGM이 영상보다 짧으면 반복, 길면 자르기
-    # -stream_loop로 BGM 반복 (aloop보다 안정적)
-    loop_count = max(0, int(duration / bgm_duration) + 1) if bgm_duration > 0 else 0
+    # BGM 길이가 0이면 재생성
+    if bgm_duration <= 0:
+        print(f"[studio] BGM 길이 0, 재생성 시도", flush=True)
+        Path(bgm_path).unlink(missing_ok=True)
+        bgm_path = _generate_bgm(duration, bgm_style)
+        bgm_duration = _get_duration(bgm_path) or 0
+        if bgm_duration <= 0:
+            raise Exception("BGM 생성 실패: 길이 0")
 
-    _run_ffmpeg([
-        "-i", video_path,
-        "-stream_loop", str(loop_count), "-i", bgm_path,
-        "-filter_complex",
-        f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
-        f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[outa]",
-        "-map", "0:v", "-map", "[outa]",
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        str(output_path),
-    ])
+    # BGM이 영상보다 짧으면 반복, 길면 자르기
+    loop_count = max(1, int(duration / bgm_duration) + 1)
+
+    # 입력 영상에 오디오 트랙이 있는지 확인
+    has_audio = _has_audio_stream(video_path)
+    fade_out_st = max(0, duration - 2)
+
+    if has_audio:
+        # amerge+pan으로 수동 믹싱 (amix의 자동 normalize 문제 회피)
+        # amerge: 2개 스테레오 → 4채널(origL,origR,bgmL,bgmR)
+        # pan: c0=origL+bgmL, c1=origR+bgmR → 원본 100% + BGM 볼륨 유지
+        _run_ffmpeg([
+            "-i", video_path,
+            "-stream_loop", str(loop_count), "-i", bgm_path,
+            "-filter_complex",
+            f"[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[orig];"
+            f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+            f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={fade_out_st}:d=2[bgm];"
+            f"[orig][bgm]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3[outa]",
+            "-map", "0:v", "-map", "[outa]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
+    else:
+        # 오디오 없는 영상 → BGM만 단독으로 추가
+        print(f"[studio] 원본 오디오 없음, BGM만 추가", flush=True)
+        _run_ffmpeg([
+            "-i", video_path,
+            "-stream_loop", str(loop_count), "-i", bgm_path,
+            "-filter_complex",
+            f"[1:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+            f"volume={bgm_volume},afade=t=in:d=1,afade=t=out:st={fade_out_st}:d=2[outa]",
+            "-map", "0:v", "-map", "[outa]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
 
 
 # ── 프롬프트 파싱 (자연어 → 편집 옵션) ───────────────
@@ -889,7 +951,7 @@ def _parse_prompt(prompt_text: str) -> dict:
             "base_mode": "auto"|"director"|"split"|"pip",
             "bgm": True|False,
             "bgm_style": "ambient"|"upbeat"|"chill",
-            "bgm_volume": 0.15,
+            "bgm_volume": 0.5,
             "interval": 3.0,  # 카메라 전환 주기 (초)
             "audio_mode": "each"|"best",
         }
@@ -899,13 +961,14 @@ def _parse_prompt(prompt_text: str) -> dict:
         "base_mode": "auto",
         "bgm": False,
         "bgm_style": "ambient",
-        "bgm_volume": 0.15,
+        "bgm_volume": 0.5,
         "interval": 3.0,
         "audio_mode": "each",
     }
 
     # 배경음악 감지
-    bgm_keywords = ["배경음악", "bgm", "음악", "배경 음악", "브금", "뮤직", "music"]
+    bgm_keywords = ["배경음악", "bgm", "음악", "배경 음악", "브금", "뮤직", "music",
+                    "background", "사운드", "sound", "노래", "멜로디", "melody"]
     if any(kw in text for kw in bgm_keywords):
         opts["bgm"] = True
         if any(kw in text for kw in ["경쾌", "신나", "밝은", "활기", "upbeat", "energetic"]):
@@ -949,7 +1012,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.1~0.3, "interval": 1~30, "audio_mode": "each"|"best"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat"|"chill", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
@@ -968,7 +1031,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
         result.setdefault("base_mode", "auto")
         result.setdefault("bgm", False)
         result.setdefault("bgm_style", "ambient")
-        result.setdefault("bgm_volume", 0.15)
+        result.setdefault("bgm_volume", 0.5)
         result.setdefault("interval", 3.0)
         result.setdefault("audio_mode", "each")
         return result

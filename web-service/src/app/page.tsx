@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ROOMS } from "@/lib/rooms";
 import type { StrategyRoom } from "@/lib/rooms";
+import RecentSessions from "@/components/studio/RecentSessions";
 
 export default function Home() {
   return (
@@ -39,6 +40,9 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {/* 최근 촬영 */}
+      <RecentSessions />
 
       {/* Footer */}
       <footer className="max-w-5xl mx-auto px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-500">
