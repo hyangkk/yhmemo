@@ -530,49 +530,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 </div>
               </div>
 
-              {/* 자막 */}
-              <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">자막</h3>
-                <div className="flex gap-1.5 flex-wrap">
-                  <button
-                    onClick={() => setSelectedSubtitle(null)}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
-                      selectedSubtitle === null
-                        ? 'bg-gray-700 border-gray-500 text-white'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
-                    }`}
-                  >
-                    없음
-                  </button>
-                  <button
-                    onClick={() => setSelectedSubtitle('blackBg')}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
-                      selectedSubtitle === 'blackBg'
-                        ? 'bg-yellow-900/50 border-yellow-500/60 text-yellow-300'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
-                    }`}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <span className="inline-block px-1 py-0.5 bg-black text-white text-[10px] rounded leading-none">가</span>
-                      검은 배경
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => setSelectedSubtitle('outline')}
-                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
-                      selectedSubtitle === 'outline'
-                        ? 'bg-yellow-900/50 border-yellow-500/60 text-yellow-300'
-                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
-                    }`}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <span className="inline-block px-1 py-0.5 text-white text-[10px] leading-none" style={{textShadow: '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000'}}>가</span>
-                      테두리
-                    </span>
-                  </button>
-                </div>
-              </div>
-
               {/* 음성 설정 */}
               <div>
                 <h3 className="text-xs font-semibold text-gray-500 mb-1.5">음성</h3>
@@ -620,10 +577,6 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     calm: '잔잔한 배경음악 넣어줘',
                     upbeat: '신나는 배경음악 넣어줘',
                     lofi: '로파이 배경음악 넣어줘',
-                  };
-                  const subtitleMap: Record<string, string> = {
-                    blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',
-                    outline: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 테두리(외곽선)',
                   };
                   const subtitleMap: Record<string, string> = {
                     blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',
