@@ -52,24 +52,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // 현재 세션 확인
     const getSession = async () => {
-      const { data: { session } } = await sb.auth.getSession();
-      if (session?.user) {
-        const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
-        setUser(profile || null);
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
+          setUser(profile || null);
+        }
+      } catch (e) {
+        console.error('세션 확인 실패:', e);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     getSession();
 
     // Auth 상태 변경 리스너
     const { data: { subscription } } = sb.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
-        setUser(profile || null);
-      } else {
+      try {
+        if (session?.user) {
+          const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
+          setUser(profile || null);
+        } else {
+          setUser(null);
+        }
+      } catch (e) {
+        console.error('인증 상태 변경 처리 실패:', e);
         setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
