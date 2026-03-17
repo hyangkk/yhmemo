@@ -10,24 +10,29 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const sb = getBrowserSupabase();
     // URL hash에서 세션 토큰 추출 (Supabase가 자동 처리)
-    sb.auth.getSession().then(({ data: { session } }) => {
+    // hash fragment에서 토큰을 Supabase가 자동 처리하도록 대기
+    const handleAuth = async () => {
+      // hash에 access_token이 있으면 Supabase가 자동으로 세션 설정
+      const { data: { session } } = await sb.auth.getSession();
       if (session) {
         router.replace('/projects');
-      } else {
-        // hash fragment에서 토큰 파싱 대기
-        const checkSession = setInterval(async () => {
-          const { data: { session: s } } = await sb.auth.getSession();
-          if (s) {
-            clearInterval(checkSession);
-            router.replace('/projects');
-          }
-        }, 500);
-        setTimeout(() => {
-          clearInterval(checkSession);
-          router.replace('/login');
-        }, 10000);
+        return;
       }
-    });
+      // 아직 세션이 없으면 잠시 대기 후 재시도
+      let attempts = 0;
+      const checkSession = setInterval(async () => {
+        attempts++;
+        const { data: { session: s } } = await sb.auth.getSession();
+        if (s) {
+          clearInterval(checkSession);
+          router.replace('/projects');
+        } else if (attempts > 20) {
+          clearInterval(checkSession);
+          router.replace('/studio');
+        }
+      }, 500);
+    };
+    handleAuth();
   }, [router]);
 
   return (

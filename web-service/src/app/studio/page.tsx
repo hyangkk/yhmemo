@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth';
 
 interface RecentSession {
   id: string;
@@ -24,6 +25,7 @@ function formatRelativeTime(dateStr: string): string {
 
 export default function StudioPage() {
   const router = useRouter();
+  const { user, signInWithGoogle } = useAuth();
   const [title, setTitle] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -71,8 +73,37 @@ export default function StudioPage() {
     }
   };
 
+  const handleProjectClick = () => {
+    if (user) {
+      router.push('/projects');
+    } else {
+      signInWithGoogle();
+    }
+  };
+
   return (
     <div className={`min-h-screen bg-black text-white flex flex-col items-center p-4 ${recentSessions.length > 0 ? 'pt-12' : 'justify-center'}`}>
+      {/* 프로젝트 버튼 (우측 상단) */}
+      <button
+        onClick={handleProjectClick}
+        className="fixed top-4 right-4 z-50 flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition"
+      >
+        {user ? (
+          <>
+            {user.avatar_url ? (
+              <img src={user.avatar_url} alt="" className="w-5 h-5 rounded-full" />
+            ) : (
+              <span className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-xs font-bold">
+                {user.name?.charAt(0) || 'U'}
+              </span>
+            )}
+            <span className="text-gray-300">프로젝트</span>
+          </>
+        ) : (
+          <span className="text-gray-300">로그인</span>
+        )}
+      </button>
+
       <div className="max-w-sm w-full space-y-4">
         {/* 타이틀 */}
         <div className="text-center pb-2">
