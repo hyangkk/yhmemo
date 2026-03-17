@@ -75,6 +75,16 @@ export default async function Home() {
               <br className="hidden sm:block" />
               데이터 기반 전략 인사이트를 제공합니다
             </p>
+
+            <div className="mt-6">
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                프로젝트 관리 대시보드
+              </Link>
+            </div>
           </div>
         </div>
       </header>
