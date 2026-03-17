@@ -14,7 +14,8 @@ export default function AuthCallbackPage() {
     // Supabase가 URL hash에서 세션을 자동으로 감지 (detectSessionInUrl: true)
     // onAuthStateChange로 세션 설정 완료를 감지
     const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session) {
+      // INITIAL_SESSION: URL hash에서 세션 복원, SIGNED_IN: OAuth 콜백 처리
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
         router.replace('/projects');
       }
     });
