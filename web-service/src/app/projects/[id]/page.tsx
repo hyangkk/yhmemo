@@ -80,14 +80,17 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
   }, [loadData, pollKey]);
 
   // 편집 중 경과 시간 타이머 (processingResult 존재 여부로 편집 중 판단)
-  const isProcessing = !!data?.results.find(r => r.status === 'processing');
+  const processingCreatedAt = data?.results.find(r => r.status === 'processing')?.created_at;
+  const isProcessing = !!processingCreatedAt;
   useEffect(() => {
     if (!isProcessing) return;
+    // 페이지 새로고침 시에도 정확한 경과 시간을 위해 created_at 기준으로 계산
+    const startMs = processingCreatedAt ? new Date(processingCreatedAt).getTime() : editingStartTime;
     const timer = setInterval(() => {
-      setEditingElapsed(Math.floor((Date.now() - editingStartTime) / 1000));
+      setEditingElapsed(Math.floor((Date.now() - startMs) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [isProcessing, editingStartTime]);
+  }, [isProcessing, processingCreatedAt, editingStartTime]);
 
   const requestEdit = async (mode: string, prompt?: string) => {
     setEditingMode(mode);
