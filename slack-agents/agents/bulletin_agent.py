@@ -64,7 +64,7 @@ class BulletinAgent(BaseAgent):
             name="bulletin",
             description="학교/문화센터/공공기관 게시판을 모니터링하여 새 게시글을 알려주는 에이전트",
             slack_channel=SlackClient.CHANNEL_GENERAL,
-            loop_interval=21600,  # 6시간마다 실행
+            loop_interval=3600,  # 1시간마다 루프 (게시판별 check_interval로 실제 주기 제어)
             **kwargs,
         )
         # SSL 검증 비활성화 + 구형 사이트 호환 (보안 레벨 낮춤)
@@ -169,6 +169,8 @@ class BulletinAgent(BaseAgent):
                         for col_sql in [
                             "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS use_playwright BOOLEAN DEFAULT FALSE",
                             "ALTER TABLE bulletin_posts ADD COLUMN IF NOT EXISTS content TEXT DEFAULT ''",
+                            "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS check_interval INTEGER DEFAULT 86400",
+                            "ALTER TABLE bulletin_boards ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ",
                         ]:
                             try:
                                 cur.execute(col_sql)
@@ -206,6 +208,9 @@ class BulletinAgent(BaseAgent):
         for board in boards:
             try:
                 posts = await self._scrape_board(board)
+                # 스크래핑 시도했으면 last_checked_at 갱신 (성공 여부 무관)
+                await self._update_last_checked(board)
+
                 if not posts:
                     logger.info(f"[bulletin] {board['name']}: 게시글을 가져오지 못함")
                     continue
@@ -257,18 +262,46 @@ class BulletinAgent(BaseAgent):
     # ── 게시판 목록 로드 ─────────────────────────────────
 
     async def _load_boards(self) -> list[dict]:
-        """Supabase bulletin_boards 테이블에서 활성 게시판 목록 로드"""
+        """Supabase bulletin_boards 테이블에서 활성 게시판 목록 로드 (check_interval 기반 필터)"""
         def _sync_load():
             try:
                 result = self.supabase.table("bulletin_boards").select("*").eq(
                     "active", True
                 ).execute()
-                return result.data or []
+                all_boards = result.data or []
+
+                # check_interval 기준으로 체크할 게시판만 필터
+                now = datetime.now(timezone.utc)
+                due_boards = []
+                for board in all_boards:
+                    interval = board.get("check_interval") or 86400  # 기본 24시간
+                    last_checked = board.get("last_checked_at")
+                    if last_checked:
+                        # ISO-8601 파싱 (표준 라이브러리)
+                        last_dt = datetime.fromisoformat(last_checked.replace("Z", "+00:00"))
+                        if (now - last_dt).total_seconds() < interval:
+                            logger.info(f"[bulletin] {board['name']}: 아직 체크 주기 안 됨, 건너뜀")
+                            continue
+                    due_boards.append(board)
+
+                return due_boards
             except Exception as e:
                 logger.error(f"[bulletin] 게시판 목록 로드 실패: {e}")
                 return []
 
         return await asyncio.to_thread(_sync_load)
+
+    async def _update_last_checked(self, board: dict):
+        """게시판의 last_checked_at을 현재 시각으로 갱신"""
+        def _sync_update():
+            try:
+                self.supabase.table("bulletin_boards").update({
+                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", board["id"]).execute()
+            except Exception as e:
+                logger.error(f"[bulletin] last_checked_at 갱신 실패: {e}")
+
+        await asyncio.to_thread(_sync_update)
 
     # ── HTTP 요청 (urllib + 쿠키 대응) ─────────────────
 
