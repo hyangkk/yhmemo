@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ROOMS } from "@/lib/rooms";
 import type { StrategyRoom } from "@/lib/rooms";
 import RecentSessions from "@/components/studio/RecentSessions";
+
+export const dynamic = "force-dynamic";
 
 export default function Home() {
   return (
@@ -33,7 +36,9 @@ export default function Home() {
       </header>
 
       {/* 최근 촬영 */}
-      <RecentSessions />
+      <Suspense fallback={null}>
+        <RecentSessions />
+      </Suspense>
 
       {/* Strategy Rooms Grid */}
       <section className="max-w-5xl mx-auto px-4 pb-20">

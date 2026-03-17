@@ -1,7 +1,5 @@
-'use client';
-
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { getServiceSupabase } from '@/lib/supabase';
 
 interface SessionWithResult {
   id: string;
@@ -13,7 +11,8 @@ interface SessionWithResult {
 }
 
 function formatRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const now = Date.now();
+  const diff = now - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return '방금 전';
   if (minutes < 60) return `${minutes}분 전`;
@@ -31,25 +30,17 @@ function formatDuration(ms: number | null): string {
   return `${m}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-export default function RecentSessions() {
-  const [sessions, setSessions] = useState<SessionWithResult[]>([]);
-  const [loading, setLoading] = useState(true);
+export default async function RecentSessions() {
+  const supabase = getServiceSupabase();
+  const { data } = await supabase
+    .from('studio_sessions')
+    .select('id, title, status, created_at, studio_results(id, storage_path, duration_ms, status), studio_clips(id)')
+    .in('status', ['done', 'editing'])
+    .order('created_at', { ascending: false })
+    .limit(10);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('/api/studio/sessions/recent');
-        if (res.ok) {
-          const data = await res.json();
-          setSessions(data || []);
-        }
-      } catch {}
-      setLoading(false);
-    }
-    load();
-  }, []);
+  const sessions = (data as SessionWithResult[]) || [];
 
-  if (loading) return null;
   if (sessions.length === 0) return null;
 
   return (
