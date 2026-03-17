@@ -52,8 +52,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let ignore = false;
 
     // 프로필 조회 (onAuthStateChange 콜백 밖에서 실행 — 데드락 방지)
+    // Supabase 쿼리 빌더는 PromiseLike(.catch 없음)이므로 Promise.resolve()로 감싸기
     const fetchProfile = (userId: string) => {
-      sb.from('profiles').select('*').eq('id', userId).single()
+      Promise.resolve(sb.from('profiles').select('*').eq('id', userId).single())
         .then(({ data: profile }) => {
           if (!ignore) {
             setUser(profile || null);
