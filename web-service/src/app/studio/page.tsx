@@ -3,6 +3,25 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+interface RecentSession {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  studio_results: { id: string; storage_path: string; duration_ms: number | null; status: string }[];
+  studio_clips: { id: string }[];
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '방금 전';
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
+}
+
 export default function StudioPage() {
   const router = useRouter();
   const [title, setTitle] = useState('');
@@ -10,9 +29,11 @@ export default function StudioPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [version, setVersion] = useState<{ front: string; server: string } | null>(null);
+  const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
 
   useEffect(() => {
     fetch('/api/studio/version').then(r => r.json()).then(setVersion).catch(() => {});
+    fetch('/api/studio/sessions/recent').then(r => r.json()).then(setRecentSessions).catch(() => {});
   }, []);
 
   const createSession = async () => {
@@ -51,7 +72,7 @@ export default function StudioPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+    <div className={`min-h-screen bg-black text-white flex flex-col items-center p-4 ${recentSessions.length > 0 ? 'pt-12' : 'justify-center'}`}>
       <div className="max-w-sm w-full space-y-4">
         {/* 타이틀 */}
         <div className="text-center pb-2">
@@ -127,6 +148,40 @@ export default function StudioPage() {
             </p>
           )}
         </div>
+
+        {/* 최근 촬영 */}
+        {recentSessions.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-gray-400">최근 촬영</h2>
+            <div className="space-y-1.5">
+              {recentSessions.map((s) => {
+                const doneResults = s.studio_results.filter(r => r.status === 'done');
+                const clipCount = s.studio_clips.length;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => router.push(`/studio/${s.id}/result`)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 transition text-left"
+                  >
+                    <span className="text-base shrink-0">
+                      {s.status === 'editing' ? '⏳' : doneResults.length > 0 ? '🎬' : '📹'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{s.title}</p>
+                      <p className="text-xs text-gray-500">
+                        {clipCount}클립
+                        {doneResults.length > 0 && ` · ${doneResults.length}편집`}
+                        {s.status === 'editing' && ' · 편집 중'}
+                        {' · '}{formatRelativeTime(s.created_at)}
+                      </p>
+                    </div>
+                    <span className="text-gray-600 text-xs shrink-0">→</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
