@@ -369,7 +369,13 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           </div>
         )}
 
-        {session.status === 'done' && doneResults.length === 0 && !latestResult && (
+        {session.status === 'done' && doneResults.length === 0 && !latestResult && clips.length >= 2 && (
+          <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 flex items-center gap-3">
+            <span className="text-xl">🎬</span>
+            <p className="text-sm font-medium">촬영 완료! 아래에서 편집 설정 후 편집을 시작하세요</p>
+          </div>
+        )}
+        {session.status === 'done' && doneResults.length === 0 && !latestResult && clips.length < 2 && (
           <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
             <span className="text-xl">✅</span>
             <p className="text-sm font-medium">촬영 완료 · 아래에서 클립을 다운로드하세요</p>

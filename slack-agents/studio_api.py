@@ -1591,23 +1591,9 @@ def start_studio_server(port: int = 8000):
                         sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
                         continue
 
-                    # 클립 확인
-                    clips = sb.table("studio_clips").select("*").eq("session_id", sid).execute()
-                    if not clips.data:
-                        print(f"[studio] 세션 {sid}: 클립 없음, done으로 전환", flush=True)
-                        sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
-                        continue
-
-                    # 편집 시작 (기본 auto 모드)
-                    print(f"[studio] 세션 {sid}: 편집 시작 (auto, {len(clips.data)}개 클립)", flush=True)
-                    result = sb.table("studio_results").insert({
-                        "session_id": sid,
-                        "storage_path": "mode:auto",
-                        "status": "processing",
-                    }).execute()
-                    result_id = result.data[0]["id"]
-                    asyncio.run(process_edit(sid, result_id, clips.data, "auto"))
-                    print(f"[studio] 세션 {sid}: 편집 완료 (auto)", flush=True)
+                    # result가 없는 editing 세션 → done으로 전환 (사용자가 편집 설정 후 시작)
+                    print(f"[studio] 세션 {sid}: result 없음, done으로 전환 (편집 설정 대기)", flush=True)
+                    sb.table("studio_sessions").update({"status": "done"}).eq("id", sid).execute()
 
             except Exception as e:
                 print(f"[studio] 폴링 오류: {e}", flush=True)
