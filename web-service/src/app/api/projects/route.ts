@@ -25,16 +25,23 @@ export async function GET(req: NextRequest) {
 
   const projectIds = memberProjects?.map(m => m.project_id) || [];
 
-  const { data: projects } = await supabase
+  let query = supabase
     .from('projects')
     .select(`
       *,
       project_clips(id),
       project_members(id, name, role),
       project_results(id, status, duration_ms, created_at)
-    `)
-    .or(`owner_id.eq.${user.id},id.in.(${projectIds.join(',')})`)
-    .order('updated_at', { ascending: false });
+    `);
+
+  // projectIds가 비어있으면 owner_id만으로 필터 (빈 in.()은 PostgREST 에러)
+  if (projectIds.length > 0) {
+    query = query.or(`owner_id.eq.${user.id},id.in.(${projectIds.join(',')})`);
+  } else {
+    query = query.eq('owner_id', user.id);
+  }
+
+  const { data: projects } = await query.order('updated_at', { ascending: false });
 
   return NextResponse.json(projects || []);
 }
