@@ -523,6 +523,11 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   const bgmMap: Record<string, string> = {
                     calm: '잔잔한 클래식 배경음악 넣어줘',
                     upbeat: '신나는 배경음악 넣어줘',
+                    lofi: '로파이 배경음악 넣어줘',
+                  };
+                  const subtitleMap: Record<string, string> = {
+                    blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',
+                    outline: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 테두리(외곽선)',
                   };
                   const modeMap: Record<string, string> = {
                     auto: '교차편집',
