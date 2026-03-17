@@ -228,7 +228,7 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             bgm_step = n_clips * 2 + 3 + (1 if has_subtitle else 0)
             _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
             bgm_style = (prompt_opts or {}).get("bgm_style", "ambient")
-            bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.15)
+            bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.07)
             print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
             bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
             try:
@@ -1150,7 +1150,7 @@ def _has_audio_stream(video_path: str) -> bool:
         return True  # 확인 불가 시 있다고 가정
 
 
-def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.15):
+def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.07):
     """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
     duration = _get_duration(video_path) or 30.0
     bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
@@ -1230,7 +1230,7 @@ def _parse_prompt(prompt_text: str) -> dict:
             "base_mode": "auto"|"director"|"split"|"pip",
             "bgm": True|False,
             "bgm_style": "ambient"|"upbeat",
-            "bgm_volume": 0.15,
+            "bgm_volume": 0.07,
             "interval": 3.0,  # 카메라 전환 주기 (초)
             "audio_mode": "each"|"best",
         }
@@ -1240,7 +1240,7 @@ def _parse_prompt(prompt_text: str) -> dict:
         "base_mode": "auto",
         "bgm": False,
         "bgm_style": "ambient",
-        "bgm_volume": 0.15,
+        "bgm_volume": 0.07,
         "interval": 3.0,
         "audio_mode": "each",
         "subtitle": False,
@@ -1301,7 +1301,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat", "bgm_volume": 0.1~0.25, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat", "bgm_volume": 0.05~0.15, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
@@ -1324,7 +1324,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
         # chill은 삭제됨 → ambient로 교정
         if result.get("bgm_style") not in ("ambient", "upbeat"):
             result["bgm_style"] = "ambient"
-        result.setdefault("bgm_volume", 0.15)
+        result.setdefault("bgm_volume", 0.07)
         result.setdefault("interval", 3.0)
         result.setdefault("audio_mode", "each")
         result.setdefault("subtitle", False)
