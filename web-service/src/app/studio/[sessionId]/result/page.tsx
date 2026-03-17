@@ -141,15 +141,17 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     return () => clearInterval(interval);
   }, [sessionId, pollKey]);
 
-  const requestEdit = async (mode: string) => {
+  const requestEdit = async (mode: string, prompt?: string) => {
     setEditingMode(mode);
     setEditingElapsed(0);
     setEditingStartTime(Date.now());
     try {
+      const body: Record<string, string> = { mode, audio_mode: audioMode };
+      if (prompt) body.prompt = prompt;
       const res = await fetch(`/api/studio/sessions/${sessionId}/edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, audio_mode: audioMode }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const d = await res.json();
@@ -456,6 +458,43 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   <p className="text-[11px] text-gray-400 mt-0.5">가장 좋은 마이크 음성만</p>
                 </button>
               </div>
+            </div>
+
+            {/* 배경음악 추가 */}
+            <h2 className="text-sm font-semibold text-gray-400">배경음악 추가</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('prompt', '잔잔한 배경음악 넣어줘')}
+                className="p-2.5 rounded-xl text-left transition bg-teal-900/30 border border-teal-500/30 hover:bg-teal-900/50 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold">🎵 잔잔한 음악</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">차분하고 편안한 분위기</p>
+              </button>
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('prompt', '신나는 배경음악 넣어줘')}
+                className="p-2.5 rounded-xl text-left transition bg-pink-900/30 border border-pink-500/30 hover:bg-pink-900/50 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold">🎶 신나는 음악</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">경쾌하고 활기찬 분위기</p>
+              </button>
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('prompt', '로파이 배경음악 넣어줘')}
+                className="p-2.5 rounded-xl text-left transition bg-indigo-900/30 border border-indigo-500/30 hover:bg-indigo-900/50 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold">🎧 로파이/칠</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">감성적인 로파이 느낌</p>
+              </button>
+              <button
+                disabled={!!editingMode}
+                onClick={() => requestEdit('prompt', '배경음악 넣어줘')}
+                className="p-2.5 rounded-xl text-left transition bg-gray-800 border border-gray-600 hover:bg-gray-700 disabled:opacity-50"
+              >
+                <p className="text-sm font-semibold">🎼 기본 BGM</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">무난한 배경음악</p>
+              </button>
             </div>
 
             <h2 className="text-sm font-semibold text-gray-400">다른 모드로 편집</h2>
