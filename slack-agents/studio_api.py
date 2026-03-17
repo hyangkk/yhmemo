@@ -200,32 +200,9 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             interval = prompt_opts.get("interval", 3.0) if prompt_opts else 3.0
             _edit_auto_cut(local_files, str(output_path), interval=interval, progress=progress_cb, audio_mode=audio_mode)
 
-        # BGM 추가 (프롬프트에서 요청된 경우)
-        if has_bgm:
-            bgm_step = n_clips * 2 + 3
-            _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
-            bgm_style = (prompt_opts or {}).get("bgm_style", "ambient")
-            bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.5)
-            print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
-            bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
-            try:
-                _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
-                # BGM 파일 검증 후 교체
-                if bgm_output.exists() and bgm_output.stat().st_size > 0:
-                    output_path.unlink(missing_ok=True)
-                    bgm_output.rename(output_path)
-                    print(f"[studio] BGM 적용 완료", flush=True)
-                else:
-                    print(f"[studio] BGM 출력 파일 없음/비어있음, 원본 유지", flush=True)
-                    bgm_output.unlink(missing_ok=True)
-            except Exception as bgm_err:
-                print(f"[studio] BGM 적용 실패: {bgm_err}, 원본 유지", flush=True)
-                bgm_output.unlink(missing_ok=True)
-                # BGM 실패해도 원본 영상은 유지하여 편집 결과 전달
-
-        # 자막 추가 (프롬프트에서 요청된 경우)
+        # 자막 추가 (프롬프트에서 요청된 경우) - BGM보다 먼저! (원본 오디오로 음성인식)
         if has_subtitle:
-            subtitle_step_num = n_clips * 2 + 3 + (1 if has_bgm else 0)
+            subtitle_step_num = n_clips * 2 + 3
             _update_edit_step(sb, result_id, subtitle_step_num, total_steps, "자막 생성 중 (음성인식)")
             subtitle_style = prompt_opts.get("subtitle", "blackBg") if prompt_opts else "blackBg"
             # bool True가 올 수 있음 → 기본값으로 교정
@@ -245,6 +222,29 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             except Exception as sub_err:
                 print(f"[studio] 자막 적용 실패: {sub_err}, 원본 유지", flush=True)
                 subtitle_output.unlink(missing_ok=True)
+
+        # BGM 추가 (프롬프트에서 요청된 경우) - 자막 후에! (음성이 묻히지 않도록)
+        if has_bgm:
+            bgm_step = n_clips * 2 + 3 + (1 if has_subtitle else 0)
+            _update_edit_step(sb, result_id, bgm_step, total_steps, "배경음악 적용 중")
+            bgm_style = (prompt_opts or {}).get("bgm_style", "ambient")
+            bgm_volume = (prompt_opts or {}).get("bgm_volume", 0.15)
+            print(f"[studio] BGM 추가: style={bgm_style}, volume={bgm_volume}", flush=True)
+            bgm_output = work_dir / f"result_{result_id}_bgm.mp4"
+            try:
+                _add_bgm_to_video(str(output_path), str(bgm_output), bgm_style=bgm_style, bgm_volume=bgm_volume)
+                # BGM 파일 검증 후 교체
+                if bgm_output.exists() and bgm_output.stat().st_size > 0:
+                    output_path.unlink(missing_ok=True)
+                    bgm_output.rename(output_path)
+                    print(f"[studio] BGM 적용 완료", flush=True)
+                else:
+                    print(f"[studio] BGM 출력 파일 없음/비어있음, 원본 유지", flush=True)
+                    bgm_output.unlink(missing_ok=True)
+            except Exception as bgm_err:
+                print(f"[studio] BGM 적용 실패: {bgm_err}, 원본 유지", flush=True)
+                bgm_output.unlink(missing_ok=True)
+                # BGM 실패해도 원본 영상은 유지하여 편집 결과 전달
 
         # 마지막 단계: 결과 업로드
         _update_edit_step(sb, result_id, total_steps, total_steps, "결과 업로드 중")
@@ -1150,7 +1150,7 @@ def _has_audio_stream(video_path: str) -> bool:
         return True  # 확인 불가 시 있다고 가정
 
 
-def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.5):
+def _add_bgm_to_video(video_path: str, output_path: str, bgm_style: str = "ambient", bgm_volume: float = 0.15):
     """편집된 영상에 배경음악 믹싱 (원본 오디오 유지 + BGM 저볼륨 깔기)"""
     duration = _get_duration(video_path) or 30.0
     bgm_path = _fetch_or_generate_bgm(duration, bgm_style)
@@ -1230,7 +1230,7 @@ def _parse_prompt(prompt_text: str) -> dict:
             "base_mode": "auto"|"director"|"split"|"pip",
             "bgm": True|False,
             "bgm_style": "ambient"|"upbeat",
-            "bgm_volume": 0.5,
+            "bgm_volume": 0.15,
             "interval": 3.0,  # 카메라 전환 주기 (초)
             "audio_mode": "each"|"best",
         }
@@ -1240,7 +1240,7 @@ def _parse_prompt(prompt_text: str) -> dict:
         "base_mode": "auto",
         "bgm": False,
         "bgm_style": "ambient",
-        "bgm_volume": 0.5,
+        "bgm_volume": 0.15,
         "interval": 3.0,
         "audio_mode": "each",
         "subtitle": False,
@@ -1301,7 +1301,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
 지시: "{prompt_text}"
 
 출력 형식:
-{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat", "bgm_volume": 0.3~0.7, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
+{{"base_mode": "auto"|"director"|"split"|"pip", "bgm": true|false, "bgm_style": "ambient"|"upbeat", "bgm_volume": 0.1~0.25, "interval": 1~30, "audio_mode": "each"|"best", "subtitle": false|"blackBg"|"outline"}}
 
 규칙:
 - base_mode: 교차편집/자동=auto, 감독모드/메인카메라=director, 화면분할=split, PIP=pip
@@ -1324,7 +1324,7 @@ def _parse_prompt_with_ai(prompt_text: str) -> dict:
         # chill은 삭제됨 → ambient로 교정
         if result.get("bgm_style") not in ("ambient", "upbeat"):
             result["bgm_style"] = "ambient"
-        result.setdefault("bgm_volume", 0.5)
+        result.setdefault("bgm_volume", 0.15)
         result.setdefault("interval", 3.0)
         result.setdefault("audio_mode", "each")
         result.setdefault("subtitle", False)
