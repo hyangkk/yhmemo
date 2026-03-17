@@ -14,7 +14,9 @@
 """
 
 import asyncio
+import base64
 import hashlib
+import json
 import logging
 import os
 import re
@@ -96,6 +98,19 @@ class BulletinAgent(BaseAgent):
             "https://kr-proxy.yhmemo-kr.workers.dev",
         )
         self._vercel_proxy_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+        # Notion API 설정
+        self._notion_api_key = os.environ.get("NOTION_API_KEY", "")
+        self._notion_db_id = os.environ.get(
+            "BULLETIN_NOTION_DB_ID",
+            "1e21114e-6491-814f-9771-000b489f49c7",  # AI 에이전트 결과물 DB
+        )
+        # Supabase Storage 설정
+        self._supabase_url = os.environ.get(
+            "SUPABASE_URL",
+            "https://unuvbdqjgiypxfvlplpd.supabase.co",
+        )
+        self._storage_bucket = "bulletin-images"
 
         # Playwright 브라우저 인스턴스 (싱글턴, 필요 시 생성)
         self._pw = None
@@ -225,7 +240,16 @@ class BulletinAgent(BaseAgent):
             # Supabase에 저장
             saved_count = await self._save_posts(board, posts)
 
-            # 슬랙 알림
+            # 노션에 저장 (각 게시글에 notion_url 필드 추가)
+            for post in posts:
+                try:
+                    notion_url = await self._save_to_notion(post, board)
+                    post["notion_url"] = notion_url
+                except Exception as e:
+                    logger.error(f"[bulletin] 노션 저장 실패 ({post['title'][:30]}): {e}")
+                    post["notion_url"] = ""
+
+            # 슬랙 알림 (노션 링크 포함)
             await self._send_slack_notification(board, posts)
 
             logger.info(f"[bulletin] {board['name']}: {saved_count}건 저장, 알림 발송")
@@ -1197,6 +1221,247 @@ class BulletinAgent(BaseAgent):
 
         return await asyncio.to_thread(_sync_save)
 
+    # ── 노션 저장 ──────────────────────────────────────────
+
+    async def _save_to_notion(self, post: dict, board: dict) -> str:
+        """게시글을 노션 DB에 저장하고 페이지 URL 반환"""
+        if not self._notion_api_key:
+            logger.warning("[bulletin] NOTION_API_KEY 없음 — 노션 저장 건너뜀")
+            return ""
+
+        # 게시글 HTML에서 이미지 URL 추출 및 Supabase Storage 업로드
+        image_urls = await self._upload_post_images(post, board)
+
+        # 노션 페이지 본문 구성
+        board_name = board["name"]
+        title = post["title"]
+        post_url = post.get("url", "")
+        content_text = post.get("content", "")
+        date_str = post.get("date", "")
+
+        # Notion 페이지 content (마크다운)
+        lines = [
+            "## 게시글 정보\n",
+            f"- **출처**: {board_name}",
+            f"- **작성일**: {date_str}" if date_str else "",
+            f"- **원본 링크**: {post_url}" if post_url else "",
+            "",
+        ]
+        lines = [l for l in lines if l is not None]
+
+        if content_text:
+            lines.append("## 본문\n")
+            lines.append(content_text[:3000])
+            lines.append("")
+
+        if image_urls:
+            lines.append("## 첨부 이미지\n")
+            for i, img_url in enumerate(image_urls, 1):
+                lines.append(f"![이미지 {i}]({img_url})\n")
+
+        if not content_text and not image_urls:
+            lines.append("> 본문 내용을 가져오지 못했습니다.\n")
+
+        lines.append("---")
+        lines.append(f"*수집일: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')} | 에이전트: bulletin_agent*")
+
+        content = "\n".join(lines)
+
+        # Notion API 호출
+        page_data = {
+            "parent": {"database_id": self._notion_db_id},
+            "properties": {
+                "이름": {"title": [{"text": {"content": f"{title} - {board_name}"}}]},
+                "상태": {"status": {"name": "AI 초안 완료"}},
+            },
+            "children": self._markdown_to_notion_blocks(content),
+        }
+        if image_urls:
+            page_data["icon"] = {"type": "emoji", "emoji": "📋"}
+
+        def _sync_create():
+            req = urllib.request.Request(
+                "https://api.notion.com/v1/pages",
+                data=json.dumps(page_data).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._notion_api_key}",
+                    "Content-Type": "application/json",
+                    "Notion-Version": "2022-06-28",
+                },
+            )
+            ctx = ssl.create_default_context()
+            resp = urllib.request.urlopen(req, timeout=30, context=ctx)
+            result = json.loads(resp.read())
+            return result.get("url", "")
+
+        notion_url = await asyncio.to_thread(_sync_create)
+        logger.info(f"[bulletin] 노션 저장 완료: {title[:30]}... → {notion_url}")
+        return notion_url
+
+    def _markdown_to_notion_blocks(self, md: str) -> list[dict]:
+        """간단한 마크다운을 Notion 블록으로 변환"""
+        blocks = []
+        for line in md.split("\n"):
+            if not line.strip():
+                continue
+
+            # 헤딩
+            if line.startswith("## "):
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": line[3:].strip()}}]},
+                })
+            elif line.startswith("---"):
+                blocks.append({"object": "block", "type": "divider", "divider": {}})
+            # 이미지
+            elif line.startswith("!["):
+                m = re.match(r"!\[.*?\]\((.+?)\)", line)
+                if m:
+                    blocks.append({
+                        "object": "block",
+                        "type": "image",
+                        "image": {"type": "external", "external": {"url": m.group(1)}},
+                    })
+            # 인용
+            elif line.startswith("> "):
+                blocks.append({
+                    "object": "block",
+                    "type": "quote",
+                    "quote": {"rich_text": [{"type": "text", "text": {"content": line[2:].strip()}}]},
+                })
+            # 리스트
+            elif line.startswith("- "):
+                text = line[2:]
+                # 볼드 처리
+                rich_text = self._parse_inline_markdown(text)
+                blocks.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": rich_text},
+                })
+            # 이탤릭 (전체 줄)
+            elif line.startswith("*") and line.endswith("*"):
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": line.strip("*")}, "annotations": {"italic": True}}]},
+                })
+            # 일반 텍스트
+            else:
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": line}}]},
+                })
+
+        return blocks[:100]  # Notion API 블록 제한
+
+    def _parse_inline_markdown(self, text: str) -> list[dict]:
+        """인라인 마크다운(볼드/링크)을 Notion rich_text로 변환"""
+        parts = []
+        remaining = text
+        while remaining:
+            # 볼드
+            m = re.search(r"\*\*(.+?)\*\*", remaining)
+            if m:
+                if m.start() > 0:
+                    parts.append({"type": "text", "text": {"content": remaining[:m.start()]}})
+                parts.append({"type": "text", "text": {"content": m.group(1)}, "annotations": {"bold": True}})
+                remaining = remaining[m.end():]
+            else:
+                parts.append({"type": "text", "text": {"content": remaining}})
+                break
+        return parts
+
+    async def _upload_post_images(self, post: dict, board: dict) -> list[str]:
+        """게시글의 이미지를 프록시로 다운로드 → Supabase Storage 업로드 → 공개 URL 반환"""
+        post_url = post.get("url", "")
+        if not post_url or not self._vercel_proxy_key:
+            return []
+
+        # 게시글 HTML 가져오기 (이미지 URL 추출용)
+        try:
+            html = await self._fetch_via_proxy(post_url)
+        except Exception as e:
+            logger.warning(f"[bulletin] 이미지 추출용 HTML 가져오기 실패: {e}")
+            return []
+
+        # boardView 영역에서 이미지 URL 추출
+        img_urls = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html)
+        # 게시판 도메인의 이미지만 필터 (외부 광고/트래커 제외)
+        board_domain = urlparse(board["url"]).netloc
+        filtered = []
+        for img in img_urls:
+            full_url = urljoin(post_url, img)
+            if board_domain in full_url and "/upload/" in full_url:
+                filtered.append(full_url)
+
+        if not filtered:
+            return []
+
+        logger.info(f"[bulletin] 이미지 {len(filtered)}개 발견: {post['title'][:30]}...")
+
+        # 각 이미지 다운로드 & 업로드 (최대 5개)
+        public_urls = []
+        for img_url in filtered[:5]:
+            try:
+                public_url = await self._download_and_upload_image(img_url, board)
+                if public_url:
+                    public_urls.append(public_url)
+            except Exception as e:
+                logger.warning(f"[bulletin] 이미지 업로드 실패 ({img_url}): {e}")
+
+        return public_urls
+
+    async def _download_and_upload_image(self, img_url: str, board: dict) -> str:
+        """프록시로 이미지 다운로드 → Supabase Storage 업로드 → 공개 URL 반환"""
+        key = self._vercel_proxy_key
+        proxy_url = self._supabase_proxy_url  # base64 지원하는 Supabase Edge Function 사용
+
+        def _sync_download_upload():
+            # 1. 프록시로 이미지 다운로드 (base64)
+            payload = json.dumps({"url": img_url, "spoof_ip": "211.234.120.50"}).encode("utf-8")
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(proxy_url, data=payload, method="POST", headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "YhmemoBot/1.0",
+            })
+            resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+            result = json.loads(resp.read())
+
+            if "base64" not in result:
+                logger.warning(f"[bulletin] 이미지 base64 없음 (status={result.get('status')})")
+                return ""
+
+            img_data = base64.b64decode(result["base64"])
+            if len(img_data) < 100:
+                return ""
+
+            # 2. Supabase Storage에 업로드
+            # 파일명: 게시판별 디렉토리 / 원본 파일명
+            parsed = urlparse(img_url)
+            filename = os.path.basename(parsed.path)
+            board_slug = re.sub(r"[^a-z0-9]", "-", board["name"].lower())[:30]
+            storage_path = f"{board_slug}/{filename}"
+
+            upload_url = f"{self._supabase_url}/storage/v1/object/{self._storage_bucket}/{storage_path}"
+            req2 = urllib.request.Request(upload_url, data=img_data, method="POST", headers={
+                "Authorization": f"Bearer {key}",
+                "apikey": key,
+                "Content-Type": result.get("content_type", "image/jpeg"),
+                "x-upsert": "true",
+            })
+            urllib.request.urlopen(req2, timeout=60, context=ctx)
+
+            public_url = f"{self._supabase_url}/storage/v1/object/public/{self._storage_bucket}/{storage_path}"
+            logger.info(f"[bulletin] 이미지 업로드 완료: {storage_path}")
+            return public_url
+
+        return await asyncio.to_thread(_sync_download_upload)
+
     # ── 슬랙 알림 ────────────────────────────────────────
 
     async def _send_slack_notification(self, board: dict, posts: list[dict]):
@@ -1215,6 +1480,7 @@ class BulletinAgent(BaseAgent):
             url = post.get("url", "")
             date = post.get("date", "")
             content = post.get("content", "")
+            notion_url = post.get("notion_url", "")
 
             if url:
                 lines.append(f"• <{url}|{title}>")
@@ -1222,6 +1488,9 @@ class BulletinAgent(BaseAgent):
                 lines.append(f"• {title}")
             if date:
                 lines[-1] += f"  ({date})"
+            # 노션 링크
+            if notion_url:
+                lines.append(f"  :memo: <{notion_url}|노션에서 보기>")
             # 본문 미리보기 (100자)
             if content:
                 preview = content.replace("\n", " ").strip()[:100]
