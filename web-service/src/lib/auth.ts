@@ -91,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://web-service-ruby.vercel.app/auth/callback',
+        redirectTo: process.env.NEXT_PUBLIC_OAUTH_REDIRECT_URL || `${window.location.origin}/auth/callback`,
       },
     });
   }, []);

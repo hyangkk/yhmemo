@@ -22,7 +22,15 @@ export async function POST(
           return NextResponse.json({ error: 'deviceId가 필요합니다' }, { status: 400 });
         }
 
-        const storagePath = `studio/${sessionId}/${deviceId}.${ext || 'webm'}`;
+        // 경로 순회 공격 방지: UUID 형식 검증 + 확장자 화이트리스트
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(deviceId)) {
+          return NextResponse.json({ error: 'deviceId 형식이 올바르지 않습니다' }, { status: 400 });
+        }
+        const allowedExts = ['webm', 'mp4', 'mov', 'avi'];
+        const safeExt = allowedExts.includes(ext) ? ext : 'webm';
+
+        const storagePath = `studio/${sessionId}/${deviceId}.${safeExt}`;
 
         // 기존 파일이 있으면 삭제 (upsert 대신 - signed URL은 upsert 미지원)
         await supabase.storage.from('studio-clips').remove([storagePath]);
