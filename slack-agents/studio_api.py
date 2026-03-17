@@ -228,6 +228,9 @@ async def process_edit(session_id: str, result_id: str, clips: list[dict], mode:
             subtitle_step_num = n_clips * 2 + 3 + (1 if has_bgm else 0)
             _update_edit_step(sb, result_id, subtitle_step_num, total_steps, "자막 생성 중 (음성인식)")
             subtitle_style = prompt_opts.get("subtitle", "blackBg") if prompt_opts else "blackBg"
+            # bool True가 올 수 있음 → 기본값으로 교정
+            if subtitle_style is True or subtitle_style not in ("blackBg", "outline"):
+                subtitle_style = "blackBg"
             print(f"[studio] 자막 추가: style={subtitle_style}", flush=True)
             subtitle_output = work_dir / f"result_{result_id}_sub.mp4"
             try:
@@ -1356,55 +1359,38 @@ def _transcribe_audio_groq(audio_path: str) -> list[dict]:
 
     import json
 
-    with open(audio_path, "rb") as f:
-        audio_data = f.read()
+    # 오디오 파일 크기 확인 (Groq 25MB 제한)
+    audio_file_size = Path(audio_path).stat().st_size
+    if audio_file_size > 25 * 1024 * 1024:
+        print(f"[studio] 오디오 파일 {audio_file_size / 1024 / 1024:.1f}MB > 25MB 제한, 자막 건너뜀", flush=True)
+        return []
 
-    # Groq Whisper API (OpenAI 호환)
-    import urllib.request
-    import io
-
-    # multipart/form-data 직접 구성 (추가 패키지 없이)
-    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    body = b""
-    # model 필드
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="model"\r\n\r\n'
-    body += b"whisper-large-v3-turbo\r\n"
-    # response_format 필드
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="response_format"\r\n\r\n'
-    body += b"verbose_json\r\n"
-    # language 필드
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="language"\r\n\r\n'
-    body += b"ko\r\n"
-    # timestamp_granularities[] 필드
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
-    body += b"segment\r\n"
-    # file 필드
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="file"; filename="audio.mp3"\r\n'
-    body += b"Content-Type: audio/mpeg\r\n\r\n"
-    body += audio_data
-    body += b"\r\n"
-    body += f"--{boundary}--\r\n".encode()
-
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/audio/transcriptions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
-    )
-
+    # curl 기반 Groq Whisper API 호출 (urllib.request는 Cloudflare 403 차단됨)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-        segments = result.get("segments", [])
+        result = subprocess.run(
+            [
+                "curl", "-s",
+                "-H", f"Authorization: Bearer {api_key}",
+                "-F", "model=whisper-large-v3-turbo",
+                "-F", "response_format=verbose_json",
+                "-F", "language=ko",
+                "-F", "timestamp_granularities[]=segment",
+                "-F", f"file=@{audio_path}",
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+            ],
+            capture_output=True, text=True, timeout=120,  # 긴 영상 대비 120초
+        )
+        if result.returncode != 0:
+            print(f"[studio] Groq Whisper curl 실패: {result.stderr}", flush=True)
+            return []
+
+        data = json.loads(result.stdout)
+        segments = data.get("segments", [])
         print(f"[studio] Whisper 인식 완료: {len(segments)}개 세그먼트", flush=True)
         return [{"start": s["start"], "end": s["end"], "text": s["text"].strip()} for s in segments if s.get("text", "").strip()]
+    except subprocess.TimeoutExpired:
+        print("[studio] Groq Whisper API 타임아웃 (120초 초과)", flush=True)
+        return []
     except Exception as e:
         print(f"[studio] Groq Whisper API 실패: {e}", flush=True)
         return []
@@ -1473,8 +1459,12 @@ def _add_subtitles_to_video(video_path: str, output_path: str, subtitle_style: s
 
     # 1. 오디오 추출
     print("[studio] 자막: 오디오 추출 중", flush=True)
-    _run_ffmpeg(["-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4",
-                 "-ar", "16000", "-ac", "1", audio_path])
+    try:
+        _run_ffmpeg(["-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4",
+                     "-ar", "16000", "-ac", "1", audio_path])
+    except Exception as e:
+        print(f"[studio] 자막: 오디오 추출 실패 (오디오 스트림 없음?): {e}", flush=True)
+        return False
 
     # 오디오 파일 크기 확인
     audio_size = Path(audio_path).stat().st_size if Path(audio_path).exists() else 0
@@ -1495,14 +1485,23 @@ def _add_subtitles_to_video(video_path: str, output_path: str, subtitle_style: s
     # 4. FFmpeg로 자막 번인 (ASS 필터)
     print("[studio] 자막: FFmpeg 번인 중", flush=True)
     # ASS 경로의 특수문자 이스케이프 (FFmpeg filter_complex용)
-    escaped_ass = ass_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-    _run_ffmpeg([
-        "-i", video_path,
-        "-vf", f"ass={escaped_ass}",
-        "-c:a", "copy",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        output_path,
-    ])
+    escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    try:
+        _run_ffmpeg([
+            "-i", video_path,
+            "-vf", f"ass={escaped_ass}",
+            "-c:a", "copy",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            output_path,
+        ])
+    except Exception as e:
+        print(f"[studio] 자막: FFmpeg 번인 실패: {e}", flush=True)
+        return False
+
+    # 출력 파일 검증
+    if not Path(output_path).exists() or Path(output_path).stat().st_size < 1000:
+        print("[studio] 자막: FFmpeg 번인 출력 파일 없거나 너무 작음", flush=True)
+        return False
 
     print("[studio] 자막 적용 완료", flush=True)
     return True
