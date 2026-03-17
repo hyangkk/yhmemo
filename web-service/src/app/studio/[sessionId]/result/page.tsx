@@ -68,6 +68,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   const [hostChecked, setHostChecked] = useState(false);
   const [selectedBgm, setSelectedBgm] = useState<string | null>(null);
   const [selectedMode, setSelectedMode] = useState<string>('auto');
+  const [selectedSubtitle, setSelectedSubtitle] = useState<string | null>(null);
   const [promptText, setPromptText] = useState('');
 
   // 호스트 카메라 기기만 결과 페이지 접근 가능 (촬영 참여자인 경우)
@@ -496,6 +497,49 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 </div>
               </div>
 
+              {/* 자막 */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">자막</h3>
+                <div className="flex gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => setSelectedSubtitle(null)}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedSubtitle === null
+                        ? 'bg-gray-700 border-gray-500 text-white'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    없음
+                  </button>
+                  <button
+                    onClick={() => setSelectedSubtitle('blackBg')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedSubtitle === 'blackBg'
+                        ? 'bg-yellow-900/50 border-yellow-500/60 text-yellow-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block px-1 py-0.5 bg-black text-white text-[10px] rounded leading-none">가</span>
+                      검은 배경
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedSubtitle('outline')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition border ${
+                      selectedSubtitle === 'outline'
+                        ? 'bg-yellow-900/50 border-yellow-500/60 text-yellow-300'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block px-1 py-0.5 text-white text-[10px] leading-none" style={{textShadow: '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000'}}>가</span>
+                      테두리
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               {/* 음성 설정 */}
               <div>
                 <h3 className="text-xs font-semibold text-gray-500 mb-1.5">음성</h3>
@@ -545,19 +589,24 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     lofi: '로파이 배경음악 넣어줘',
                     default: '배경음악 넣어줘',
                   };
+                  const subtitleMap: Record<string, string> = {
+                    blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',
+                    outline: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 테두리(외곽선)',
+                  };
                   const modeMap: Record<string, string> = {
                     auto: '교차편집',
                     director: '감독 모드로 편집',
                   };
 
-                  // BGM이나 추가 프롬프트가 있으면 prompt 모드
                   const hasBgm = selectedBgm && bgmMap[selectedBgm];
+                  const hasSubtitle = selectedSubtitle && subtitleMap[selectedSubtitle];
                   const hasPrompt = promptText.trim();
 
-                  if (hasBgm || hasPrompt) {
+                  if (hasBgm || hasSubtitle || hasPrompt) {
                     const parts: string[] = [];
                     parts.push(modeMap[selectedMode] || '교차편집');
                     if (hasBgm) parts.push(bgmMap[selectedBgm!]);
+                    if (hasSubtitle) parts.push(subtitleMap[selectedSubtitle!]);
                     if (hasPrompt) parts.push(promptText.trim());
                     requestEdit('prompt', parts.join(', '));
                   } else {
