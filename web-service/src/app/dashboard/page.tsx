@@ -213,6 +213,41 @@ export default async function DashboardPage() {
           <SummaryCard label="비활성" value={dormantSlack.length + dormantGh.length} sub="최근 활동 없음" />
         </section>
 
+        {/* 주요 구축 내역 */}
+        <section>
+          <SectionHeader title="주요 구축 내역" description="2026-02-19 ~ 현재 | 요청 → 구축한 주요 기능 타임라인" />
+          <div className="space-y-3">
+            {PROJECT_HISTORY.map((item) => (
+              <div key={item.id} className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 hover:border-gray-700 transition-colors">
+                <div className="flex items-start gap-4">
+                  <div className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center text-lg">
+                    {item.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm font-semibold text-white">{item.title}</h3>
+                      <span className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-500 font-mono">{item.period}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        item.status === "active" ? "bg-green-900/40 text-green-400" :
+                        item.status === "paused" ? "bg-yellow-900/40 text-yellow-400" :
+                        "bg-gray-800 text-gray-500"
+                      }`}>
+                        {item.status === "active" ? "운영 중" : item.status === "paused" ? "일시중단" : "프로토타입"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">{item.description}</p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {item.features.map((f) => (
+                        <span key={f} className="px-1.5 py-0.5 rounded bg-gray-800/80 text-[10px] text-gray-400">{f}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* 운영 중 서비스 */}
         <section>
           <SectionHeader title="운영 중 서비스" description={`${activeServices.length}개 서비스 가동 중`} />
@@ -417,40 +452,6 @@ export default async function DashboardPage() {
             </div>
           </details>
         )}
-        {/* 주요 구축 내역 */}
-        <section>
-          <SectionHeader title="주요 구축 내역" description="2026-02-19 ~ 현재 | 요청 → 구축한 주요 기능 타임라인" />
-          <div className="space-y-3">
-            {PROJECT_HISTORY.map((item) => (
-              <div key={item.id} className="rounded-xl border border-gray-800 bg-gray-900/40 p-4 hover:border-gray-700 transition-colors">
-                <div className="flex items-start gap-4">
-                  <div className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center text-lg">
-                    {item.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-sm font-semibold text-white">{item.title}</h3>
-                      <span className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-500 font-mono">{item.period}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        item.status === "active" ? "bg-green-900/40 text-green-400" :
-                        item.status === "paused" ? "bg-yellow-900/40 text-yellow-400" :
-                        "bg-gray-800 text-gray-500"
-                      }`}>
-                        {item.status === "active" ? "운영 중" : item.status === "paused" ? "일시중단" : "프로토타입"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">{item.description}</p>
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {item.features.map((f) => (
-                        <span key={f} className="px-1.5 py-0.5 rounded bg-gray-800/80 text-[10px] text-gray-400">{f}</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
       </div>
 
       {/* 푸터 */}
