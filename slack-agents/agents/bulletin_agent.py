@@ -1970,7 +1970,7 @@ class BulletinAgent(BaseAgent):
             "## 게시글 정보\n",
             f"- **출처**: {board_name}",
             f"- **작성일**: {date_str}" if date_str else "",
-            f"- **원본 링크**: [{display_url}]({display_url})" if display_url else "",
+            f"- **원본 링크**: {display_url}" if display_url else "",
             "",
         ]
         lines = [l for l in lines if l is not None]
@@ -2085,20 +2085,36 @@ class BulletinAgent(BaseAgent):
         return blocks[:100]  # Notion API 블록 제한
 
     def _parse_inline_markdown(self, text: str) -> list[dict]:
-        """인라인 마크다운(볼드/링크)을 Notion rich_text로 변환"""
+        """인라인 마크다운(볼드/링크/URL)을 Notion rich_text로 변환"""
         parts = []
         remaining = text
         while remaining:
-            # 볼드
-            m = re.search(r"\*\*(.+?)\*\*", remaining)
-            if m:
-                if m.start() > 0:
-                    parts.append({"type": "text", "text": {"content": remaining[:m.start()]}})
-                parts.append({"type": "text", "text": {"content": m.group(1)}, "annotations": {"bold": True}})
-                remaining = remaining[m.end():]
-            else:
+            # 볼드 또는 URL 중 먼저 나오는 것 처리
+            bold_m = re.search(r"\*\*(.+?)\*\*", remaining)
+            url_m = re.search(r"(https?://[^\s\)]+)", remaining)
+
+            # 둘 다 없으면 나머지 텍스트 추가 후 종료
+            if not bold_m and not url_m:
                 parts.append({"type": "text", "text": {"content": remaining}})
                 break
+
+            # 더 먼저 나오는 패턴 처리
+            bold_pos = bold_m.start() if bold_m else float("inf")
+            url_pos = url_m.start() if url_m else float("inf")
+
+            if bold_pos <= url_pos:
+                # 볼드 처리
+                if bold_m.start() > 0:
+                    parts.append({"type": "text", "text": {"content": remaining[:bold_m.start()]}})
+                parts.append({"type": "text", "text": {"content": bold_m.group(1)}, "annotations": {"bold": True}})
+                remaining = remaining[bold_m.end():]
+            else:
+                # URL → 클릭 가능한 하이퍼링크로 변환
+                if url_m.start() > 0:
+                    parts.append({"type": "text", "text": {"content": remaining[:url_m.start()]}})
+                url = url_m.group(1)
+                parts.append({"type": "text", "text": {"content": url, "link": {"url": url}}})
+                remaining = remaining[url_m.end():]
         return parts
 
     async def _upload_post_images(self, post: dict, board: dict) -> list[str]:
