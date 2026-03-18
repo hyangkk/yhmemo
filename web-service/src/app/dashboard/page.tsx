@@ -42,11 +42,11 @@ const PROJECT_HISTORY = [
   {
     id: "multicam-studio",
     icon: "🎬",
-    title: "멀티캠 스튜디오",
+    title: "SupaCam 슈파캠",
     period: "03-11 ~",
     status: "active" as const,
     description: "다중 카메라 동시 촬영 + AI 자동 교차편집. BGM, 자막(Groq), AI 감독 모드, 프롬프트 편집 지원",
-    features: ["멀티캠 촬영", "AI 교차편집", "BGM (Pixabay)", "자동 자막", "감독 모드"],
+    features: ["SupaCam 촬영", "AI 교차편집", "BGM (Pixabay)", "자동 자막", "감독 모드"],
   },
   {
     id: "auto-trading",

@@ -21,12 +21,12 @@ const PROJECTS = [
   },
   {
     id: "studio",
-    name: "멀티캠 스튜디오",
+    name: "SupaCam 슈파캠",
     description: "다중 카메라 영상 촬영 + AI 자동 편집 + 최종 결과물 생성",
     icon: "🎬",
     gradient: "from-violet-500 to-purple-600",
     path: "/studio",
-    tags: ["영상 편집", "AI 자동화", "멀티캠"],
+    tags: ["영상 편집", "AI 자동화", "SupaCam"],
   },
 ];
 

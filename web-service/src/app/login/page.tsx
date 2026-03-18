@@ -26,7 +26,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
       <div className="max-w-sm w-full space-y-8 text-center">
         <div>
-          <h1 className="text-3xl font-bold">멀티캠 스튜디오</h1>
+          <h1 className="text-3xl font-bold">SupaCam 슈파캠</h1>
           <p className="text-gray-400 mt-2">여러 카메라로 촬영하고 AI가 자동 편집</p>
         </div>
 

@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from 'next';
 
 export const metadata: Metadata = {
-  title: '멀티캠 스튜디오',
+  title: 'SupaCam 슈파캠',
   description: '여러 대의 카메라로 동시 촬영하고 자동 편집된 영상을 받아보세요',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: '멀티캠 스튜디오',
+    title: 'SupaCam 슈파캠',
   },
 };
 
