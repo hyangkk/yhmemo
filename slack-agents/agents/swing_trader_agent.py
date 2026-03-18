@@ -923,6 +923,11 @@ class SwingTraderAgent(BaseAgent):
 
             logger.info(f"[swing] 매매일지 완료: {len(lessons)}개 교훈")
 
+            # 노션 저장 (거래 내역 + AI 분석)
+            await self._save_journal_to_notion(
+                today, total, pnl, total_asset, analysis,
+            )
+
         except json.JSONDecodeError:
             logger.warning("[swing] 매매일지 JSON 파싱 실패")
         except Exception as e:
@@ -930,6 +935,78 @@ class SwingTraderAgent(BaseAgent):
 
         # 로그 초기화
         self._trade_log = []
+
+    async def _save_journal_to_notion(
+        self, today: str, total_trades: int, pnl: int,
+        total_asset: int, analysis: dict | None,
+    ):
+        """매매일지를 노션에 저장 (거래 내역 + AI 분석 포함)"""
+        try:
+            notion_db_id = os.environ.get(
+                "NOTION_AGENT_RESULTS_DB_ID",
+                "1e21114e-6491-8101-8b67-ca52d78a8fb0",
+            )
+            if not self.notion:
+                return
+
+            from integrations.notion_client import NotionClient
+
+            # 기본 블록: 요약 + 거래 내역
+            blocks = [
+                NotionClient.block_heading(f"{today} 스윙 트레이딩 보고서"),
+                NotionClient.block_paragraph(
+                    f"총 거래: {total_trades}건 | 추정손익: {pnl:,}원 | 추정순자산: {total_asset:,}원"
+                ),
+                NotionClient.block_divider(),
+                NotionClient.block_heading("거래 내역", level=3),
+            ] + [
+                NotionClient.block_paragraph(
+                    f"{'✅' if t['success'] else '❌'} {t['time'][11:19]} {t['action']} {t['name']} {t['qty']}주 - {t['reason']}"
+                )
+                for t in self._trade_log
+            ]
+
+            # AI 분석 결과 블록 추가
+            if analysis:
+                blocks.append(NotionClient.block_divider())
+                blocks.append(NotionClient.block_heading("AI 매매 분석", level=2))
+
+                good_points = analysis.get("good_points", [])
+                if good_points:
+                    blocks.append(NotionClient.block_heading("잘한 점", level=3))
+                    for pt in good_points:
+                        blocks.append(NotionClient.block_paragraph(f"✅ {pt}"))
+
+                bad_points = analysis.get("bad_points", [])
+                if bad_points:
+                    blocks.append(NotionClient.block_heading("개선할 점", level=3))
+                    for pt in bad_points:
+                        blocks.append(NotionClient.block_paragraph(f"⚠️ {pt}"))
+
+                lessons = analysis.get("lessons", [])
+                if lessons:
+                    blocks.append(NotionClient.block_heading("매매 교훈", level=3))
+                    for lesson in lessons:
+                        blocks.append(NotionClient.block_paragraph(f"💡 {lesson}"))
+
+                strategy = analysis.get("strategy_notes", "")
+                if strategy:
+                    blocks.append(NotionClient.block_heading("내일 투자 전략", level=3))
+                    blocks.append(NotionClient.block_paragraph(strategy))
+
+            await self.notion.create_page(
+                database_id=notion_db_id,
+                properties={
+                    "이름": NotionClient.prop_title(
+                        f"[스윙트레이딩] {today} 일일 보고서"
+                    ),
+                },
+                content_blocks=blocks,
+            )
+            logger.info("[swing] 일일 보고서 노션 저장 완료 (AI 분석 포함)")
+
+        except Exception as e:
+            logger.warning(f"[swing] 노션 저장 실패: {e}")
 
     # ── 정리 ───────────────────────────────────────────
 

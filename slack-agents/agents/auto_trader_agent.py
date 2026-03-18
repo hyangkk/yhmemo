@@ -651,9 +651,9 @@ class AutoTraderAgent(BaseAgent):
         await self.log(report)
 
         # AI 매매 분석 + 교훈 추출
-        await self._generate_daily_analysis(today, total_trades, buys, sells, errors, pnl, total_asset)
+        analysis = await self._generate_daily_analysis(today, total_trades, buys, sells, errors, pnl, total_asset)
 
-        # 노션 저장 (AI 에이전트 결과물 DB)
+        # 노션 저장 (AI 에이전트 결과물 DB) - 거래 내역 + AI 분석 포함
         try:
             notion_db_id = os.environ.get(
                 "NOTION_AGENT_RESULTS_DB_ID",
@@ -661,6 +661,50 @@ class AutoTraderAgent(BaseAgent):
             )
             if self.notion:
                 from integrations.notion_client import NotionClient
+
+                # 기본 블록: 요약 + 거래 내역
+                blocks = [
+                    NotionClient.block_heading(f"{today} 자율 거래 보고서"),
+                    NotionClient.block_paragraph(
+                        f"총 거래: {total_trades}건 | 추정손익: {pnl:,}원 | 추정순자산: {total_asset:,}원"
+                    ),
+                    NotionClient.block_divider(),
+                    NotionClient.block_heading("거래 내역", level=3),
+                ] + [
+                    NotionClient.block_paragraph(
+                        f"{'✅' if t['success'] else '❌'} {t['time'][11:19]} {t['action']} {t['name']} {t['qty']}주 - {t['reason']}"
+                    )
+                    for t in self._trade_log
+                ]
+
+                # AI 분석 결과 블록 추가
+                if analysis:
+                    blocks.append(NotionClient.block_divider())
+                    blocks.append(NotionClient.block_heading("AI 매매 분석", level=2))
+
+                    good_points = analysis.get("good_points", [])
+                    if good_points:
+                        blocks.append(NotionClient.block_heading("잘한 점", level=3))
+                        for pt in good_points:
+                            blocks.append(NotionClient.block_paragraph(f"✅ {pt}"))
+
+                    bad_points = analysis.get("bad_points", [])
+                    if bad_points:
+                        blocks.append(NotionClient.block_heading("개선할 점", level=3))
+                        for pt in bad_points:
+                            blocks.append(NotionClient.block_paragraph(f"⚠️ {pt}"))
+
+                    lessons = analysis.get("lessons", [])
+                    if lessons:
+                        blocks.append(NotionClient.block_heading("매매 교훈", level=3))
+                        for lesson in lessons:
+                            blocks.append(NotionClient.block_paragraph(f"💡 {lesson}"))
+
+                    strategy = analysis.get("strategy_notes", "")
+                    if strategy:
+                        blocks.append(NotionClient.block_heading("내일 투자 전략", level=3))
+                        blocks.append(NotionClient.block_paragraph(strategy))
+
                 await self.notion.create_page(
                     database_id=notion_db_id,
                     properties={
@@ -668,21 +712,9 @@ class AutoTraderAgent(BaseAgent):
                             f"[자율거래] {today} 일일 보고서"
                         ),
                     },
-                    content_blocks=[
-                        NotionClient.block_heading(f"{today} 자율 거래 보고서"),
-                        NotionClient.block_paragraph(
-                            f"총 거래: {total_trades}건 | 추정손익: {pnl:,}원 | 추정순자산: {total_asset:,}원"
-                        ),
-                        NotionClient.block_divider(),
-                        NotionClient.block_heading("거래 내역", level=3),
-                    ] + [
-                        NotionClient.block_paragraph(
-                            f"{'✅' if t['success'] else '❌'} {t['time'][11:19]} {t['action']} {t['name']} {t['qty']}주 - {t['reason']}"
-                        )
-                        for t in self._trade_log
-                    ],
+                    content_blocks=blocks,
                 )
-                logger.info("[auto_trader] 일일 보고서 노션 저장 완료")
+                logger.info("[auto_trader] 일일 보고서 노션 저장 완료 (AI 분석 포함)")
         except Exception as e:
             logger.warning(f"[auto_trader] 노션 저장 실패: {e}")
 
@@ -749,14 +781,14 @@ class AutoTraderAgent(BaseAgent):
         self, today: str, total_trades: int,
         buys: list, sells: list, errors: list,
         pnl: int, total_asset: int,
-    ):
-        """AI가 당일 매매를 분석하고 교훈/전략 추출 → trade_journal에 저장"""
+    ) -> dict | None:
+        """AI가 당일 매매를 분석하고 교훈/전략 추출 → trade_journal에 저장. 분석 결과 dict 반환."""
         if not self._analyzer:
             if self.supabase:
                 from agents.trade_history_analyzer import TradeHistoryAnalyzer
                 self._analyzer = TradeHistoryAnalyzer(self.supabase)
             else:
-                return
+                return None
 
         # 거래 내역 텍스트 구성
         trade_lines = []
@@ -774,7 +806,7 @@ class AutoTraderAgent(BaseAgent):
                     loss_count += 1
 
         if not trade_lines:
-            return
+            return None
 
         trades_text = "\n".join(trade_lines)
 
@@ -834,8 +866,11 @@ class AutoTraderAgent(BaseAgent):
                 await self.log(msg)
 
             logger.info(f"[auto_trader] 매매 분석 완료: {len(lessons)}개 교훈 추출")
+            return analysis
 
         except json.JSONDecodeError:
             logger.warning("[auto_trader] 매매 분석 JSON 파싱 실패")
+            return None
         except Exception as e:
             logger.error(f"[auto_trader] 매매 분석 오류: {e}")
+            return None
