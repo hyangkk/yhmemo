@@ -812,7 +812,8 @@ class BulletinAgent(BaseAgent):
                     soup = BeautifulSoup(html, "html.parser")
                     posts = self._parse_yongin_gosi(soup, "https://eminwon.yongin.go.kr", board)
                     if posts:
-                        await self._enrich_posts_with_content(posts, use_vercel=True)
+                        # 고시공고는 본문이 form POST로만 접근 가능 → 모든 게시글 상세 가져옴
+                        await self._enrich_posts_with_content(posts, max_posts=20, use_vercel=True)
                     return posts, ""
             except Exception as e:
                 logger.warning(f"[bulletin] 고시공고 form POST 실패: {e}")
@@ -1525,9 +1526,11 @@ class BulletinAgent(BaseAgent):
             # 담당부서 (4번째 컬럼)
             dept = cells[3].get_text(strip=True)
 
-            # 상세 페이지: form POST이므로 URL을 직접 구성할 수 없음
-            # notice_no를 url 필드에 메타데이터로 저장 (추후 상세 조회 시 사용)
+            # 상세 페이지: form POST이므로 직접 링크 불가 → 게시판 목록 URL 사용
+            # notice_no는 별도 필드로 저장 (상세 조회 시 사용)
             detail_url = f"yongin_gosi:{notice_no}" if notice_no else ""
+            # 사용자가 클릭할 수 있는 목록 페이지 URL
+            view_url = board.get("url", "") or "https://www.yongin.go.kr/home/yiNw/yiNwStable/yiNwStable02/yiNwStable02_01.jsp"
 
             content_hash = hashlib.sha256(
                 f"{board['id']}:{title}:{notice_no or date_str}".encode()
@@ -1536,6 +1539,7 @@ class BulletinAgent(BaseAgent):
             post = {
                 "title": f"[{gosi_no}] {title}" if gosi_no else title[:200],
                 "url": detail_url,
+                "view_url": view_url,  # 클릭 가능한 목록 페이지 URL
                 "date": date_str[:30],
                 "hash": content_hash,
                 "notice_no": notice_no,
@@ -1914,10 +1918,14 @@ class BulletinAgent(BaseAgent):
             saved = 0
             for post in posts:
                 try:
+                    # URL: 클릭 가능한 URL 우선 (view_url > url)
+                    save_url = post.get("view_url", "") or post.get("url", "")
+                    if save_url and not save_url.startswith("http"):
+                        save_url = ""  # 내부 ID는 저장하지 않음
                     self.supabase.table("bulletin_posts").insert({
                         "board_id": board["id"],
                         "title": post["title"],
-                        "url": post.get("url", ""),
+                        "url": save_url,
                         "content": post.get("content", "")[:5000],
                         "post_date": post.get("date", ""),
                         "hash": post["hash"],
@@ -1945,7 +1953,15 @@ class BulletinAgent(BaseAgent):
         # 노션 페이지 본문 구성
         board_name = board["name"]
         title = post["title"]
+        # 클릭 가능한 URL 결정: view_url > url (내부 ID가 아닌 경우) > 게시판 목록 URL
         post_url = post.get("url", "")
+        view_url = post.get("view_url", "")
+        if view_url:
+            display_url = view_url
+        elif post_url and post_url.startswith("http"):
+            display_url = post_url
+        else:
+            display_url = board.get("url", "")
         content_text = post.get("content", "")
         date_str = post.get("date", "")
 
@@ -1954,7 +1970,7 @@ class BulletinAgent(BaseAgent):
             "## 게시글 정보\n",
             f"- **출처**: {board_name}",
             f"- **작성일**: {date_str}" if date_str else "",
-            f"- **원본 링크**: {post_url}" if post_url else "",
+            f"- **원본 링크**: [{display_url}]({display_url})" if display_url else "",
             "",
         ]
         lines = [l for l in lines if l is not None]
