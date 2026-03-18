@@ -6,7 +6,7 @@ import { useAuth, getBrowserSupabase } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
 
 export default function MyPage() {
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, loading: authLoading, signOut, refreshProfile } = useAuth();
   const router = useRouter();
   const [subscribing, setSubscribing] = useState(false);
   const [plan, setPlan] = useState<string>('free');
@@ -37,6 +37,7 @@ export default function MyPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('구독 실패');
+      await refreshProfile();
       setPlan('plus');
       setMessage('Plus 구독이 활성화되었습니다!');
     } catch {
