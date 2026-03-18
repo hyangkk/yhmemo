@@ -1853,8 +1853,45 @@ class BulletinAgent(BaseAgent):
     # ── 새 글 필터링 ─────────────────────────────────────
 
     async def _filter_new_posts(self, board: dict, posts: list[dict]) -> list[dict]:
-        """이미 저장된 게시글 제외"""
-        hashes = [p["hash"] for p in posts]
+        """이미 저장된 게시글 제외 + 최근 글(어제/오늘)만 허용"""
+        # 1) 날짜 필터: 어제와 오늘 게시글만 통과
+        now_kst = datetime.now(KST)
+        yesterday = (now_kst - timedelta(days=1)).strftime("%Y-%m-%d")
+        today = now_kst.strftime("%Y-%m-%d")
+        # 짧은 형식도 대응 (2026.03.18, 2026-03-18, 26.03.18 등)
+        yesterday_dots = yesterday.replace("-", ".")
+        today_dots = today.replace("-", ".")
+
+        def _is_recent(post: dict) -> bool:
+            date_str = post.get("date", "").strip()
+            if not date_str:
+                # 날짜 정보 없으면 일단 통과 (이후 해시 중복으로 걸러짐)
+                return True
+            # 날짜 문자열에서 YYYY-MM-DD 또는 YYYY.MM.DD 패턴 추출
+            m = re.search(r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})", date_str)
+            if m:
+                normalized = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+                return normalized == yesterday or normalized == today
+            # YY.MM.DD 패턴
+            m2 = re.search(r"(\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})", date_str)
+            if m2:
+                year = int(m2.group(1)) + 2000
+                normalized = f"{year}-{int(m2.group(2)):02d}-{int(m2.group(3)):02d}"
+                return normalized == yesterday or normalized == today
+            # 패턴 매칭 안 되면 문자열에 오늘/어제 날짜 포함 여부로 판단
+            return (yesterday in date_str or today in date_str
+                    or yesterday_dots in date_str or today_dots in date_str)
+
+        recent_posts = [p for p in posts if _is_recent(p)]
+        if len(recent_posts) < len(posts):
+            skipped = len(posts) - len(recent_posts)
+            logger.info(f"[bulletin] {board['name']}: 날짜 필터로 {skipped}개 오래된 글 제외 (어제/오늘만 허용)")
+
+        if not recent_posts:
+            return []
+
+        # 2) 해시 기반 중복 제거
+        hashes = [p["hash"] for p in recent_posts]
 
         def _sync_check():
             try:
@@ -1867,7 +1904,7 @@ class BulletinAgent(BaseAgent):
                 return set()
 
         seen_hashes = await asyncio.to_thread(_sync_check)
-        return [p for p in posts if p["hash"] not in seen_hashes]
+        return [p for p in recent_posts if p["hash"] not in seen_hashes]
 
     # ── 게시글 저장 ──────────────────────────────────────
 
@@ -2061,8 +2098,22 @@ class BulletinAgent(BaseAgent):
             logger.warning(f"[bulletin] 이미지 추출용 HTML 가져오기 실패: {e}")
             return []
 
-        # boardView 영역에서 이미지 URL 추출
-        img_urls = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html)
+        # boardView / 본문 영역에서 이미지 URL 추출
+        # 본문 영역을 먼저 찾아서 그 안의 이미지만 추출 (헤더/푸터/사이드바 이미지 제외)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        # 본문 영역 후보 셀렉터
+        content_area = (
+            soup.select_one(".board_view, .boardView, .view_content, .view-content, "
+                          ".article-body, .board-view, .detail_content, .entry-content, "
+                          "#contents .view, .bbs_view, .board_detail")
+        )
+        if content_area:
+            img_tags = content_area.find_all("img", src=True)
+            img_urls = [tag["src"] for tag in img_tags]
+        else:
+            img_urls = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html)
+
         # 게시판 도메인의 이미지만 필터 (외부 광고/트래커 제외)
         board_domain = urlparse(board["url"]).netloc
         filtered = []
@@ -2076,11 +2127,12 @@ class BulletinAgent(BaseAgent):
 
         logger.info(f"[bulletin] 이미지 {len(filtered)}개 발견: {post['title'][:30]}...")
 
-        # 각 이미지 다운로드 & 업로드 (최대 5개)
+        # 각 이미지 다운로드 & 업로드 (최대 5개, 게시글 해시로 경로 구분)
+        post_hash = post.get("hash", "")
         public_urls = []
         for img_url in filtered[:5]:
             try:
-                public_url = await self._download_and_upload_image(img_url, board)
+                public_url = await self._download_and_upload_image(img_url, board, post_hash)
                 if public_url:
                     public_urls.append(public_url)
             except Exception as e:
@@ -2088,7 +2140,7 @@ class BulletinAgent(BaseAgent):
 
         return public_urls
 
-    async def _download_and_upload_image(self, img_url: str, board: dict) -> str:
+    async def _download_and_upload_image(self, img_url: str, board: dict, post_hash: str = "") -> str:
         """프록시로 이미지 다운로드 → Supabase Storage 업로드 → 공개 URL 반환"""
         key = self._vercel_proxy_key
         proxy_url = self._supabase_proxy_url  # base64 지원하는 Supabase Edge Function 사용
@@ -2114,11 +2166,12 @@ class BulletinAgent(BaseAgent):
                 return ""
 
             # 2. Supabase Storage에 업로드
-            # 파일명: 게시판별 디렉토리 / 원본 파일명
+            # 파일명: 게시판별 디렉토리 / 게시글해시 / 원본 파일명 (덮어쓰기 방지)
             parsed = urlparse(img_url)
             filename = os.path.basename(parsed.path)
             board_slug = re.sub(r"[^a-z0-9]", "-", board["name"].lower())[:30]
-            storage_path = f"{board_slug}/{filename}"
+            post_id = post_hash[:12] if post_hash else hashlib.sha256(img_url.encode()).hexdigest()[:12]
+            storage_path = f"{board_slug}/{post_id}/{filename}"
 
             upload_url = f"{self._supabase_url}/storage/v1/object/{self._storage_bucket}/{storage_path}"
             req2 = urllib.request.Request(upload_url, data=img_data, method="POST", headers={
