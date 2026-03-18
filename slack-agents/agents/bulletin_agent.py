@@ -885,6 +885,8 @@ class BulletinAgent(BaseAgent):
             posts = self._parse_yongin_gosi(soup, base_url, board)
         elif parser_type == "yongin_event":
             posts = self._parse_yongin_event(soup, base_url, board)
+        elif parser_type == "imweb":
+            posts = self._parse_imweb_board(soup, base_url, board)
         elif parser_type == "table":
             posts = self._parse_table_board(soup, base_url, board)
         elif parser_type == "list":
@@ -895,6 +897,8 @@ class BulletinAgent(BaseAgent):
                 posts = self._parse_yongin_gosi(soup, base_url, board)
             elif soup.select_one("div.gallery_bbs_list4") or soup.select_one("div.gallery_bbs_list"):
                 posts = self._parse_yongin_event(soup, base_url, board)
+            elif soup.select_one("div.li_board ul.li_body"):
+                posts = self._parse_imweb_board(soup, base_url, board)
             else:
                 posts = self._parse_table_board(soup, base_url, board)
             if not posts:
@@ -965,6 +969,7 @@ class BulletinAgent(BaseAgent):
         # 본문 추출용 셀렉터 목록 (우선순위순)
         _content_sels = [
             "table.boardView1 td",  # yicare.or.kr 등 한국 공공기관 게시판
+            "div.board_txt_area",  # imweb 플랫폼 (JTBC 마라톤 등)
             "div.board_view_content", "div.view_content", "div.bbs_content",
             "div.board-content", "div.content_view", "td.board_content",
             "div#content", "div.detail_content", "article", "div.view_cont",
@@ -1684,6 +1689,102 @@ class BulletinAgent(BaseAgent):
 
         logger.info(f"[bulletin] 문화행사 카드 파서: {len(posts)}건")
         return posts[:20]
+
+    # ── imweb 게시판 파서 (JTBC 마라톤 등) ────────────────
+
+    def _parse_imweb_board(self, soup, base_url: str, board: dict) -> list[dict]:
+        """imweb 플랫폼 게시판 파서.
+        구조: div.li_board > ul.li_body 반복, 각 ul 안에:
+        - a.list_text_title (제목 + href에 idx 포함)
+        - li.time (날짜)
+        - li.category (카테고리)
+        - li.count (번호)
+        """
+        posts = []
+        board_url = board.get("url", base_url)
+
+        # li_body ul 항목들 = 각 게시글
+        items = soup.select("ul.li_body.holder")
+        if not items:
+            items = soup.select("div.li_board ul.li_body")
+
+        for item in items:
+            # 제목 + URL
+            title_a = item.select_one("a.list_text_title")
+            if not title_a:
+                continue
+
+            title_span = title_a.select_one("span")
+            title = title_span.get_text(strip=True) if title_span else title_a.get_text(strip=True)
+            if not title:
+                continue
+
+            href = title_a.get("href", "")
+            # idx 추출
+            idx_match = re.search(r'idx=(\d+)', href)
+            if href.startswith("/"):
+                full_url = f"{base_url}{href}"
+            elif href.startswith("http"):
+                full_url = href
+            else:
+                full_url = f"{board_url}{'&' if '?' in board_url else '?'}{href}"
+
+            # 날짜
+            time_li = item.select_one("li.time")
+            date_str = time_li.get("title", "").strip() if time_li else ""
+            if not date_str and time_li:
+                date_str = time_li.get_text(strip=True)
+
+            # 카테고리
+            cat_li = item.select_one("li.category em")
+            category = cat_li.get_text(strip=True).strip("[]") if cat_li else ""
+
+            # 번호
+            count_li = item.select_one("li.count")
+            post_no = count_li.get_text(strip=True) if count_li else ""
+
+            post_hash = hashlib.md5(f"{board.get('id', '')}{title}{date_str}".encode()).hexdigest()
+
+            post = {
+                "title": f"[{category}] {title}" if category else title,
+                "url": full_url,
+                "date": date_str.split(" ")[0] if date_str else "",
+                "hash": post_hash,
+                "content": "",
+            }
+            posts.append(post)
+
+        logger.info(f"[bulletin] imweb 게시판 파서: {len(posts)}건")
+        return posts
+
+    async def _fetch_imweb_detail(self, url: str) -> str:
+        """imweb 게시글 상세 페이지에서 본문 추출"""
+        try:
+            content, headers = await asyncio.to_thread(self._fetch_url, url)
+            html = self._decode_html(content, headers)
+        except Exception:
+            try:
+                html = await self._fetch_via_proxy(url)
+            except Exception as e:
+                logger.warning(f"[bulletin] imweb 상세 페이지 접근 실패: {e}")
+                return ""
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+
+        # board_txt_area에서 본문 추출
+        txt_area = soup.select_one("div.board_txt_area")
+        if txt_area:
+            # 이미지 URL 수집
+            imgs = txt_area.find_all("img", src=True)
+            img_urls = [img["src"] for img in imgs if img["src"].startswith("http")]
+
+            text = txt_area.get_text(separator="\n", strip=True)
+            if img_urls:
+                text += "\n\n[이미지]\n" + "\n".join(img_urls[:5])
+            return text[:5000]
+
+        return ""
 
     # ── 새 글 필터링 ─────────────────────────────────────
 
