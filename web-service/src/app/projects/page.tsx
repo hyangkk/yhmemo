@@ -29,7 +29,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, loading: authLoading, signOut, refreshProfile } = useAuth();
   const router = useRouter();
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,8 +68,9 @@ export default function ProjectsPage() {
       router.replace('/login');
       return;
     }
+    refreshProfile();
     loadProjects();
-  }, [user, authLoading, router, loadProjects]);
+  }, [user, authLoading, router, loadProjects, refreshProfile]);
 
   const createProject = async () => {
     // 무료 유저: 프로젝트 1개 제한

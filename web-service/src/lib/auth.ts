@@ -34,6 +34,7 @@ interface AuthContextType {
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -41,6 +42,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signInWithGoogle: async () => {},
   signOut: async () => {},
+  refreshProfile: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -102,9 +104,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    const sb = getBrowserSupabase();
+    const { data: { session } } = await sb.auth.getSession();
+    if (session?.user) {
+      const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
+      if (profile) setUser(profile);
+    }
+  }, []);
+
   return React.createElement(
     AuthContext.Provider,
-    { value: { user, loading, signInWithGoogle, signOut } },
+    { value: { user, loading, signInWithGoogle, signOut, refreshProfile } },
     children
   );
 }

@@ -65,6 +65,26 @@ export async function POST(req: NextRequest) {
 
   const { title, description } = await req.json();
 
+  // 플랜별 프로젝트 제한 체크
+  const { data: userPlan } = await supabase
+    .from('profiles')
+    .select('plan')
+    .eq('id', user.id)
+    .single();
+
+  if (!userPlan || userPlan.plan === 'free') {
+    const { count } = await supabase
+      .from('projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('owner_id', user.id);
+    if ((count || 0) >= 1) {
+      return NextResponse.json(
+        { error: '무료 요금제에서는 프로젝트를 1개만 만들 수 있어요. Plus로 업그레이드하세요!' },
+        { status: 403 }
+      );
+    }
+  }
+
   // 고유 코드 생성 (충돌 시 재시도)
   let code = '';
   for (let i = 0; i < 10; i++) {
