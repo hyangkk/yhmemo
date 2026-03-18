@@ -81,15 +81,23 @@ export default function StudioPage() {
     }
   };
 
+  const handleProfileClick = () => {
+    if (user) {
+      router.push('/mypage');
+    } else {
+      signInWithGoogle();
+    }
+  };
+
   return (
     <div className={`min-h-screen bg-black text-white flex flex-col items-center p-4 ${recentSessions.length > 0 ? 'pt-12' : 'justify-center'}`}>
-      {/* 프로젝트 버튼 (우측 상단) */}
-      <button
-        onClick={handleProjectClick}
-        className="fixed top-4 right-4 z-50 flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition"
-      >
-        {user ? (
-          <>
+      {/* 우측 상단 버튼 */}
+      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        {user && (
+          <button
+            onClick={handleProfileClick}
+            className="flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer"
+          >
             {user.avatar_url ? (
               <img src={user.avatar_url} alt="" className="w-5 h-5 rounded-full" />
             ) : (
@@ -97,12 +105,16 @@ export default function StudioPage() {
                 {user.name?.charAt(0) || 'U'}
               </span>
             )}
-            <span className="text-gray-300">프로젝트</span>
-          </>
-        ) : (
-          <span className="text-gray-300">로그인</span>
+            <span className="text-gray-300">{user.name}</span>
+          </button>
         )}
-      </button>
+        <button
+          onClick={handleProjectClick}
+          className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer"
+        >
+          <span className="text-gray-300">{user ? '프로젝트' : '로그인'}</span>
+        </button>
+      </div>
 
       <div className="max-w-sm w-full space-y-4">
         {/* 타이틀 */}
