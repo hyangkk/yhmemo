@@ -228,7 +228,7 @@ class BulletinAgent(BaseAgent):
 
         for board in boards:
             try:
-                posts = await self._scrape_board(board)
+                posts, _debug_info = await self._scrape_board(board)
                 # 스크래핑 시도했으면 last_checked_at 갱신 (성공 여부 무관)
                 await self._update_last_checked(board)
 
@@ -468,7 +468,8 @@ class BulletinAgent(BaseAgent):
 
     async def scrape_and_show(self, channel: str, thread_ts: str = None, max_posts: int = 5):
         """게시판 스크래핑 후 결과를 바로 슬랙에 표시 (새 글 필터 없이)"""
-        boards = await self._load_boards()
+        # 수동 명령어이므로 check_interval 무시하고 모든 활성 게시판 로드
+        boards = await self._load_all_boards()
         if not boards:
             await self._reply(channel, "등록된 게시판이 없습니다. `!게시판 등록 이름 URL`로 추가하세요.", thread_ts)
             return
