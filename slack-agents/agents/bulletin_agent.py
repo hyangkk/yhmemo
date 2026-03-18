@@ -887,6 +887,8 @@ class BulletinAgent(BaseAgent):
             posts = self._parse_yongin_event(soup, base_url, board)
         elif parser_type == "imweb":
             posts = self._parse_imweb_board(soup, base_url, board)
+        elif parser_type == "ggcf":
+            posts = self._parse_ggcf_board(soup, base_url, board)
         elif parser_type == "table":
             posts = self._parse_table_board(soup, base_url, board)
         elif parser_type == "list":
@@ -899,6 +901,8 @@ class BulletinAgent(BaseAgent):
                 posts = self._parse_yongin_event(soup, base_url, board)
             elif soup.select_one("div.li_board ul.li_body"):
                 posts = self._parse_imweb_board(soup, base_url, board)
+            elif soup.select_one("div.list-type1"):
+                posts = self._parse_ggcf_board(soup, base_url, board)
             else:
                 posts = self._parse_table_board(soup, base_url, board)
             if not posts:
@@ -1366,7 +1370,6 @@ class BulletinAgent(BaseAgent):
         }
 
         def _sync_fetch():
-            ctx = ssl.create_default_context()
             data = urlencode(form_data).encode("utf-8")
             req = urllib.request.Request(action_url, data=data, method="POST", headers={
                 **HEADERS,
@@ -1374,7 +1377,7 @@ class BulletinAgent(BaseAgent):
                 "Referer": "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp",
                 "Origin": "https://eminwon.yongin.go.kr",
             })
-            resp = urllib.request.urlopen(req, context=ctx, timeout=20)
+            resp = urllib.request.urlopen(req, context=self._ssl_ctx, timeout=20)
             raw = resp.read()
             # 인코딩 감지
             ct = resp.headers.get("Content-Type", "")
@@ -1407,7 +1410,6 @@ class BulletinAgent(BaseAgent):
         }
 
         def _sync_fetch():
-            ctx = ssl.create_default_context()
             data = urlencode(form_data).encode("utf-8")
             req = urllib.request.Request(action_url, data=data, method="POST", headers={
                 **HEADERS,
@@ -1415,7 +1417,7 @@ class BulletinAgent(BaseAgent):
                 "Referer": "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp",
                 "Origin": "https://eminwon.yongin.go.kr",
             })
-            resp = urllib.request.urlopen(req, context=ctx, timeout=20)
+            resp = urllib.request.urlopen(req, context=self._ssl_ctx, timeout=20)
             raw = resp.read()
             ct = resp.headers.get("Content-Type", "")
             if "euc-kr" in ct.lower():
@@ -1689,6 +1691,68 @@ class BulletinAgent(BaseAgent):
 
         logger.info(f"[bulletin] 문화행사 카드 파서: {len(posts)}건")
         return posts[:20]
+
+    # ── ggcf 게시판 파서 (경기도어린이박물관 등) ──────────
+
+    def _parse_ggcf_board(self, soup, base_url: str, board: dict) -> list[dict]:
+        """경기문화재단(ggcf.kr) 게시판 파서.
+        구조: div.list-type1 반복, 각 div 안에:
+        - div.part-list-title > a (제목 + URL)
+        - strong (카테고리: 공지사항, 채용공고 등)
+        - p.part-date (날짜)
+        """
+        posts = []
+
+        items = soup.select("div.list-type1")
+        for item in items:
+            # 제목 + URL
+            title_div = item.select_one("div.part-list-title")
+            a_tag = title_div.find("a", href=True) if title_div else None
+            if not a_tag:
+                continue
+
+            # 제목 텍스트 (이미지 태그 제외)
+            title_p = a_tag.find("p")
+            if title_p:
+                # span(아이콘) 제거 후 텍스트만
+                for span in title_p.find_all("span"):
+                    span.decompose()
+                title = title_p.get_text(strip=True)
+            else:
+                title = a_tag.get_text(strip=True)
+
+            if not title or len(title) < 2:
+                continue
+
+            href = a_tag.get("href", "")
+            if href.startswith("http"):
+                full_url = href
+            elif href.startswith("/"):
+                full_url = f"{base_url}{href}"
+            else:
+                full_url = f"{base_url}/{href}"
+
+            # 날짜 (p.part-date)
+            date_p = item.select_one("p.part-date")
+            date_str = date_p.get_text(strip=True) if date_p else ""
+
+            # 카테고리 (strong 태그)
+            cat_el = item.find("strong")
+            category = cat_el.get_text(strip=True) if cat_el else ""
+
+            post_hash = hashlib.md5(f"{board.get('id', '')}{title}{href}".encode()).hexdigest()
+
+            post = {
+                "title": f"[{category}] {title}" if category else title,
+                "url": full_url,
+                "date": date_str,
+                "hash": post_hash,
+                "content": "",
+            }
+            posts.append(post)
+
+        logger.info(f"[bulletin] ggcf 게시판 파서: {len(posts)}건")
+        return posts
 
     # ── imweb 게시판 파서 (JTBC 마라톤 등) ────────────────
 
