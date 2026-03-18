@@ -116,6 +116,9 @@ class BulletinAgent(BaseAgent):
         self._pw = None
         self._pw_browser = None
 
+        # 일일 보고 추적 (KST 22시 보고, 하루 1회)
+        self._last_daily_report_date: str | None = None
+
     async def start(self):
         """에이전트 시작 — 테이블 확인 후 자동 루프 실행 (1시간 간격)"""
         await self._ensure_tables()
@@ -187,7 +190,26 @@ class BulletinAgent(BaseAgent):
     # ── Observe ─────────────────────────────────────────
 
     async def observe(self) -> dict | None:
-        """모니터링 대상 게시판 목록 로드"""
+        """모니터링 대상 게시판 목록 로드 + KST 22시 일일 보고 체크"""
+        now_kst = datetime.now(KST)
+        today_str = now_kst.strftime("%Y-%m-%d")
+        is_daily_report_time = (
+            now_kst.hour == 22
+            and self._last_daily_report_date != today_str
+        )
+
+        if is_daily_report_time:
+            # 일일 보고 모드: check_interval 무시, 모든 활성 게시판 강제 로드
+            boards = await self._load_all_boards()
+            if not boards:
+                return None
+            return {
+                "current_time": self.now_str(),
+                "boards": boards,
+                "daily_report": True,
+            }
+
+        # 일반 모드: check_interval 기반 필터링
         boards = await self._load_boards()
         if not boards:
             return None
@@ -227,14 +249,19 @@ class BulletinAgent(BaseAgent):
                 logger.error(f"[bulletin] {board['name']} 스크래핑 오류: {e}")
 
         if not all_new_posts:
+            # 일일 보고 모드면 새 글 없어도 보고
+            if context.get("daily_report"):
+                return {"action": "daily_report", "results": [], "board_count": len(boards)}
             return None
 
-        return {"action": "notify_new_posts", "results": all_new_posts}
+        action = "daily_report" if context.get("daily_report") else "notify_new_posts"
+        return {"action": action, "results": all_new_posts}
 
     # ── Act ────────────────────────────────────────────
 
     async def act(self, decision: dict):
         """새 게시글을 저장하고 슬랙에 알림"""
+        action = decision.get("action", "notify_new_posts")
         results = decision.get("results", [])
 
         for result in results:
@@ -253,10 +280,16 @@ class BulletinAgent(BaseAgent):
                     logger.error(f"[bulletin] 노션 저장 실패 ({post['title'][:30]}): {e}")
                     post["notion_url"] = ""
 
-            # 슬랙 알림 (노션 링크 포함)
-            await self._send_slack_notification(board, posts)
+            # 일반 모드: 개별 알림
+            if action != "daily_report":
+                await self._send_slack_notification(board, posts)
 
             logger.info(f"[bulletin] {board['name']}: {saved_count}건 저장, 알림 발송")
+
+        # 일일 보고 모드: 요약 보고 발송
+        if action == "daily_report":
+            await self._send_daily_report(results, decision.get("board_count", 0))
+            self._last_daily_report_date = datetime.now(KST).strftime("%Y-%m-%d")
 
     # ── 게시판 목록 로드 ─────────────────────────────────
 
@@ -284,6 +317,20 @@ class BulletinAgent(BaseAgent):
                     due_boards.append(board)
 
                 return due_boards
+            except Exception as e:
+                logger.error(f"[bulletin] 게시판 목록 로드 실패: {e}")
+                return []
+
+        return await asyncio.to_thread(_sync_load)
+
+    async def _load_all_boards(self) -> list[dict]:
+        """모든 활성 게시판 로드 (check_interval 무시, 일일 보고용)"""
+        def _sync_load():
+            try:
+                result = self.supabase.table("bulletin_boards").select("*").eq(
+                    "active", True
+                ).execute()
+                return result.data or []
             except Exception as e:
                 logger.error(f"[bulletin] 게시판 목록 로드 실패: {e}")
                 return []
@@ -1964,6 +2011,46 @@ class BulletinAgent(BaseAgent):
 
         message = "\n".join(lines)
         await self.slack.send_message(self.slack_channel, message)
+
+    async def _send_daily_report(self, results: list[dict], board_count: int):
+        """KST 22시 일일 보고: 오늘 발견된 새 게시글 요약"""
+        now_kst = datetime.now(KST)
+        date_str = now_kst.strftime("%Y년 %m월 %d일")
+
+        total_new = sum(len(r["posts"]) for r in results)
+        boards_with_new = len(results)
+
+        lines = [f"*:newspaper: [{date_str}] 게시판 일일 보고*\n"]
+        lines.append(f"모니터링 게시판: {board_count}개 | 새 글 발견: {total_new}건 ({boards_with_new}개 게시판)\n")
+
+        if not results:
+            lines.append("_오늘 새 게시글이 없습니다._")
+        else:
+            for result in results:
+                board = result["board"]
+                posts = result["posts"]
+                lines.append(f"*:pushpin: {board['name']}* — 새 글 {len(posts)}건")
+                for post in posts[:3]:
+                    title = post["title"]
+                    url = post.get("url", "")
+                    date = post.get("date", "")
+                    notion_url = post.get("notion_url", "")
+                    if url:
+                        line = f"  • <{url}|{title}>"
+                    else:
+                        line = f"  • {title}"
+                    if date:
+                        line += f"  ({date})"
+                    if notion_url:
+                        line += f"  :memo: <{notion_url}|노션>"
+                    lines.append(line)
+                if len(posts) > 3:
+                    lines.append(f"  _...외 {len(posts) - 3}건_")
+                lines.append("")
+
+        message = "\n".join(lines)
+        await self.slack.send_message(self.slack_channel, message)
+        logger.info(f"[bulletin] 일일 보고 발송: {total_new}건 새 글")
 
     # ── 외부 작업 수신 ───────────────────────────────────
 
