@@ -47,6 +47,27 @@ export default function MyPage() {
     }
   };
 
+  const handleUnsubscribe = async () => {
+    if (!confirm('정말 구독을 취소하시겠어요?\n무료 요금제로 전환되며, 프로젝트는 1개만 유지됩니다.')) return;
+    setSubscribing(true);
+    setMessage('');
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/unsubscribe', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('구독 취소 실패');
+      await refreshProfile();
+      setPlan('free');
+      setMessage('구독이 취소되었습니다. 무료 요금제로 전환되었어요.');
+    } catch {
+      setMessage('구독 취소 처리 중 오류가 발생했습니다.');
+    } finally {
+      setSubscribing(false);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -124,6 +145,13 @@ export default function MyPage() {
                   </li>
                 ))}
               </ul>
+              <button
+                onClick={handleUnsubscribe}
+                disabled={subscribing}
+                className="w-full text-gray-500 hover:text-red-400 disabled:text-gray-700 py-2 text-xs transition cursor-pointer"
+              >
+                {subscribing ? '처리 중...' : '구독 취소'}
+              </button>
             </div>
           ) : (
             <div className="space-y-4">

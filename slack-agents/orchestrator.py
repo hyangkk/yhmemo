@@ -58,6 +58,7 @@ from agents.auto_trader_agent import AutoTraderAgent
 from agents.market_info_agent import MarketInfoAgent
 from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
+from agents.qa_agent import QAAgent
 from agents.invest_research_agent import InvestResearchAgent
 from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
@@ -279,6 +280,7 @@ async def main():
     swing_trader = SwingTraderAgent(ls_client=ls_client, **common_kwargs)
     bulletin = BulletinAgent(**common_kwargs)
     invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
+    qa = QAAgent(**common_kwargs)
 
     # ── 투자 모니터링 시스템 ───────────────────────────────
     invest_monitor = InvestMonitor(
@@ -296,7 +298,7 @@ async def main():
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "diary_daily_alert", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
-                        "bulletin", "invest_research"]:
+                        "bulletin", "invest_research", "qa"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ProactiveAgent의 evaluator에 invest_monitor 주입
@@ -492,6 +494,18 @@ async def main():
             await _reply(channel, f"투자현황 조회 실패: {e}", thread_ts)
 
     slack.on_command("투자현황", cmd_invest_status)
+
+    # "!qa" → QA 에이전트 즉시 테스트 실행
+    async def cmd_qa(args: str, user: str, channel: str, thread_ts: str = None):
+        await _reply(channel, "QA 테스트 실행 중...", thread_ts)
+        err = await qa.run_once(channel=channel, thread_ts=thread_ts)
+        if err:
+            await _reply(channel, f"QA 실패: {err}", thread_ts)
+
+    slack.on_command("qa", cmd_qa)
+    slack.on_command("QA", cmd_qa)
+    slack.on_command("큐에이", cmd_qa)
+    slack.on_command("테스트", cmd_qa)
 
     # "!게시판" → 게시판 스크래핑 즉시 실행 / 새 게시판 등록
     async def cmd_bulletin(args: str, user: str, channel: str, thread_ts: str = None):
@@ -1016,6 +1030,7 @@ async def main():
 - stock_trade: 주식 매수/매도/잔고조회/시세조회. "삼성전자 1주 매수", "005930 매도해줘", "잔고 보여줘", "삼성전자 시세", "모의투자 매수" 등. stock_code(종목코드), action(buy/sell/balance/price), qty(수량), price(가격, 0이면 시장가) 필드 포함
 - bulletin: 게시판 스크래핑, 공지사항 확인, 새 글 확인. "게시판 확인해줘", "공지사항 새 거 있어?", "문화센터 게시판 긁어줘", "새 공지 알려줘" 등
 - naver_blog: 네이버 블로그 글 크롤링/스크래핑. "이 블로그 글 읽어줘", "블로그 내용 가져와", "네이버 블로그 크롤링해줘" 등. 메시지에 blog.naver.com URL이 포함되어 있으면 이 인텐트. blog_urls 필드에 URL 목록을 넣으세요.
+- qa: 웹 서비스 상태 확인, QA 테스트, 배포 상태 확인, 서비스 헬스체크. "서비스 상태 확인해줘", "QA 테스트 돌려줘", "배포 잘 됐어?", "사이트 살아있어?" 등
 - dev: 실제 코드 작성, 파일 생성, 프로젝트 구축, API 만들기, 서버 세팅 등 개발/엔지니어링 작업. "만들어줘", "구축해줘", "코드 짜줘", "서버 올려줘", "API 개발해줘", "프로젝트 시작해줘" 등
 - chat: 질문, 분석, 비교, 조언, 날씨, 가격, 환율, 잡담, 프로젝트 논의, 의견 교환 등 개발이 아닌 모든 대화
 
@@ -1032,7 +1047,7 @@ async def main():
 
 응답 형식 (반드시 JSON만):
 {{
-  "intent": "collect|briefing|dashboard|quote|diary_quote|diary_daily_alert|fortune|invest_status|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|chat|dev|clarify|ignore",
+  "intent": "collect|briefing|dashboard|quote|diary_quote|diary_daily_alert|fortune|invest_status|hr_eval|hr_status|hr_salary|stock_trade|bulletin|naver_blog|qa|chat|dev|clarify|ignore",
   "query": "수집 키워드 (collect일 때만)",
   "approach": "작업 전략 (collect/briefing일 때만)",
   "dev_task": "구체적인 개발 작업 설명 (dev일 때만, 한국어로)",
@@ -1158,6 +1173,9 @@ async def main():
                     await _reply(channel, "매매 명령을 이해하지 못했어요. 예: `삼성전자 1주 시장가 매수해줘`", thread_ts)
                     result_text = "stock_trade 파싱 실패"
                     success = False
+            elif action == "qa":
+                await cmd_qa(args="", user=user, channel=channel, thread_ts=thread_ts)
+                result_text = "QA 테스트 실행 완료"
             elif action == "bulletin":
                 await cmd_bulletin("", user, channel, thread_ts)
                 result_text = "게시판 스크래핑 실행"
@@ -1523,6 +1541,7 @@ async def main():
         "swing_trader": lambda: asyncio.create_task(swing_trader.start(), name="swing_trader"),
         "bulletin": lambda: asyncio.create_task(bulletin.start(), name="bulletin"),
         "invest_research": lambda: asyncio.create_task(invest_research.start(), name="invest_research"),
+        "qa": lambda: asyncio.create_task(qa.start(), name="qa"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
