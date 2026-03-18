@@ -107,7 +107,7 @@ export default function StudioPage() {
       <div className="max-w-sm w-full space-y-4">
         {/* 타이틀 */}
         <div className="text-center pb-2">
-          <h1 className="text-2xl font-bold">멀티캠 스튜디오</h1>
+          <h1 className="text-2xl font-bold">SupaCam 슈파캠</h1>
           <p className="text-gray-500 text-xs mt-1">여러 카메라로 동시 촬영 · 자동 편집</p>
         </div>
 

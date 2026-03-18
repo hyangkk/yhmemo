@@ -22,3 +22,22 @@ body {
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans KR", sans-serif;
 }
+
+button,
+a,
+[role="button"],
+input[type="submit"],
+input[type="button"],
+select,
+label[for] {
+  cursor: pointer;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+textarea {
+  cursor: text;
+}
