@@ -247,7 +247,8 @@ class QAAgent(BaseAgent):
         for h in health:
             icon = "OK" if h["ok"] else "FAIL"
             latency = f" ({h.get('latency_ms', '?')}ms)" if h.get("ok") else ""
-            error = f" — {h.get('error', f'HTTP {h.get(\"status\")}')}" if not h["ok"] else ""
+            _status_code = h.get("status")
+            error = f" — {h.get('error', f'HTTP {_status_code}')}" if not h["ok"] else ""
             lines.append(f"{'  ' if h['ok'] else '  '}{icon} {h['name']}{latency}{error}")
 
         # 배포 상태
