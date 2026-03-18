@@ -134,7 +134,36 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     return res.json();
   }, [sessionId]);
 
-  // 녹화 완료 → 업로드 (최대 3회 재시도)
+  // 기기에 영상 로컬 저장 (인터넷 끊김 대비)
+  const saveToDevice = useCallback((blob: Blob) => {
+    try {
+      const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}_${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+      const code = session?.code || sessionId.slice(0, 6);
+      const filename = `SupaCam_${code}_${timestamp}.${ext}`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+
+      // 정리 (약간의 딜레이로 다운로드 시작 보장)
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+
+      console.log(`[studio] 기기 저장 완료: ${filename} (${(blob.size / (1024 * 1024)).toFixed(1)}MB)`);
+    } catch (err) {
+      console.warn('[studio] 기기 저장 실패:', err);
+    }
+  }, [session?.code, sessionId]);
+
+  // 녹화 완료 → 기기 저장 → 업로드 (최대 3회 재시도)
   const handleRecordingComplete = useCallback(async (blob: Blob, durationMs: number) => {
     const device = myDeviceRef.current;
     // 호스트 → 결과 페이지, 게스트 → 홈으로 이동
@@ -154,6 +183,9 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
       goToResult();
       return;
     }
+
+    // 업로드 전에 기기에 먼저 저장 (인터넷 끊김 대비)
+    saveToDevice(blob);
 
     setUploading(true);
     setUploadSize(blob.size);
@@ -220,7 +252,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     }
 
     goToResult();
-  }, [sessionId, router, getSignedUrl, uploadWithXHR, isHost]);
+  }, [sessionId, router, getSignedUrl, uploadWithXHR, isHost, saveToDevice]);
 
   if (loading) {
     return (
