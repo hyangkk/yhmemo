@@ -1872,9 +1872,51 @@ class BulletinAgent(BaseAgent):
 
     # ── 새 글 필터링 ─────────────────────────────────────
 
+    @staticmethod
+    def _parse_post_date(date_str: str) -> Optional[datetime]:
+        """게시글 날짜 문자열을 datetime으로 파싱 (다양한 한국 날짜 형식 지원)"""
+        if not date_str:
+            return None
+        # 숫자만 추출하여 날짜 파싱 시도
+        cleaned = date_str.strip()
+        for fmt in ("%Y.%m.%d", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d.",
+                     "%y.%m.%d", "%y-%m-%d", "%y/%m/%d"):
+            try:
+                return datetime.strptime(cleaned[:10], fmt).replace(tzinfo=KST)
+            except ValueError:
+                continue
+        # "2026년 03월 19일" 형식
+        m = re.search(r"(\d{4})\s*[년.]\s*(\d{1,2})\s*[월.]\s*(\d{1,2})", cleaned)
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=KST)
+            except ValueError:
+                pass
+        return None
+
     async def _filter_new_posts(self, board: dict, posts: list[dict]) -> list[dict]:
-        """이미 저장된 게시글 제외"""
-        hashes = [p["hash"] for p in posts]
+        """이미 저장된 게시글 제외 + 최근 24시간 이내 글만 포함"""
+        # 1) 24시간 이내 글만 필터링
+        cutoff = datetime.now(KST) - timedelta(hours=24)
+        recent_posts = []
+        for p in posts:
+            post_date = self._parse_post_date(p.get("date", ""))
+            if post_date is None:
+                # 날짜를 파싱할 수 없으면 포함 (안전하게)
+                recent_posts.append(p)
+            elif post_date >= cutoff:
+                recent_posts.append(p)
+
+        if len(recent_posts) < len(posts):
+            logger.info(
+                f"[bulletin] 24시간 필터: {len(posts)}건 → {len(recent_posts)}건"
+            )
+
+        if not recent_posts:
+            return []
+
+        # 2) 이미 저장된 게시글 제외
+        hashes = [p["hash"] for p in recent_posts]
 
         def _sync_check():
             try:
@@ -1887,7 +1929,7 @@ class BulletinAgent(BaseAgent):
                 return set()
 
         seen_hashes = await asyncio.to_thread(_sync_check)
-        return [p for p in posts if p["hash"] not in seen_hashes]
+        return [p for p in recent_posts if p["hash"] not in seen_hashes]
 
     # ── 게시글 저장 ──────────────────────────────────────
 
