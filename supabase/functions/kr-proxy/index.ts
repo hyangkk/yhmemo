@@ -87,10 +87,23 @@ Deno.serve(async (req: Request) => {
     if (body.referer) fetchHeaders["Referer"] = body.referer;
     if (body.cookie) fetchHeaders["Cookie"] = body.cookie;
 
-    const response = await fetch(url, {
+    // POST 포워딩 지원 (form POST 등)
+    const fetchOptions: RequestInit = {
       headers: fetchHeaders,
       redirect: "follow",
-    });
+    };
+    if (body.post_data) {
+      fetchOptions.method = "POST";
+      fetchOptions.body = body.post_data;
+      if (body.content_type) {
+        fetchHeaders["Content-Type"] = body.content_type;
+      }
+      if (!fetchHeaders["Origin"]) {
+        fetchHeaders["Origin"] = parsedUrl.origin;
+      }
+    }
+
+    const response = await fetch(url, fetchOptions);
 
     const contentType = response.headers.get("content-type") || "";
     const buffer = await response.arrayBuffer();
