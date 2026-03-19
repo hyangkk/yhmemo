@@ -845,7 +845,9 @@ class BulletinAgent(BaseAgent):
                 html = ""
 
         # 2단계: 프록시 체인 (Cloudflare → Vercel → Supabase)
-        if not html or _is_error_page(html):
+        # use_playwright가 명시적으로 설정된 경우(yongin_gosi 등) 프록시 건너뜀
+        # — 프록시는 raw HTML만 반환하므로 JS 렌더링이 필요한 게시판에는 무의미
+        if (not html or _is_error_page(html)) and not use_playwright:
             try:
                 html = await self._fetch_via_proxy(url)
                 if _is_error_page(html):
@@ -919,12 +921,30 @@ class BulletinAgent(BaseAgent):
                 pw_html = await self._pw_fetch_html(url, wait_selector=wait_sel)
                 pw_soup = BeautifulSoup(pw_html, "html.parser")
 
-                if parser_type == "table":
+                if parser_type == "yongin_gosi":
+                    posts = self._parse_yongin_gosi(pw_soup, base_url, board)
+                elif parser_type == "yongin_event":
+                    posts = self._parse_yongin_event(pw_soup, base_url, board)
+                elif parser_type == "imweb":
+                    posts = self._parse_imweb_board(pw_soup, base_url, board)
+                elif parser_type == "ggcf":
+                    posts = self._parse_ggcf_board(pw_soup, base_url, board)
+                elif parser_type == "table":
                     posts = self._parse_table_board(pw_soup, base_url, board)
                 elif parser_type == "list":
                     posts = self._parse_list_board(pw_soup, base_url, board)
                 else:
-                    posts = self._parse_table_board(pw_soup, base_url, board)
+                    # auto: 초기 파싱과 동일한 자동 감지 로직 적용
+                    if pw_soup.select_one("table.boardDefalut"):
+                        posts = self._parse_yongin_gosi(pw_soup, base_url, board)
+                    elif pw_soup.select_one("div.gallery_bbs_list4") or pw_soup.select_one("div.gallery_bbs_list"):
+                        posts = self._parse_yongin_event(pw_soup, base_url, board)
+                    elif pw_soup.select_one("div.li_board ul.li_body"):
+                        posts = self._parse_imweb_board(pw_soup, base_url, board)
+                    elif pw_soup.select_one("div.list-type1"):
+                        posts = self._parse_ggcf_board(pw_soup, base_url, board)
+                    else:
+                        posts = self._parse_table_board(pw_soup, base_url, board)
                     if not posts:
                         posts = self._parse_list_board(pw_soup, base_url, board)
                     if not posts:
