@@ -816,7 +816,20 @@ class BulletinAgent(BaseAgent):
                     return posts, ""
             except Exception as e:
                 logger.warning(f"[bulletin] 고시공고 form POST 실패: {e}")
-            # 2순위: Playwright로 iframe URL 접근
+            # 2순위: 프록시를 통한 form POST
+            try:
+                html = await self._fetch_yongin_gosi_via_proxy()
+                if html and "boardDefalut" in html:
+                    logger.info(f"[bulletin] 용인시 고시공고: 프록시 form POST 성공 ({len(html)}자)")
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, "html.parser")
+                    posts = self._parse_yongin_gosi(soup, "https://eminwon.yongin.go.kr", board)
+                    if posts:
+                        await self._enrich_posts_with_content(posts, use_vercel=True)
+                    return posts, ""
+            except Exception as e:
+                logger.warning(f"[bulletin] 고시공고 프록시 form POST 실패: {e}")
+            # 3순위: Playwright로 iframe URL 접근
             url = YONGIN_GOSI_IFRAME_URL
             use_playwright = True
             logger.info(f"[bulletin] 용인시 고시공고: Playwright 폴백")
@@ -832,6 +845,7 @@ class BulletinAgent(BaseAgent):
 
         html = ""
         used_vercel_proxy = False
+        _step_errors: list[str] = []
 
         # 1단계: urllib 직접 접근 (use_playwright가 아닌 경우만)
         if not use_playwright:
@@ -841,6 +855,7 @@ class BulletinAgent(BaseAgent):
                 if _is_error_page(html):
                     raise RuntimeError(f"에러 페이지 감지 ({len(html)}자)")
             except Exception as e:
+                _step_errors.append(f"urllib: {e}")
                 logger.warning(f"[bulletin] 1단계(urllib) 실패: {e}")
                 html = ""
 
@@ -855,6 +870,7 @@ class BulletinAgent(BaseAgent):
                 used_vercel_proxy = True
                 logger.info(f"[bulletin] 2단계(프록시) 성공: {len(html)}자")
             except Exception as e:
+                _step_errors.append(f"프록시: {e}")
                 logger.warning(f"[bulletin] 2단계(프록시) 실패: {e}")
 
         # 3단계: Playwright 폴백
@@ -871,8 +887,10 @@ class BulletinAgent(BaseAgent):
                 use_playwright = True
                 logger.info(f"[bulletin] 3단계(Playwright) 성공: {len(html)}자")
             except Exception as e2:
-                logger.error(f"[bulletin] 모든 접근 방법 실패 ({url})")
-                return [], f"모든 접근 실패:\n1. urllib\n2. 프록시 체인\n3. Playwright"
+                _step_errors.append(f"Playwright: {e2}")
+                logger.error(f"[bulletin] 모든 접근 방법 실패 ({url}): {_step_errors}")
+                error_detail = "\n".join(f"{i+1}. {err}" for i, err in enumerate(_step_errors))
+                return [], f"모든 접근 실패:\n{error_detail}"
 
         logger.info(f"[bulletin] {board['name']}: HTML {len(html)}자 수신 (playwright={use_playwright})")
 
@@ -1409,6 +1427,73 @@ class BulletinAgent(BaseAgent):
                 return raw.decode("euc-kr", errors="replace")
 
         return await asyncio.to_thread(_sync_fetch)
+
+    async def _fetch_yongin_gosi_via_proxy(self) -> str:
+        """프록시를 통해 용인시 고시공고 form POST 실행 (직접 POST 실패 시 폴백)"""
+        import json as _json
+
+        action_url = "https://eminwon.yongin.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do"
+        form_body = (
+            "method=selectListOfrNotAncmt&methodnm=selectListOfrNotAncmtHomepage"
+            "&not_ancmt_se_code=01,04&homepage_pbs_yn=Y&subCheck=Y"
+            "&jndinm=OfrNotAncmtEJB&context=NTIS&epcCheck=Y&pageIndex="
+            "&ofr_pageSize=10&jspPageName=OfrNotAncmtLSub.jsp&list_gubun="
+        )
+
+        key = self._vercel_proxy_key
+        if not key:
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY 없음")
+
+        KOREAN_SPOOF_IP = "211.234.120.50"
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+
+        proxy_urls = [
+            ("Cloudflare", self._cf_proxy_url),
+            ("Supabase", self._supabase_proxy_url),
+        ]
+
+        last_error = None
+        for proxy_name, proxy_url in proxy_urls:
+            if not proxy_url:
+                continue
+            try:
+                payload = {
+                    "url": action_url,
+                    "spoof_ip": KOREAN_SPOOF_IP,
+                    "post_data": form_body,
+                    "content_type": "application/x-www-form-urlencoded",
+                    "referer": "https://eminwon.yongin.go.kr/emwp/jsp/ofr/OfrNotAncmtLSub.jsp",
+                }
+                data = _json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    proxy_url,
+                    data=data,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                        "User-Agent": "YhmemoBot/1.0",
+                    },
+                    method="POST",
+                )
+                resp_body = await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(req, context=ctx, timeout=25).read()
+                )
+                result = _json.loads(resp_body)
+                if "error" in result:
+                    raise RuntimeError(f"{proxy_name}: {result['error']}")
+                html = result.get("html", "")
+                status = result.get("status", 0)
+                logger.info(f"[bulletin/gosi-proxy/{proxy_name}] 응답: HTTP {status}, {len(html)}자")
+                if status >= 400:
+                    raise RuntimeError(f"{proxy_name}: HTTP {status}")
+                if html:
+                    return html
+            except Exception as e:
+                logger.warning(f"[bulletin/gosi-proxy/{proxy_name}] 실패: {e}")
+                last_error = e
+
+        raise RuntimeError(f"프록시 form POST 모두 실패: {last_error}")
 
     async def _fetch_yongin_gosi_detail(self, notice_no: str) -> str:
         """용인시 고시공고 상세 페이지를 form POST로 가져와서 본문 텍스트 반환"""

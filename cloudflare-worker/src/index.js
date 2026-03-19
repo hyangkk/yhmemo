@@ -94,10 +94,23 @@ async function handleRequest(request) {
       headers["Referer"] = body.referer;
     }
 
-    var resp = await fetch(url, {
+    // POST 포워딩 지원 (form POST 등)
+    var fetchOptions = {
       headers: headers,
       redirect: "follow",
-    });
+    };
+    if (body.post_data) {
+      fetchOptions.method = "POST";
+      fetchOptions.body = body.post_data;
+      if (body.content_type) {
+        headers["Content-Type"] = body.content_type;
+      }
+      if (!headers["Origin"]) {
+        headers["Origin"] = parsedUrl.origin;
+      }
+    }
+
+    var resp = await fetch(url, fetchOptions);
 
     var buffer = await resp.arrayBuffer();
     var bytes = new Uint8Array(buffer);
