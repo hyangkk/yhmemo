@@ -41,3 +41,23 @@ input[type="search"],
 textarea {
   cursor: text;
 }
+
+/* 가계도 애니메이션 */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* 스피너 */
+.border-3 {
+  border-width: 3px;
+}
+
+/* iOS safe area */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
