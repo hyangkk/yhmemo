@@ -28,6 +28,15 @@ const PROJECTS = [
     path: "/studio",
     tags: ["영상 편집", "AI 자동화", "SupaCam"],
   },
+  {
+    id: "family",
+    name: "우리가계",
+    description: "가족 가계도 + 생일/기일 알림 + 경조사 부조 장부 + 추억 아카이브",
+    icon: "🌳",
+    gradient: "from-emerald-500 to-teal-600",
+    path: "/family",
+    tags: ["가계도", "음력 생일", "부조 장부", "추억 기록"],
+  },
 ];
 
 export default function Home() {
