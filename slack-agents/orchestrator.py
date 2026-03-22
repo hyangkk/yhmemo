@@ -62,6 +62,7 @@ from agents.qa_agent import QAAgent
 from agents.invest_research_agent import InvestResearchAgent
 from agents.ceo_agent import CEOAgent
 from agents.market_researcher_agent import MarketResearcherAgent
+from agents.digital_product_agent import DigitalProductAgent
 from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
@@ -287,6 +288,7 @@ async def main():
     # ── 자율 경영 시스템 ─────────────────────────────────
     ceo = CEOAgent(**common_kwargs)
     market_researcher = MarketResearcherAgent(**common_kwargs)
+    digital_product = DigitalProductAgent(**common_kwargs)
 
     # ── 투자 모니터링 시스템 ───────────────────────────────
     invest_monitor = InvestMonitor(
@@ -305,7 +307,7 @@ async def main():
                         "sentiment", "task_board", "diary_quote", "diary_daily_alert", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
                         "bulletin", "invest_research", "qa",
-                        "ceo", "market_researcher"]:
+                        "ceo", "market_researcher", "digital_product"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ProactiveAgent의 evaluator에 invest_monitor 주입
