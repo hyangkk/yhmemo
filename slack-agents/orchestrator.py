@@ -60,6 +60,8 @@ from agents.swing_trader_agent import SwingTraderAgent
 from agents.bulletin_agent import BulletinAgent
 from agents.qa_agent import QAAgent
 from agents.invest_research_agent import InvestResearchAgent
+from agents.ceo_agent import CEOAgent
+from agents.market_researcher_agent import MarketResearcherAgent
 from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
 from core.conversation_memory import save_turn, build_chat_context, get_user_summary
@@ -282,6 +284,10 @@ async def main():
     invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
     qa = QAAgent(**common_kwargs)
 
+    # ── 자율 경영 시스템 ─────────────────────────────────
+    ceo = CEOAgent(**common_kwargs)
+    market_researcher = MarketResearcherAgent(**common_kwargs)
+
     # ── 투자 모니터링 시스템 ───────────────────────────────
     invest_monitor = InvestMonitor(
         supabase_client=supabase,
@@ -298,7 +304,8 @@ async def main():
     for _agent_name in ["orchestrator", "proactive", "collector", "curator",
                         "sentiment", "task_board", "diary_quote", "diary_daily_alert", "quote",
                         "fortune", "message_bus", "auto_trader", "market_info",
-                        "bulletin", "invest_research", "qa"]:
+                        "bulletin", "invest_research", "qa",
+                        "ceo", "market_researcher"]:
         agent_hr.ensure_registered(_agent_name)
 
     # ProactiveAgent의 evaluator에 invest_monitor 주입
@@ -1542,6 +1549,8 @@ async def main():
         "bulletin": lambda: asyncio.create_task(bulletin.start(), name="bulletin"),
         "invest_research": lambda: asyncio.create_task(invest_research.start(), name="invest_research"),
         "qa": lambda: asyncio.create_task(qa.start(), name="qa"),
+        "ceo": lambda: asyncio.create_task(ceo.start(), name="ceo"),
+        "market_researcher": lambda: asyncio.create_task(market_researcher.start(), name="market_researcher"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
