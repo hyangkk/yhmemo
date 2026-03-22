@@ -15,6 +15,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from core.base_agent import BaseAgent
+from core.browser_automation import get_browser
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +190,26 @@ class CEOAgent(BaseAgent):
 - API 서비스 판매
 - 디지털 콘텐츠 판매
 
+## 🌐 브라우저 자동화 능력 (Playwright)
+- 웹사이트 가입/로그인 자동화
+- 이메일: ai.agent.yh@gmail.com
+- 헤드리스 Chromium 24/7 가동
+- 가능: 폼 입력, 버튼 클릭, 스크린샷, 페이지 탐색
+- 한계: reCAPTCHA/hCaptcha 우회 불가, 2FA SMS 불가
+
 ## 응답 형식 (JSON)
 {{
     "analysis": "현재 상황 분석",
     "decision": "이번 시간에 할 일",
-    "action_type": "daily_report | market_research | build_service | optimize | request_owner | none",
+    "action_type": "daily_report | market_research | build_service | optimize | request_owner | browser_task | signup_service | none",
     "action_detail": {{구체적 행동 내용}},
     "priority": "high | medium | low",
     "estimated_revenue_impact_krw": 0
-}}"""
+}}
+
+action_type별 action_detail 예시:
+- signup_service: {{"platform": "gumroad", "url": "https://..."}}
+- browser_task: {{"url": "https://...", "instructions": "가입 페이지를 찾아서 이메일로 가입해"}}"""
 
         user_prompt = f"""현재 시각: {context['timestamp']}
 트리거: {context['trigger']}
@@ -251,6 +263,10 @@ class CEOAgent(BaseAgent):
             await self._optimize_operations(decision)
         elif action_type == "request_owner":
             await self._request_owner(decision)
+        elif action_type == "browser_task":
+            await self._execute_browser_task(decision)
+        elif action_type == "signup_service":
+            await self._signup_service(decision)
         elif action_type == "none":
             pass
         else:
@@ -339,6 +355,97 @@ class CEOAgent(BaseAgent):
             "created_at": datetime.now(KST).isoformat(),
         })
         self._save_state()
+
+    # ── 브라우저 자동화 액션 ─────────────────────────────
+
+    async def _execute_browser_task(self, decision: dict):
+        """AI 기반 브라우저 자유 탐색 실행"""
+        detail = decision.get("action_detail", {})
+        url = detail.get("url", "")
+        instructions = detail.get("instructions", "")
+
+        if not url or not instructions:
+            await self.log("⚠️ [CEO] 브라우저 태스크에 url과 instructions가 필요합니다.")
+            return
+
+        await self.log(f"🌐 *[CEO 브라우저 태스크 시작]*\nURL: {url}\n지시: {instructions}")
+
+        browser = get_browser()
+        result = await browser.ai_browse(url, instructions, ai_client=self.ai)
+
+        status = "✅ 성공" if result.get("success") else "❌ 실패"
+        await self.log(
+            f"🌐 *[CEO 브라우저 태스크 결과]* {status}\n"
+            f"• 단계 수: {result.get('step_count', 0)}\n"
+            f"• 최종 URL: {result.get('final_url', '?')}\n"
+            f"• 결과: {result.get('result', result.get('error', '?'))}"
+        )
+
+        # 스크린샷을 슬랙에 업로드
+        screenshot = result.get("screenshot")
+        if screenshot and self.slack:
+            try:
+                await self.slack.upload_file(
+                    self.slack_channel, screenshot, f"브라우저 태스크 결과"
+                )
+            except Exception as e:
+                logger.warning(f"[ceo] 스크린샷 업로드 실패: {e}")
+
+    async def _signup_service(self, decision: dict):
+        """플랫폼 가입 자동화"""
+        detail = decision.get("action_detail", {})
+        platform = detail.get("platform", "").lower()
+        url = detail.get("url", "")
+
+        browser = get_browser()
+        result = {}
+
+        # 플랫폼별 전용 가입 or 범용 가입
+        if platform == "gumroad":
+            result = await browser.signup_gumroad()
+        elif platform == "producthunt":
+            result = await browser.signup_producthunt()
+        elif platform == "promptbase":
+            result = await browser.signup_promptbase()
+        elif platform == "etsy":
+            result = await browser.signup_etsy()
+        elif url:
+            result = await browser.signup_generic(url=url)
+        else:
+            await self.log(f"⚠️ [CEO] 가입 대상 미지정: platform={platform}, url={url}")
+            return
+
+        status = "✅ 가입 시도 완료" if result.get("success") else "❌ 가입 실패"
+        await self.log(
+            f"📝 *[CEO 서비스 가입]* {status}\n"
+            f"• 플랫폼: {platform or url}\n"
+            f"• 이메일 입력: {result.get('email_filled', '?')}\n"
+            f"• 비밀번호 입력: {result.get('password_filled', '?')}\n"
+            f"• 폼 제출: {result.get('submitted', '?')}\n"
+            f"• 최종 URL: {result.get('final_url', '?')}"
+        )
+
+        # 스크린샷 업로드
+        screenshot = result.get("screenshot")
+        if screenshot and self.slack:
+            try:
+                await self.slack.upload_file(
+                    self.slack_channel, screenshot, f"{platform} 가입 결과"
+                )
+            except Exception as e:
+                logger.warning(f"[ceo] 스크린샷 업로드 실패: {e}")
+
+        # 가입 결과 DB 기록
+        try:
+            self.supabase.table("business_tasks").insert({
+                "task_type": "signup",
+                "platform": platform or url,
+                "status": "completed" if result.get("success") else "failed",
+                "result": json.dumps(result, ensure_ascii=False, default=str),
+                "created_at": datetime.now(KST).isoformat(),
+            }).execute()
+        except Exception as e:
+            logger.warning(f"[ceo] 가입 기록 저장 실패: {e}")
 
     # ── 수익 기록 API ────────────────────────────────────
 
