@@ -98,9 +98,9 @@ export default function PricingPage() {
 
         {/* 하단 링크 */}
         <div className="text-center mt-10 space-x-4 text-xs text-gray-600">
-          <a href="/terms" className="hover:text-gray-400">이용약관</a>
-          <a href="/privacy" className="hover:text-gray-400">개인정보처리방침</a>
-          <a href="/refund" className="hover:text-gray-400">환불정책</a>
+          <a href="/legal/terms" className="hover:text-gray-400">이용약관</a>
+          <span className="text-gray-700">·</span>
+          <span className="text-gray-600">Payments by <a href="https://paddle.com" target="_blank" rel="noopener noreferrer" className="hover:text-gray-400">Paddle</a></span>
         </div>
       </div>
     </div>
