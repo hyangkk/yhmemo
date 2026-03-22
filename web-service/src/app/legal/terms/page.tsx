@@ -1,3 +1,16 @@
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'SupaCam — Terms of Service',
+  description: 'SupaCam 이용약관. 서비스 이용 조건, 구독, 환불 정책을 확인하세요.',
+  openGraph: {
+    title: 'SupaCam — Terms of Service',
+    description: 'SupaCam 이용약관 및 개인정보처리방침.',
+    type: 'website',
+    siteName: 'SupaCam',
+  },
+};
+
 export default function TermsPage() {
   return (
     <main className="min-h-screen bg-gray-950 text-white">
