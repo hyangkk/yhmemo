@@ -73,6 +73,8 @@ export default function StudioPage() {
     }
   };
 
+  const isSupaCam = typeof window !== 'undefined' && window.location.hostname.includes('supacam');
+
   const handleProjectClick = () => {
     if (user) {
       router.push('/projects');
@@ -108,12 +110,14 @@ export default function StudioPage() {
             <span className="text-gray-300">{user.name}</span>
           </button>
         )}
-        <button
-          onClick={handleProjectClick}
-          className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer"
-        >
-          <span className="text-gray-300">{user ? '프로젝트' : '로그인'}</span>
-        </button>
+        {!(isSupaCam && user) && (
+          <button
+            onClick={handleProjectClick}
+            className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer"
+          >
+            <span className="text-gray-300">{user ? '프로젝트' : '로그인'}</span>
+          </button>
+        )}
       </div>
 
       <div className="max-w-sm w-full space-y-4">
