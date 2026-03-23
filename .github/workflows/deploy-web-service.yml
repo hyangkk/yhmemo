@@ -30,8 +30,8 @@ jobs:
           VERCEL_ORG_ID: team_lQMdwq03iCqUN9tTdDFl2VGe
           VERCEL_PROJECT_ID: prj_HfQBSsM0revTwKDvpq5hlQrnxWRN
           BUILD_NUM: ${{ github.run_number }}
+        working-directory: web-service
         run: |
-          cd web-service
           export BUILD_NUM=$(printf "%04d" $BUILD_NUM)
           vercel pull --yes --environment=production --token=$VERCEL_TOKEN
           vercel build --prod --token=$VERCEL_TOKEN
