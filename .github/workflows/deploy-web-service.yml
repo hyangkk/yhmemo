@@ -28,7 +28,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_lQMdwq03iCqUN9tTdDFl2VGe
-          VERCEL_PROJECT_ID: prj_wjDCoxByxtMZNs8NW4LmoPk8fd0F
+          VERCEL_PROJECT_ID: prj_HfQBSsM0revTwKDvpq5hlQrnxWRN
           BUILD_NUM: ${{ github.run_number }}
         run: |
           cd web-service
