@@ -285,7 +285,7 @@ async def main():
     bulletin = BulletinAgent(**common_kwargs)
     invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
     qa = QAAgent(**common_kwargs)
-    email_monitor = EmailMonitorAgent(**common_kwargs)
+    # email_monitor = EmailMonitorAgent(**common_kwargs)  # 보류: 토큰 소비 대비 효용 낮음
 
     # ── 자율 경영 시스템 ─────────────────────────────────
     ceo = CEOAgent(**common_kwargs)
@@ -1555,7 +1555,7 @@ async def main():
         "qa": lambda: asyncio.create_task(qa.start(), name="qa"),
         "ceo": lambda: asyncio.create_task(ceo.start(), name="ceo"),
         "market_researcher": lambda: asyncio.create_task(market_researcher.start(), name="market_researcher"),
-        "email_monitor": lambda: asyncio.create_task(email_monitor.start(), name="email_monitor"),
+        # "email_monitor": lambda: asyncio.create_task(email_monitor.start(), name="email_monitor"),  # 보류
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
