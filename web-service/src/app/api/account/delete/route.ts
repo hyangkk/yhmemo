@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { PADDLE_CONFIG } from '@/lib/paddle';
+import { notifyServiceLog } from '@/lib/slack-notify';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -50,7 +51,11 @@ export async function POST(req: NextRequest) {
     ).catch(() => {}); // 실패해도 계속 진행
   }
 
-  // 2. 사용자 데이터 삭제 (프로필, 결제 기록 등)
+  // 2. 슬랙 알림 (삭제 전에 이메일 기록)
+  const userEmail = user.email || user.id;
+  notifyServiceLog(`👋 *회원 탈퇴* | ${userEmail} | plan: ${profile?.plan || 'free'}`);
+
+  // 3. 사용자 데이터 삭제 (프로필, 결제 기록 등)
   await supabase.from('payments').delete().eq('user_id', user.id);
   await supabase.from('profiles').delete().eq('id', user.id);
 
