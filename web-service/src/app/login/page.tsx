@@ -51,12 +51,6 @@ export default function LoginPage() {
             {lang === 'ko' ? 'Google로 시작하기' : 'Continue with Google'}
           </button>
 
-          <button
-            onClick={() => router.push('/studio')}
-            className="w-full bg-gray-800 hover:bg-gray-700 py-3 px-6 rounded-xl text-sm transition text-gray-300"
-          >
-            {lang === 'ko' ? '로그인 없이 기존 스튜디오 사용' : 'Use studio without signing in'}
-          </button>
         </div>
 
         <p className="text-gray-600 text-xs">
