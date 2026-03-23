@@ -16,7 +16,7 @@ export default function TermsPage() {
           <p>사용자는 자신의 계정 정보를 안전하게 관리할 책임이 있습니다. 계정의 무단 사용이 의심되는 경우 즉시 알려주세요.</p>
 
           <h2 className="text-lg font-semibold text-white mt-6">4. 요금제 및 결제</h2>
-          <p>서비스는 무료(Free) 요금제와 유료(Plus, $9/월) 요금제를 제공합니다. 유료 구독은 Paddle을 통해 처리되며, 매월 자동 갱신됩니다.</p>
+          <p>서비스는 무료(Free) 요금제와 유료(Plus, $3/월) 요금제를 제공합니다. 유료 구독은 Paddle을 통해 처리되며, 매월 자동 갱신됩니다.</p>
 
           <h2 className="text-lg font-semibold text-white mt-6">5. 콘텐츠 소유권</h2>
           <p>사용자가 업로드한 영상 및 편집 결과물의 소유권은 사용자에게 있습니다. 서비스는 편집 처리 목적으로만 콘텐츠에 접근합니다.</p>

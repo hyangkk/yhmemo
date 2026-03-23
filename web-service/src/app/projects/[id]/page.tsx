@@ -508,7 +508,7 @@ export default function ProjectDashboardPage({ params }: { params: Promise<{ id:
                   onClick={() => router.push('/pricing')}
                   className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 py-2.5 rounded-xl text-sm font-semibold transition"
                 >
-                  Plus 업그레이드 ($9/월) — 모든 기능 해금
+                  Plus 업그레이드 ($3/월) — 모든 기능 해금
                 </button>
               )}
             </div>

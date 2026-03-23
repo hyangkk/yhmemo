@@ -4,6 +4,7 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import type { StudioSession, StudioClip, StudioDevice, StudioResult } from '@/lib/studio';
 import { supabase } from '@/lib/supabase';
+import { useLang } from '@/lib/i18n';
 
 interface SessionData {
   session: StudioSession;
@@ -13,12 +14,12 @@ interface SessionData {
   results?: StudioResult[];
 }
 
-const MODE_LABELS: Record<string, string> = {
-  auto: '3초 교차편집',
-  director: 'AI 감독 모드',
-  split: '화면 분할',
-  pip: 'PIP',
-  prompt: 'AI 프롬프트',
+const MODE_LABELS: Record<string, { ko: string; en: string }> = {
+  auto: { ko: '3초 교차편집', en: '3s Cross-cut' },
+  director: { ko: 'AI 감독 모드', en: 'AI Director' },
+  split: { ko: '화면 분할', en: 'Split Screen' },
+  pip: { ko: 'PIP', en: 'PIP' },
+  prompt: { ko: 'AI 프롬프트', en: 'AI Prompt' },
 };
 
 function parseEditStep(result: StudioResult | null): { step: number; total: number; description: string } | null {
@@ -41,20 +42,21 @@ function parsePromptFromResult(result: StudioResult): string | null {
   return promptMatch ? promptMatch[1] : null;
 }
 
-// 상대 시간 포맷 (몇 분 전, 몇 시간 전)
-function formatRelativeTime(dateStr: string): string {
+function formatRelativeTime(dateStr: string, lang: 'ko' | 'en'): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return '방금 전';
-  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 1) return lang === 'ko' ? '방금 전' : 'just now';
+  if (minutes < 60) return lang === 'ko' ? `${minutes}분 전` : `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  return `${Math.floor(hours / 24)}일 전`;
+  if (hours < 24) return lang === 'ko' ? `${hours}시간 전` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return lang === 'ko' ? `${days}일 전` : `${days}d ago`;
 }
 
 export default function ResultPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
   const router = useRouter();
+  const { lang } = useLang();
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState(false);
@@ -181,7 +183,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
   if (!data) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p>세션을 찾을 수 없습니다</p>
+        <p>{lang === 'ko' ? '세션을 찾을 수 없습니다' : 'Session not found'}</p>
       </div>
     );
   }
@@ -198,8 +200,70 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
     doneResults.map(r => parseModeFromPath(r.storage_path)).filter(Boolean)
   );
 
+  const T = {
+    sessionNotFound: lang === 'ko' ? '세션을 찾을 수 없습니다' : 'Session not found',
+    clips: lang === 'ko' ? '클립' : 'clips',
+    unusedDevices: lang === 'ko' ? '대 미사용' : ' unused',
+    uploadComplete: lang === 'ko' ? '업로드 완료' : 'Upload complete',
+    uploading: lang === 'ko' ? '영상 업로드 중' : 'Uploading videos',
+    devices: lang === 'ko' ? '대' : '',
+    waiting: lang === 'ko' ? '대 대기' : ' waiting',
+    failed: lang === 'ko' ? '대 실패' : ' failed',
+    preparingEdit: lang === 'ko' ? '편집 준비 중...' : 'Preparing...',
+    editing: lang === 'ko' ? '영상 편집 중' : 'Editing video',
+    autoSwitch: lang === 'ko' ? '완료되면 자동으로 전환됩니다' : 'Will auto-update when done',
+    editResults: lang === 'ko' ? '편집 결과' : 'Edit Results',
+    count: lang === 'ko' ? '개' : '',
+    download: lang === 'ko' ? '다운로드' : 'Download',
+    latest: lang === 'ko' ? '최신' : 'NEW',
+    editResult: lang === 'ko' ? '편집 결과' : 'Edit result',
+    aiPrompt: lang === 'ko' ? 'AI 프롬프트' : 'AI Prompt',
+    shootDone: lang === 'ko' ? '촬영 완료! 아래에서 편집 설정 후 편집을 시작하세요' : 'Recording done! Configure and start editing below',
+    shootDoneDownload: lang === 'ko' ? '촬영 완료 · 아래에서 클립을 다운로드하세요' : 'Recording done · Download clips below',
+    editFailed: lang === 'ko' ? '편집 실패 · 아래에서 다시 시도하세요' : 'Edit failed · Try again below',
+    retry: lang === 'ko' ? '다시 시도' : 'Retry',
+    retrying: lang === 'ko' ? '준비 중...' : 'Retrying...',
+    editSettings: lang === 'ko' ? '편집 설정' : 'Edit Settings',
+    editMode: lang === 'ko' ? '편집 모드' : 'Edit Mode',
+    crossEdit: lang === 'ko' ? '교차편집' : 'Cross-cut',
+    crossEditDesc: lang === 'ko' ? '3초마다 카메라 전환' : 'Switch camera every 3s',
+    directorMode: lang === 'ko' ? '감독 모드' : 'Director',
+    directorDesc: lang === 'ko' ? '메인 + 리액션 컷' : 'Main + reaction cuts',
+    bgm: lang === 'ko' ? '배경음악' : 'Background Music',
+    none: lang === 'ko' ? '없음' : 'None',
+    calm: lang === 'ko' ? '잔잔한' : 'Calm',
+    upbeat: lang === 'ko' ? '신나는' : 'Upbeat',
+    subtitle: lang === 'ko' ? '자막' : 'Subtitles',
+    blackBg: lang === 'ko' ? '검은 배경' : 'Black BG',
+    outline: lang === 'ko' ? '테두리' : 'Outline',
+    audio: lang === 'ko' ? '음성' : 'Audio',
+    eachAudio: lang === 'ko' ? '각 영상 음성' : 'Each clip audio',
+    bestAudio: lang === 'ko' ? '최적 음성만' : 'Best audio only',
+    additionalInstructions: lang === 'ko' ? '추가 지시사항' : 'Additional instructions',
+    optional: lang === 'ko' ? '선택' : 'optional',
+    promptPlaceholder: lang === 'ko' ? '예: 5초 간격으로 전환해줘' : 'e.g., Switch every 5 seconds',
+    startEdit: lang === 'ko' ? '편집하기' : 'Start Editing',
+    preparingEditBtn: lang === 'ko' ? '편집 준비 중...' : 'Preparing edit...',
+    editWaitMsg: lang === 'ko' ? '편집이 완료되면 다시 설정할 수 있습니다' : 'You can reconfigure after editing is done',
+    recordedClips: lang === 'ko' ? '촬영된 클립' : 'Recorded Clips',
+    save: lang === 'ko' ? '저장' : 'Save',
+    uploadFailed: lang === 'ko' ? '업로드 실패' : 'Upload failed',
+    uploadingStatus: lang === 'ko' ? '업로드 중...' : 'Uploading...',
+    unused: lang === 'ko' ? '미사용' : 'Unused',
+    addTestClip: lang === 'ko' ? '테스트 영상 추가' : 'Add test clip',
+    adding: lang === 'ko' ? '추가 중...' : 'Adding...',
+    goHome: lang === 'ko' ? '홈으로 가기' : 'Go Home',
+    camera: lang === 'ko' ? '카메라' : 'Camera',
+    bgmCalmPrompt: lang === 'ko' ? '잔잔한 클래식 배경음악 넣어줘' : 'Add calm classical background music',
+    bgmUpbeatPrompt: lang === 'ko' ? '신나는 배경음악 넣어줘' : 'Add upbeat background music',
+    subtitleBlackBgPrompt: lang === 'ko' ? '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스' : 'Add auto subtitles. Style: white text with black semi-transparent background',
+    subtitleOutlinePrompt: lang === 'ko' ? '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 테두리(외곽선)' : 'Add auto subtitles. Style: white text with black outline',
+    crossEditPrompt: lang === 'ko' ? '교차편집' : 'Cross-cut editing',
+    directorPrompt: lang === 'ko' ? '감독 모드로 편집' : 'Director mode editing',
+  };
+
   const getDeviceName = (deviceId: string) => {
-    return devices.find(d => d.id === deviceId)?.name || '카메라';
+    return devices.find(d => d.id === deviceId)?.name || T.camera;
   };
 
   const formatDuration = (ms: number | null) => {
@@ -223,7 +287,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         <div className="max-w-2xl mx-auto flex items-baseline gap-2">
           <h1 className="text-lg font-bold">{session.title}</h1>
           <span className="text-gray-500 text-xs">
-            {clips.length}클립{failedDevices.length > 0 && ` · ${failedDevices.length}대 미사용`}
+            {clips.length} {T.clips}{failedDevices.length > 0 && ` · ${failedDevices.length}${T.unusedDevices}`}
           </span>
         </div>
       </div>
@@ -242,15 +306,15 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">
-                  {allFinished ? '업로드 완료' : '영상 업로드 중'}
+                  {allFinished ? T.uploadComplete : T.uploading}
                   <span className="text-gray-400 font-normal ml-2">
-                    {doneCount}/{devices.length}대
-                    {waitingCount > 0 && ` · ${waitingCount}대 대기`}
-                    {allFinished && errorCount > 0 && ` · ${errorCount}대 실패`}
+                    {doneCount}/{devices.length}{T.devices}
+                    {waitingCount > 0 && ` · ${waitingCount}${T.waiting}`}
+                    {allFinished && errorCount > 0 && ` · ${errorCount}${T.failed}`}
                   </span>
                 </p>
                 {allFinished && clips.length > 0 && (
-                  <p className="text-gray-500 text-xs mt-0.5">편집 준비 중...</p>
+                  <p className="text-gray-500 text-xs mt-0.5">{T.preparingEdit}</p>
                 )}
               </div>
             </div>
@@ -266,14 +330,15 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           const step = editStep || directStep;
           // 현재 편집 중인 모드 표시
           const modeMatch = rawPath.match(/^mode:(\w+)$/);
-          const currentMode = modeMatch ? MODE_LABELS[modeMatch[1]] || modeMatch[1] : null;
+          const ml = modeMatch ? MODE_LABELS[modeMatch[1]] : null;
+          const currentMode = ml ? ml[lang] : (modeMatch ? modeMatch[1] : null);
           return (
             <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 space-y-2">
               <div className="flex items-center gap-3">
                 <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">
-                    영상 편집 중
+                    {T.editing}
                     {currentMode && !step && (
                       <span className="text-purple-300 ml-2">{currentMode}</span>
                     )}
@@ -296,7 +361,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   />
                 </div>
               ) : (
-                <p className="text-gray-500 text-xs">완료되면 자동으로 전환됩니다</p>
+                <p className="text-gray-500 text-xs">{T.autoSwitch}</p>
               )}
             </div>
           );
@@ -306,13 +371,13 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {session.status === 'done' && doneResults.length > 0 && (
           <div className="space-y-2">
             <h2 className="text-sm font-semibold text-gray-400">
-              편집 결과 <span className="text-gray-600 font-normal">{doneResults.length}개</span>
+              {T.editResults} <span className="text-gray-600 font-normal">{doneResults.length}{T.count}</span>
             </h2>
             {[...doneResults]
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
               .map((result, idx) => {
               const mode = parseModeFromPath(result.storage_path);
-              const modeLabel = mode ? MODE_LABELS[mode] || mode : '편집 결과';
+              const modeLabel = mode ? (MODE_LABELS[mode]?.[lang] || mode) : T.editResult;
               const promptText = parsePromptFromResult(result);
               const isLatest = idx === 0;
               return (
@@ -331,11 +396,11 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium">
-                          {promptText ? 'AI 프롬프트' : modeLabel}
+                          {promptText ? T.aiPrompt : modeLabel}
                         </p>
                         {isLatest && (
                           <span className="text-[10px] font-bold bg-green-500 text-black px-1.5 py-0.5 rounded">
-                            최신
+                            {T.latest}
                           </span>
                         )}
                       </div>
@@ -343,7 +408,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         {result.duration_ms && (
                           <span className="text-xs text-gray-500">{formatDuration(result.duration_ms)}</span>
                         )}
-                        <span className="text-xs text-gray-600">{formatRelativeTime(result.created_at)}</span>
+                        <span className="text-xs text-gray-600">{formatRelativeTime(result.created_at, lang)}</span>
                       </div>
                     </div>
                     <a
@@ -355,7 +420,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                           : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                       }`}
                     >
-                      다운로드
+                      {T.download}
                     </a>
                   </div>
                   {promptText && (
@@ -372,13 +437,13 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {session.status === 'done' && doneResults.length === 0 && !latestResult && clips.length >= 2 && (
           <div className="bg-purple-900/30 border border-purple-500/30 rounded-xl p-3 flex items-center gap-3">
             <span className="text-xl">🎬</span>
-            <p className="text-sm font-medium">촬영 완료! 아래에서 편집 설정 후 편집을 시작하세요</p>
+            <p className="text-sm font-medium">{T.shootDone}</p>
           </div>
         )}
         {session.status === 'done' && doneResults.length === 0 && !latestResult && clips.length < 2 && (
           <div className="bg-green-900/30 border border-green-500/30 rounded-xl p-3 flex items-center gap-3">
             <span className="text-xl">✅</span>
-            <p className="text-sm font-medium">촬영 완료 · 아래에서 클립을 다운로드하세요</p>
+            <p className="text-sm font-medium">{T.shootDoneDownload}</p>
           </div>
         )}
 
@@ -387,7 +452,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           <div className="bg-red-900/30 border border-red-500/30 rounded-xl p-3 space-y-2">
             <div className="flex items-center gap-3">
               <span className="text-xl">⚠️</span>
-              <p className="text-sm font-medium flex-1">편집 실패 · 아래에서 다시 시도하세요</p>
+              <p className="text-sm font-medium flex-1">{T.editFailed}</p>
               <button
                 disabled={retrying}
                 onClick={async () => {
@@ -404,7 +469,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 }}
                 className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 px-4 py-1.5 rounded-lg text-sm font-semibold transition shrink-0"
               >
-                {retrying ? '준비 중...' : '다시 시도'}
+                {retrying ? T.retrying : T.retry}
               </button>
             </div>
           </div>
@@ -414,12 +479,12 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {session.status === 'done' && clips.length >= 2 && (
           <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
             <div className="px-3 py-2 border-b border-gray-800">
-              <span className="text-sm font-semibold text-gray-300">편집 설정</span>
+              <span className="text-sm font-semibold text-gray-300">{T.editSettings}</span>
             </div>
             <div className="p-3 space-y-3">
               {/* 편집 모드 */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">편집 모드</h3>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">{T.editMode}</h3>
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     onClick={() => setSelectedMode('auto')}
@@ -429,8 +494,8 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
                     }`}
                   >
-                    <p className="text-sm font-semibold">🔄 교차편집</p>
-                    <p className="text-[11px] text-gray-400">3초마다 카메라 전환</p>
+                    <p className="text-sm font-semibold">🔄 {T.crossEdit}</p>
+                    <p className="text-[11px] text-gray-400">{T.crossEditDesc}</p>
                   </button>
                   <button
                     onClick={() => setSelectedMode('director')}
@@ -440,15 +505,15 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
                     }`}
                   >
-                    <p className="text-sm font-semibold">🎬 감독 모드</p>
-                    <p className="text-[11px] text-gray-400">메인 + 리액션 컷</p>
+                    <p className="text-sm font-semibold">🎬 {T.directorMode}</p>
+                    <p className="text-[11px] text-gray-400">{T.directorDesc}</p>
                   </button>
                 </div>
               </div>
 
               {/* 배경음악 */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">배경음악</h3>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">{T.bgm}</h3>
                 <div className="flex gap-1.5 flex-wrap">
                   <button
                     onClick={() => setSelectedBgm(null)}
@@ -458,7 +523,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    없음
+                    {T.none}
                   </button>
                   <button
                     onClick={() => setSelectedBgm('calm')}
@@ -468,7 +533,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    🎵 잔잔한
+                    🎵 {T.calm}
                   </button>
                   <button
                     onClick={() => setSelectedBgm('upbeat')}
@@ -478,14 +543,14 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    🎶 신나는
+                    🎶 {T.upbeat}
                   </button>
                 </div>
               </div>
 
               {/* 자막 */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">자막</h3>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">{T.subtitle}</h3>
                 <div className="flex gap-1.5 flex-wrap">
                   <button
                     onClick={() => setSelectedSubtitle(null)}
@@ -495,7 +560,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    없음
+                    {T.none}
                   </button>
                   <button
                     onClick={() => setSelectedSubtitle('blackBg')}
@@ -507,7 +572,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   >
                     <span className="inline-flex items-center gap-1">
                       <span className="inline-block px-1 py-0.5 bg-black text-white text-[10px] rounded leading-none">가</span>
-                      검은 배경
+                      {T.blackBg}
                     </span>
                   </button>
                   <button
@@ -520,7 +585,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   >
                     <span className="inline-flex items-center gap-1">
                       <span className="inline-block px-1 py-0.5 text-white text-[10px] leading-none" style={{textShadow: '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000'}}>가</span>
-                      테두리
+                      {T.outline}
                     </span>
                   </button>
                 </div>
@@ -528,7 +593,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
               {/* 음성 설정 */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">음성</h3>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">{T.audio}</h3>
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => setAudioMode('each')}
@@ -538,7 +603,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    🎙️ 각 영상 음성
+                    🎙️ {T.eachAudio}
                   </button>
                   <button
                     onClick={() => setAudioMode('best')}
@@ -548,19 +613,19 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'
                     }`}
                   >
-                    🔊 최적 음성만
+                    🔊 {T.bestAudio}
                   </button>
                 </div>
               </div>
 
               {/* 추가 지시사항 (프롬프트) */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">추가 지시사항 <span className="text-gray-600 font-normal">(선택)</span></h3>
+                <h3 className="text-xs font-semibold text-gray-500 mb-1.5">{T.additionalInstructions} <span className="text-gray-600 font-normal">({T.optional})</span></h3>
                 <input
                   type="text"
                   value={promptText}
                   onChange={(e) => setPromptText(e.target.value)}
-                  placeholder="예: 5초 간격으로 전환해줘"
+                  placeholder={T.promptPlaceholder}
                   className="w-full bg-gray-800 text-white text-sm rounded-lg px-3 py-2 outline-none placeholder-gray-500 border border-gray-700 focus:border-purple-500/50 transition"
                 />
               </div>
@@ -570,16 +635,16 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 disabled={!!editingMode}
                 onClick={() => {
                   const bgmMap: Record<string, string> = {
-                    calm: '잔잔한 클래식 배경음악 넣어줘',
-                    upbeat: '신나는 배경음악 넣어줘',
+                    calm: T.bgmCalmPrompt,
+                    upbeat: T.bgmUpbeatPrompt,
                   };
                   const subtitleMap: Record<string, string> = {
-                    blackBg: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 반투명 배경 박스',
-                    outline: '자동 자막을 넣어줘. 스타일: 흰색 글씨에 검은색 테두리(외곽선)',
+                    blackBg: T.subtitleBlackBgPrompt,
+                    outline: T.subtitleOutlinePrompt,
                   };
                   const modeMap: Record<string, string> = {
-                    auto: '교차편집',
-                    director: '감독 모드로 편집',
+                    auto: T.crossEditPrompt,
+                    director: T.directorPrompt,
                   };
 
                   const hasBgm = selectedBgm && bgmMap[selectedBgm];
@@ -588,7 +653,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
 
                   if (hasBgm || hasSubtitle || hasPrompt) {
                     const parts: string[] = [];
-                    parts.push(modeMap[selectedMode] || '교차편집');
+                    parts.push(modeMap[selectedMode] || T.crossEditPrompt);
                     if (hasBgm) parts.push(bgmMap[selectedBgm!]);
                     if (hasSubtitle) parts.push(subtitleMap[selectedSubtitle!]);
                     if (hasPrompt) parts.push(promptText.trim());
@@ -602,9 +667,9 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 {editingMode ? (
                   <span className="flex items-center justify-center gap-2">
                     <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    편집 준비 중...
+                    {T.preparingEditBtn}
                   </span>
-                ) : '편집하기'}
+                ) : T.startEdit}
               </button>
             </div>
           </div>
@@ -613,13 +678,13 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
         {/* 편집 중일 때 설정 패널 비활성 표시 */}
         {session.status === 'editing' && clips.length >= 2 && (
           <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-3 opacity-50">
-            <p className="text-sm text-gray-500 text-center">편집이 완료되면 다시 설정할 수 있습니다</p>
+            <p className="text-sm text-gray-500 text-center">{T.editWaitMsg}</p>
           </div>
         )}
 
         {/* 촬영된 클립 */}
         <div>
-          <h2 className="text-sm font-semibold text-gray-400 mb-1.5">촬영된 클립</h2>
+          <h2 className="text-sm font-semibold text-gray-400 mb-1.5">{T.recordedClips}</h2>
           <div className="space-y-1">
             {devices.filter(d => clips.some(c => c.device_id === d.id)).map((device) => {
               const clip = clips.find(c => c.device_id === device.id)!;
@@ -637,7 +702,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                     onClick={(e) => e.stopPropagation()}
                     className="text-blue-400 hover:text-blue-300 text-xs"
                   >
-                    저장
+                    {T.save}
                   </a>
                 </div>
               );
@@ -651,7 +716,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                 <span>{device.name}</span>
                 <span>·</span>
                 <span>
-                  {device.status === 'error' ? '업로드 실패' : device.status === 'uploading' ? '업로드 중...' : '미사용'}
+                  {device.status === 'error' ? T.uploadFailed : device.status === 'uploading' ? T.uploadingStatus : T.unused}
                 </span>
               </div>
             ))}
@@ -666,8 +731,8 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
                   if (res.ok) {
                     setPollKey(k => k + 1);
                   } else {
-                    const err = await res.json().catch(() => ({ error: '실패' }));
-                    alert(err.error || '테스트 영상 추가 실패');
+                    const err = await res.json().catch(() => ({ error: 'Failed' }));
+                    alert(err.error || (lang === 'ko' ? '테스트 영상 추가 실패' : 'Failed to add test clip'));
                   }
                 } finally {
                   setAddingTestClip(false);
@@ -678,12 +743,12 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
               {addingTestClip ? (
                 <>
                   <span className="inline-block w-4 h-4 border-2 border-gray-400/30 border-t-gray-400 rounded-full animate-spin" />
-                  추가 중...
+                  {T.adding}
                 </>
               ) : (
                 <>
                   <span>+</span>
-                  테스트 영상 추가
+                  {T.addTestClip}
                 </>
               )}
             </button>
@@ -695,7 +760,7 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
           onClick={() => router.push('/studio')}
           className="w-full bg-gray-800 hover:bg-gray-700 py-2.5 rounded-xl text-sm font-semibold transition"
         >
-          홈으로 가기
+          {T.goHome}
         </button>
       </div>
     </div>
