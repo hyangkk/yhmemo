@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { PADDLE_CONFIG, PLANS } from './paddle';
 
 declare global {
@@ -19,9 +19,12 @@ declare global {
 
 interface PaddleEvent {
   name: string;
+  type?: string;
   data?: {
     transaction_id?: string;
+    id?: string;
     status?: string;
+    error?: { type?: string; code?: string; detail?: string };
     [key: string]: unknown;
   };
 }
@@ -37,11 +40,13 @@ interface PaddleCheckoutOptions {
   };
 }
 
-function initPaddle(onSuccess: React.RefObject<((id: string) => void) | undefined>) {
+function initPaddle(
+  onSuccess: React.RefObject<((id: string) => void) | undefined>,
+  onError: React.RefObject<((msg: string) => void) | undefined>,
+) {
   if (!window.Paddle || !PADDLE_CONFIG.clientToken) return false;
 
   try {
-    // Paddle v2: environment는 sandbox일 때만 설정
     if (PADDLE_CONFIG.environment === 'sandbox') {
       window.Paddle.Environment.set('sandbox');
     }
@@ -49,8 +54,26 @@ function initPaddle(onSuccess: React.RefObject<((id: string) => void) | undefine
     window.Paddle.Initialize({
       token: PADDLE_CONFIG.clientToken,
       eventCallback: (event) => {
-        if (event.name === 'checkout.completed' && event.data?.transaction_id) {
-          onSuccess.current?.(event.data.transaction_id);
+        console.log('[Paddle] Event:', event.name, event.data?.status || '');
+
+        // checkout.completed: 결제 성공
+        if (event.name === 'checkout.completed') {
+          const txId = event.data?.transaction_id || (event.data?.id as string);
+          if (txId) {
+            onSuccess.current?.(txId);
+          }
+        }
+
+        // checkout.error: 결제 실패
+        if (event.name === 'checkout.error') {
+          const detail = event.data?.error?.detail || 'Payment failed. Please try again.';
+          console.error('[Paddle] Checkout error:', event.data?.error);
+          onError.current?.(detail);
+        }
+
+        // checkout.warning: 경고
+        if (event.name === 'checkout.warning') {
+          console.warn('[Paddle] Checkout warning:', event.data);
         }
       },
     });
@@ -65,27 +88,30 @@ export function usePaddle(opts?: {
   userId?: string;
   userEmail?: string;
   onSuccess?: (transactionId: string) => void;
+  onError?: (message: string) => void;
 }) {
   const initializedRef = useRef(false);
   const onSuccessRef = useRef(opts?.onSuccess);
+  const onErrorRef = useRef(opts?.onError);
+  const [ready, setReady] = useState(false);
   onSuccessRef.current = opts?.onSuccess;
+  onErrorRef.current = opts?.onError;
 
-  // Paddle.js async 로드 대기 + 초기화
   useEffect(() => {
     if (initializedRef.current) return;
 
-    // 즉시 시도
-    if (initPaddle(onSuccessRef)) {
+    if (initPaddle(onSuccessRef, onErrorRef)) {
       initializedRef.current = true;
+      setReady(true);
       return;
     }
 
-    // 로드 대기 (500ms 간격, 최대 20초)
     let attempts = 0;
     const timer = setInterval(() => {
       attempts++;
-      if (initPaddle(onSuccessRef)) {
+      if (initPaddle(onSuccessRef, onErrorRef)) {
         initializedRef.current = true;
+        setReady(true);
         clearInterval(timer);
       } else if (attempts > 40) {
         console.warn('[Paddle] Failed to initialize after 20s');
@@ -95,29 +121,40 @@ export function usePaddle(opts?: {
     return () => clearInterval(timer);
   }, []);
 
-  const openCheckout = useCallback(() => {
+  const openCheckout = useCallback(async () => {
     if (!window.Paddle) {
-      console.error('[Paddle] Paddle.js not loaded');
-      alert('Payment system is loading. Please try again in a moment.');
+      alert('결제 시스템을 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
       return;
     }
 
     if (!initializedRef.current) {
-      // 마지막 시도로 초기화
-      if (initPaddle(onSuccessRef)) {
+      if (initPaddle(onSuccessRef, onErrorRef)) {
         initializedRef.current = true;
+        setReady(true);
       } else {
-        console.error('[Paddle] Not initialized');
-        alert('Payment system is not ready. Please refresh the page.');
+        alert('결제 시스템이 준비되지 않았습니다. 페이지를 새로고침해주세요.');
         return;
       }
     }
 
     const priceId = PLANS.plus.priceId;
     if (!priceId) {
-      console.error('[Paddle] Price ID not configured');
-      alert('Payment configuration error. Please contact support.');
+      alert('결제 설정 오류입니다. 고객지원에 문의해주세요.');
       return;
+    }
+
+    // 서버사이드에서 Price 유효성 사전 검증
+    try {
+      const res = await fetch('/api/paddle/check-price');
+      const data = await res.json();
+      if (!data.ok) {
+        console.error('[Paddle] Price validation failed:', data.error);
+        alert(data.error || '결제 설정에 문제가 있습니다. 고객지원에 문의해주세요.');
+        return;
+      }
+    } catch (err) {
+      console.warn('[Paddle] Price check skipped (network error):', err);
+      // 검증 실패해도 checkout 시도는 허용
     }
 
     const checkoutOpts: PaddleCheckoutOptions = {
@@ -134,8 +171,13 @@ export function usePaddle(opts?: {
       checkoutOpts.customer = { email: opts.userEmail };
     }
 
-    window.Paddle.Checkout.open(checkoutOpts);
+    try {
+      window.Paddle.Checkout.open(checkoutOpts);
+    } catch (err) {
+      console.error('[Paddle] Checkout.open failed:', err);
+      alert('결제창을 열 수 없습니다. 페이지를 새로고침 후 다시 시도해주세요.');
+    }
   }, [opts?.userId, opts?.userEmail]);
 
-  return { openCheckout };
+  return { openCheckout, ready };
 }
