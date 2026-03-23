@@ -4,7 +4,7 @@
 - 매일 오전 7시 KST에 GitHub Actions에 의해 자동 실행
 - Notion '생각일기 DB'에서 다음 항목 수집:
     1) 생성일 기준 48시간 이내에 생성된 항목
-    2) '상단 고정 기간' 속성의 기간이 현재 시점에 유효한 항목
+    2) '상단고정 기간' 속성의 기간이 현재 시점에 유효한 항목
 - Claude AI로 항목들을 간략히 요약
 - 텔레그램으로 요약 발송
 """
@@ -35,8 +35,8 @@ def notion_headers() -> dict:
 
 def fetch_diary_pages() -> list:
     """Notion 생각일기 DB에서 후보 페이지 조회.
-    필터: (생성일 >= 48시간 전) OR (상단 고정 기간 시작 <= 오늘)
-    상단 고정 기간의 종료일 유효성은 Python에서 추가 검사.
+    필터: (생성일 >= 48시간 전) OR (상단고정 기간 시작 <= 오늘)
+    상단고정 기간의 종료일 유효성은 Python에서 추가 검사.
     """
     database_id = os.environ.get("NOTION_DATABASE_ID", "")
     if not database_id:
@@ -56,11 +56,11 @@ def fetch_diary_pages() -> list:
                 {
                     "and": [
                         {
-                            "property": "상단 고정 기간",
+                            "property": "상단고정 기간",
                             "date": {"on_or_before": today_kst},
                         },
                         {
-                            "property": "상단 고정 기간",
+                            "property": "상단고정 기간",
                             "date": {"is_not_empty": True},
                         },
                     ]
@@ -139,9 +139,9 @@ def extract_title(page: dict) -> str:
 
 
 def is_pinned_valid(page: dict) -> bool:
-    """상단 고정 기간이 오늘 날짜를 포함하는지 확인."""
+    """상단고정 기간이 오늘 날짜를 포함하는지 확인."""
     today = datetime.now(KST).date()
-    pinned = page.get("properties", {}).get("상단 고정 기간", {})
+    pinned = page.get("properties", {}).get("상단고정 기간", {})
     if pinned.get("type") != "date":
         return False
     date_data = pinned.get("date")
@@ -181,7 +181,7 @@ def collect_entries(pages: list) -> list:
             except ValueError:
                 pass
 
-        # 상단 고정 기간 유효 여부
+        # 상단고정 기간 유효 여부
         pinned = is_pinned_valid(page)
 
         if not (within_48h or pinned):
