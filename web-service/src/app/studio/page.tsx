@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 
+type Mode = 'multicam' | 'timeline';
+
 interface RecentSession {
   id: string;
   title: string;
@@ -26,12 +28,15 @@ function formatRelativeTime(dateStr: string): string {
 export default function StudioPage() {
   const router = useRouter();
   const { user, signInWithGoogle } = useAuth();
+  const [mode, setMode] = useState<Mode>('multicam');
   const [title, setTitle] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [version, setVersion] = useState<{ front: string; server: string } | null>(null);
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+
+  const isSupaCam = typeof window !== 'undefined' && window.location.hostname.includes('supacam');
 
   useEffect(() => {
     fetch('/api/studio/version').then(r => r.json()).then(setVersion).catch(() => {});
@@ -42,10 +47,11 @@ export default function StudioPage() {
     setLoading(true);
     setError('');
     try {
+      const defaultTitle = mode === 'multicam' ? '멀티캠 촬영' : '타임라인 촬영';
       const res = await fetch('/api/studio/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title || '새 촬영' }),
+        body: JSON.stringify({ title: title || defaultTitle }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -70,16 +76,6 @@ export default function StudioPage() {
       setError(err instanceof Error ? err.message : '세션을 찾을 수 없습니다');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const isSupaCam = typeof window !== 'undefined' && window.location.hostname.includes('supacam');
-
-  const handleProjectClick = () => {
-    if (user) {
-      router.push('/projects');
-    } else {
-      signInWithGoogle();
     }
   };
 
@@ -112,7 +108,7 @@ export default function StudioPage() {
         )}
         {!(isSupaCam && user) && (
           <button
-            onClick={handleProjectClick}
+            onClick={() => user ? router.push('/projects') : signInWithGoogle()}
             className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer"
           >
             <span className="text-gray-300">{user ? '프로젝트' : '로그인'}</span>
@@ -124,12 +120,47 @@ export default function StudioPage() {
         {/* 타이틀 */}
         <div className="text-center pb-2">
           <h1 className="text-2xl font-bold">SupaCam 슈파캠</h1>
-          <p className="text-gray-500 text-xs mt-1">여러 카메라로 동시 촬영 · 자동 편집</p>
+          <p className="text-gray-500 text-xs mt-1">여러 카메라로 촬영 · AI 자동 편집</p>
         </div>
 
-        {/* 새 촬영 + 참여 코드 통합 */}
+        {/* 모드 선택 */}
+        <div className="flex gap-2 bg-gray-900 rounded-xl p-1">
+          <button
+            onClick={() => setMode('multicam')}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              mode === 'multicam'
+                ? 'bg-violet-600 text-white shadow-lg'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            📱 멀티캠
+          </button>
+          <button
+            onClick={() => setMode('timeline')}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              mode === 'timeline'
+                ? 'bg-emerald-600 text-white shadow-lg'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            🎞️ 타임라인캠
+          </button>
+        </div>
+
+        {/* 모드 설명 */}
+        <div className={`text-center text-xs px-4 py-2 rounded-lg ${
+          mode === 'multicam'
+            ? 'bg-violet-900/20 text-violet-300'
+            : 'bg-emerald-900/20 text-emerald-300'
+        }`}>
+          {mode === 'multicam'
+            ? '여러 기기로 동시에 촬영하고 AI가 교차편집합니다'
+            : '자유롭게 촬영/중단하면 하나의 타임라인으로 자동 편집됩니다'
+          }
+        </div>
+
+        {/* 새 촬영 + 참여 코드 */}
         <div className="bg-gray-900 rounded-2xl p-4 space-y-3">
-          {/* 새 촬영 */}
           <div className="flex gap-2">
             <input
               type="text"
@@ -141,20 +172,22 @@ export default function StudioPage() {
             <button
               onClick={createSession}
               disabled={loading}
-              className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap"
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap ${
+                mode === 'multicam'
+                  ? 'bg-violet-600 hover:bg-violet-500 disabled:bg-gray-700'
+                  : 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700'
+              }`}
             >
               {loading ? '...' : '새 촬영'}
             </button>
           </div>
 
-          {/* 구분선 */}
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-gray-800" />
             <span className="text-gray-600 text-xs">또는 참여</span>
             <div className="flex-1 h-px bg-gray-800" />
           </div>
 
-          {/* 코드로 참여 */}
           <div className="flex gap-2">
             <input
               type="text"
@@ -182,15 +215,18 @@ export default function StudioPage() {
 
         {/* 사용법 + 버전 */}
         <div className="text-gray-600 text-xs text-center leading-relaxed space-y-1">
-          <p>세션 만들기 → 코드 공유 → 각 폰에서 참여 → 동시 촬영 → 자동 편집</p>
+          <p>
+            {mode === 'multicam'
+              ? '세션 만들기 → 코드 공유 → 동시 촬영 → AI 교차편집'
+              : '세션 만들기 → 코드 공유 → 자유 촬영 → AI 타임라인 편집'
+            }
+          </p>
           {version && (
             <p className="text-gray-700 font-mono">
               {version.front === version.server && version.front !== '0' ? (
                 <span>#{version.front}</span>
               ) : (
-                <span>
-                  front {version.front} · server {version.server}
-                </span>
+                <span>front {version.front} · server {version.server}</span>
               )}
             </p>
           )}

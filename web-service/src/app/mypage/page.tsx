@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth, getBrowserSupabase } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
 
@@ -48,7 +49,7 @@ export default function MyPage() {
   };
 
   const handleUnsubscribe = async () => {
-    if (!confirm('정말 구독을 취소하시겠어요?\n무료 요금제로 전환되며, 프로젝트는 1개만 유지됩니다.')) return;
+    if (!confirm('정말 구독을 취소하시겠어요?\n무료 요금제로 전환됩니다.')) return;
     setSubscribing(true);
     setMessage('');
     try {
@@ -133,15 +134,15 @@ export default function MyPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-purple-300">Plus 구독 중</p>
-                    <p className="text-sm text-gray-400 mt-1">${PLANS.plus.price}/월 · 테스트 기간</p>
+                    <p className="text-sm text-gray-400 mt-1">${PLANS.plus.price}/월</p>
                   </div>
-                  <span className="text-purple-400 text-2xl">✓</span>
+                  <span className="text-purple-400 text-2xl">&#10003;</span>
                 </div>
               </div>
               <ul className="space-y-1.5">
                 {PLANS.plus.features.map((f) => (
                   <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
-                    <span className="text-purple-400">✓</span> {f}
+                    <span className="text-purple-400">&#10003;</span> {f}
                   </li>
                 ))}
               </ul>
@@ -157,10 +158,9 @@ export default function MyPage() {
             <div className="space-y-4">
               <div className="bg-gray-800 rounded-xl p-4">
                 <p className="text-sm text-gray-400">현재 무료 요금제를 사용 중입니다.</p>
-                <p className="text-sm text-gray-500 mt-1">Plus로 업그레이드하면 모든 기능을 사용할 수 있어요.</p>
+                <p className="text-sm text-gray-500 mt-1">멀티캠 2회, 타임라인캠 2회 이용 가능</p>
               </div>
 
-              {/* Plus 요금제 카드 */}
               <div className="border border-purple-500/50 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
@@ -175,7 +175,7 @@ export default function MyPage() {
                 <ul className="space-y-1.5">
                   {PLANS.plus.features.map((f) => (
                     <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
-                      <span className="text-purple-400">✓</span> {f}
+                      <span className="text-purple-400">&#10003;</span> {f}
                     </li>
                   ))}
                 </ul>
@@ -184,9 +184,8 @@ export default function MyPage() {
                   disabled={subscribing}
                   className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 py-3 rounded-xl text-sm font-bold transition cursor-pointer"
                 >
-                  {subscribing ? '처리 중...' : 'Plus 구독하기 — $9/월'}
+                  {subscribing ? '처리 중...' : `Plus 구독하기 — $${PLANS.plus.price}/월`}
                 </button>
-                <p className="text-xs text-gray-600 text-center">테스트 기간 — 실제 결제 없이 즉시 활성화</p>
               </div>
             </div>
           )}
@@ -202,10 +201,10 @@ export default function MyPage() {
         <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
           <h2 className="text-base font-bold">계정</h2>
           <button
-            onClick={() => router.push('/projects')}
+            onClick={() => router.push('/studio')}
             className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm transition cursor-pointer"
           >
-            내 프로젝트 →
+            스튜디오 →
           </button>
           <button
             onClick={signOut}
@@ -213,6 +212,26 @@ export default function MyPage() {
           >
             로그아웃
           </button>
+        </div>
+
+        {/* 서비스 정보 */}
+        <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
+          <h2 className="text-base font-bold">서비스 정보</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <Link href="/pricing" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              요금제
+            </Link>
+            <Link href="/legal/terms" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              이용약관
+            </Link>
+            <Link href="/privacy" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              개인정보처리방침
+            </Link>
+            <Link href="/refund" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              환불정책
+            </Link>
+          </div>
+          <p className="text-xs text-gray-600 text-center pt-1">ai.agent.yh@gmail.com</p>
         </div>
       </div>
     </div>
