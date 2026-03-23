@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 
 # 검증 대상 엔드포인트
-WEB_SERVICE_URL = "https://web-service-ruby.vercel.app"
+WEB_SERVICE_URL = "https://supacam.vercel.app"
 HEALTH_ENDPOINTS = [
     {"path": "/", "expect_status": 200, "name": "메인 페이지"},
     {"path": "/login", "expect_status": 200, "name": "로그인 페이지"},
-    {"path": "/projects", "expect_status": 200, "name": "프로젝트 페이지"},
-    {"path": "/api/projects", "expect_status": 401, "name": "프로젝트 API (인증 필요)"},
+    {"path": "/studio", "expect_status": 200, "name": "스튜디오 페이지"},
+    {"path": "/api/studio/version", "expect_status": 200, "name": "스튜디오 버전 API"},
 ]
 
 GITHUB_API = "https://api.github.com/repos/hyangkk/yhmemo"
