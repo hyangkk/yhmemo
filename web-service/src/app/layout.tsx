@@ -39,6 +39,8 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="SupaCam" />
         <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+        {/* Paddle.js */}
+        <script src="https://cdn.paddle.com/paddle/v2/paddle.js" async />
         {/* Google Analytics */}
         {gaId && (
           <>
