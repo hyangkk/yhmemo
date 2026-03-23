@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       project_id: projectId,
       paddle_transaction_id: transactionId,
       feature: plan || 'plus',
-      amount: 900, // $9 = 900 cents
+      amount: 300, // $3 = 300 cents
       currency: 'usd',
       status: 'pending',
     })

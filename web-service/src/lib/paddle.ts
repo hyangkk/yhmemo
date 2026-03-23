@@ -25,7 +25,7 @@ export const PLANS = {
   },
   plus: {
     name: 'Plus',
-    price: 9,
+    price: 3,
     priceId: process.env.NEXT_PUBLIC_PADDLE_PRICE_PLUS || '',
     description: { ko: '무제한 촬영 + 프리미엄 편집', en: 'Unlimited sessions + premium editing' },
     features: {

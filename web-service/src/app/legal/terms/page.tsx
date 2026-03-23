@@ -31,7 +31,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold text-white">3. Subscription & Payments</h2>
-            <p>SupaCam offers Free and Plus plans. Plus subscriptions are billed monthly at $9/month through our payment processor, Paddle. You may cancel your subscription at any time. Cancellation takes effect at the end of the current billing period.</p>
+            <p>SupaCam offers Free and Plus plans. Plus subscriptions are billed monthly at $3/month through our payment processor, Paddle. You may cancel your subscription at any time. Cancellation takes effect at the end of the current billing period.</p>
           </section>
 
           <section>
