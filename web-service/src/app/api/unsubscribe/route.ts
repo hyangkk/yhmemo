@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { PADDLE_CONFIG } from '@/lib/paddle';
+import { notifyServiceLog } from '@/lib/slack-notify';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -66,6 +67,8 @@ export async function POST(req: NextRequest) {
     .from('profiles')
     .update({ plan: 'free' })
     .eq('id', user.id);
+
+  notifyServiceLog(`🚫 *구독 취소* | ${user.email || user.id}`);
 
   return NextResponse.json({ plan: 'free' });
 }

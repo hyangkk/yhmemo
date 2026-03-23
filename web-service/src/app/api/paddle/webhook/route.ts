@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { PADDLE_CONFIG } from '@/lib/paddle';
+import { notifyServiceLog } from '@/lib/slack-notify';
 import crypto from 'crypto';
 
 // POST: Paddle Webhook
@@ -95,6 +96,21 @@ export async function POST(req: NextRequest) {
         .update({ plan: 'plus' })
         .eq('id', userId);
     }
+  }
+
+  // 슬랙 알림
+  const eventLabels: Record<string, string> = {
+    'subscription.activated': '🟢 구독 활성화',
+    'transaction.completed': '✅ 결제 완료',
+    'subscription.updated': '🔄 구독 갱신',
+    'subscription.canceled': '🔴 구독 취소',
+    'subscription.paused': '⏸️ 구독 일시정지',
+    'subscription.resumed': '▶️ 구독 재개',
+  };
+  const label = eventLabels[eventType];
+  if (label && userId) {
+    const { data: p } = await supabase.from('profiles').select('email').eq('id', userId).single();
+    notifyServiceLog(`${label} | ${p?.email || userId}`);
   }
 
   return NextResponse.json({ received: true });

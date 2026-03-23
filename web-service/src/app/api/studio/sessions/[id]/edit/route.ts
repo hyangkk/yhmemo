@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
+import { notifyServiceLog } from '@/lib/slack-notify';
 
 // POST: 특정 모드로 편집 요청 (기존 클립을 재사용)
 export async function POST(
@@ -51,6 +52,9 @@ export async function POST(
     .from('studio_sessions')
     .update({ status: 'editing', updated_at: new Date().toISOString() })
     .eq('id', id);
+
+  const modeLabel = mode === 'prompt' ? `프롬프트: ${prompt?.slice(0, 30)}` : mode;
+  notifyServiceLog(`🎬 *편집 시작* | 세션 ${id.slice(0, 8)} | 모드: ${modeLabel} | ${clips.length}클립`);
 
   return NextResponse.json({ ok: true, result });
 }

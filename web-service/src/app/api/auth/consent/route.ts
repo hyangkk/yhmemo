@@ -30,6 +30,8 @@ export async function POST(req: NextRequest) {
 
     // 슬랙 알림: 회원가입 (약관 동의)
     notifyServiceLog(`🎉 *회원가입* | ${user.email}`);
+
+    return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
