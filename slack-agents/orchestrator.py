@@ -62,6 +62,7 @@ from agents.qa_agent import QAAgent
 from agents.invest_research_agent import InvestResearchAgent
 from agents.ceo_agent import CEOAgent
 from agents.market_researcher_agent import MarketResearcherAgent
+from agents.email_monitor_agent import EmailMonitorAgent
 from agents.digital_product_agent import DigitalProductAgent
 from agents.naver_blog_scraper import get_scraper as get_blog_scraper, NaverBlogScraper as scraper_mod
 from integrations.ls_securities import LSSecuritiesClient, friendly_error_message
@@ -284,6 +285,7 @@ async def main():
     bulletin = BulletinAgent(**common_kwargs)
     invest_research = InvestResearchAgent(ls_client=ls_client, **common_kwargs)
     qa = QAAgent(**common_kwargs)
+    email_monitor = EmailMonitorAgent(**common_kwargs)
 
     # ── 자율 경영 시스템 ─────────────────────────────────
     ceo = CEOAgent(**common_kwargs)
@@ -1553,6 +1555,7 @@ async def main():
         "qa": lambda: asyncio.create_task(qa.start(), name="qa"),
         "ceo": lambda: asyncio.create_task(ceo.start(), name="ceo"),
         "market_researcher": lambda: asyncio.create_task(market_researcher.start(), name="market_researcher"),
+        "email_monitor": lambda: asyncio.create_task(email_monitor.start(), name="email_monitor"),
     }
     agent_tasks = {name: starter() for name, starter in agent_starters.items()}
 
