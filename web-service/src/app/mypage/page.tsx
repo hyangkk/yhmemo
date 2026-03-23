@@ -224,6 +224,30 @@ export default function MyPage() {
           >
             {lang === 'ko' ? '로그아웃' : 'Sign Out'}
           </button>
+        </div>
+
+        {/* 서비스 정보 */}
+        <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
+          <h2 className="text-base font-bold">{lang === 'ko' ? '서비스 정보' : 'Service Info'}</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <Link href="/pricing" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              {lang === 'ko' ? '요금제' : 'Pricing'}
+            </Link>
+            <Link href="/legal/terms" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              {lang === 'ko' ? '이용약관' : 'Terms'}
+            </Link>
+            <Link href="/privacy" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              {lang === 'ko' ? '개인정보처리방침' : 'Privacy'}
+            </Link>
+            <Link href="/refund" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
+              {lang === 'ko' ? '환불정책' : 'Refund'}
+            </Link>
+          </div>
+          <p className="text-xs text-gray-600 text-center pt-1">ai.agent.yh@gmail.com</p>
+        </div>
+
+        {/* 회원 탈퇴 - 맨 하단 */}
+        <div className="pt-4 pb-8 text-center">
           <button
             disabled={deleting}
             onClick={async () => {
@@ -252,32 +276,12 @@ export default function MyPage() {
                 setDeleting(false);
               }
             }}
-            className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-red-900/30 text-sm text-gray-600 hover:text-red-400 transition cursor-pointer disabled:opacity-50"
+            className="text-xs text-gray-700 hover:text-red-400 transition cursor-pointer disabled:opacity-50"
           >
             {deleting
               ? (lang === 'ko' ? '처리 중...' : 'Deleting...')
               : (lang === 'ko' ? '회원 탈퇴' : 'Delete Account')}
           </button>
-        </div>
-
-        {/* 서비스 정보 */}
-        <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
-          <h2 className="text-base font-bold">{lang === 'ko' ? '서비스 정보' : 'Service Info'}</h2>
-          <div className="grid grid-cols-2 gap-2">
-            <Link href="/pricing" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              {lang === 'ko' ? '요금제' : 'Pricing'}
-            </Link>
-            <Link href="/legal/terms" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              {lang === 'ko' ? '이용약관' : 'Terms'}
-            </Link>
-            <Link href="/privacy" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              {lang === 'ko' ? '개인정보처리방침' : 'Privacy'}
-            </Link>
-            <Link href="/refund" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              {lang === 'ko' ? '환불정책' : 'Refund'}
-            </Link>
-          </div>
-          <p className="text-xs text-gray-600 text-center pt-1">ai.agent.yh@gmail.com</p>
         </div>
       </div>
     </div>
