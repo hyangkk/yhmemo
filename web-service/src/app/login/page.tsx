@@ -3,10 +3,12 @@
 import { useAuth } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { useLang, LangToggle } from '@/lib/i18n';
 
 export default function LoginPage() {
   const { user, loading, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const { lang } = useLang();
 
   useEffect(() => {
     if (!loading && user) {
@@ -23,11 +25,16 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4 relative">
+      <div className="absolute top-4 right-4">
+        <LangToggle />
+      </div>
       <div className="max-w-sm w-full space-y-8 text-center">
         <div>
-          <h1 className="text-3xl font-bold">SupaCam 슈파캠</h1>
-          <p className="text-gray-400 mt-2">여러 카메라로 촬영하고 AI가 자동 편집</p>
+          <h1 className="text-3xl font-bold">SupaCam</h1>
+          <p className="text-gray-400 mt-2">
+            {lang === 'ko' ? '여러 카메라로 촬영하고 AI가 자동 편집' : 'Multi-camera recording with AI auto editing'}
+          </p>
         </div>
 
         <div className="space-y-3">
@@ -41,19 +48,19 @@ export default function LoginPage() {
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
             </svg>
-            Google로 시작하기
+            {lang === 'ko' ? 'Google로 시작하기' : 'Continue with Google'}
           </button>
 
           <button
             onClick={() => router.push('/studio')}
             className="w-full bg-gray-800 hover:bg-gray-700 py-3 px-6 rounded-xl text-sm transition text-gray-300"
           >
-            로그인 없이 기존 스튜디오 사용
+            {lang === 'ko' ? '로그인 없이 기존 스튜디오 사용' : 'Use studio without signing in'}
           </button>
         </div>
 
         <p className="text-gray-600 text-xs">
-          로그인하면 프로젝트를 만들고 여러 번 촬영할 수 있어요
+          {lang === 'ko' ? '로그인하면 프로젝트를 만들고 여러 번 촬영할 수 있어요' : 'Sign in to create projects and record multiple sessions'}
         </p>
       </div>
     </div>

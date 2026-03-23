@@ -1,11 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
-
-type Lang = 'ko' | 'en';
+import { useLang, LangToggle } from '@/lib/i18n';
+import { Footer } from '@/components/common/Footer';
 
 const t = {
   ko: {
@@ -72,14 +71,7 @@ const t = {
 
 export default function SupaCamHome() {
   const { user, signInWithGoogle } = useAuth();
-  const [lang, setLang] = useState<Lang>('en');
-
-  useEffect(() => {
-    const browserLang = navigator.language || '';
-    if (browserLang.startsWith('ko')) {
-      setLang('ko');
-    }
-  }, []);
+  const { lang } = useLang();
 
   const l = t[lang];
 
@@ -101,12 +93,7 @@ export default function SupaCamHome() {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}
-            className="text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md px-2 py-1 transition-colors"
-          >
-            {lang === 'ko' ? 'EN' : '한국어'}
-          </button>
+          <LangToggle />
           <Link href="/pricing" className="text-sm text-gray-400 hover:text-white transition-colors">
             {l.pricingTitle}
           </Link>
@@ -230,9 +217,9 @@ export default function SupaCamHome() {
               <span className="text-4xl font-extrabold">$0</span>
               <span className="text-gray-400">{l.perMonth}</span>
             </div>
-            <p className="mt-2 text-sm text-gray-400">{PLANS.free.description}</p>
+            <p className="mt-2 text-sm text-gray-400">{PLANS.free.description[lang]}</p>
             <ul className="mt-6 space-y-3">
-              {PLANS.free.features.map((f) => (
+              {PLANS.free.features[lang].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                   <span className="text-green-400">&#10003;</span> {f}
                 </li>
@@ -255,9 +242,9 @@ export default function SupaCamHome() {
               <span className="text-4xl font-extrabold">${PLANS.plus.price}</span>
               <span className="text-gray-400">{l.perMonth}</span>
             </div>
-            <p className="mt-2 text-sm text-gray-400">{PLANS.plus.description}</p>
+            <p className="mt-2 text-sm text-gray-400">{PLANS.plus.description[lang]}</p>
             <ul className="mt-6 space-y-3">
-              {PLANS.plus.features.map((f) => (
+              {PLANS.plus.features[lang].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                   <span className="text-violet-400">&#10003;</span> {f}
                 </li>
@@ -272,20 +259,7 @@ export default function SupaCamHome() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-800 py-8">
-        <div className="max-w-4xl mx-auto px-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-gray-500">&copy; 2026 SupaCam. {l.footer}</p>
-            <div className="flex items-center gap-4 text-sm">
-              <Link href="/pricing" className="text-gray-500 hover:text-gray-300 transition-colors">Pricing</Link>
-              <Link href="/legal/terms" className="text-gray-500 hover:text-gray-300 transition-colors">Terms</Link>
-              <Link href="/privacy" className="text-gray-500 hover:text-gray-300 transition-colors">Privacy</Link>
-              <Link href="/refund" className="text-gray-500 hover:text-gray-300 transition-colors">Refund</Link>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </main>
   );
 }

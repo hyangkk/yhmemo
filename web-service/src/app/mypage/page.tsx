@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth, getBrowserSupabase } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
+import { useLang, LangToggle } from '@/lib/i18n';
 
 export default function MyPage() {
   const { user, loading: authLoading, signOut, refreshProfile } = useAuth();
   const router = useRouter();
+  const { lang } = useLang();
   const [subscribing, setSubscribing] = useState(false);
   const [plan, setPlan] = useState<string>('free');
   const [message, setMessage] = useState('');
@@ -37,19 +39,22 @@ export default function MyPage() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('구독 실패');
+      if (!res.ok) throw new Error('subscription failed');
       await refreshProfile();
       setPlan('plus');
-      setMessage('Plus 구독이 활성화되었습니다!');
+      setMessage(lang === 'ko' ? 'Plus 구독이 활성화되었습니다!' : 'Plus subscription activated!');
     } catch {
-      setMessage('구독 처리 중 오류가 발생했습니다.');
+      setMessage(lang === 'ko' ? '구독 처리 중 오류가 발생했습니다.' : 'Error processing subscription.');
     } finally {
       setSubscribing(false);
     }
   };
 
   const handleUnsubscribe = async () => {
-    if (!confirm('정말 구독을 취소하시겠어요?\n무료 요금제로 전환됩니다.')) return;
+    const confirmMsg = lang === 'ko'
+      ? '정말 구독을 취소하시겠어요?\n무료 요금제로 전환됩니다.'
+      : "Cancel your subscription?\nYou'll switch to the Free plan.";
+    if (!confirm(confirmMsg)) return;
     setSubscribing(true);
     setMessage('');
     try {
@@ -58,12 +63,12 @@ export default function MyPage() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('구독 취소 실패');
+      if (!res.ok) throw new Error('unsubscribe failed');
       await refreshProfile();
       setPlan('free');
-      setMessage('구독이 취소되었습니다. 무료 요금제로 전환되었어요.');
+      setMessage(lang === 'ko' ? '구독이 취소되었습니다. 무료 요금제로 전환되었어요.' : 'Subscription cancelled. Switched to Free plan.');
     } catch {
-      setMessage('구독 취소 처리 중 오류가 발생했습니다.');
+      setMessage(lang === 'ko' ? '구독 취소 처리 중 오류가 발생했습니다.' : 'Error cancelling subscription.');
     } finally {
       setSubscribing(false);
     }
@@ -90,10 +95,10 @@ export default function MyPage() {
             onClick={() => router.back()}
             className="text-gray-400 hover:text-white text-sm cursor-pointer"
           >
-            ← 뒤로
+            {lang === 'ko' ? '← 뒤로' : '← Back'}
           </button>
-          <h1 className="text-lg font-bold">마이페이지</h1>
-          <div className="w-12" />
+          <h1 className="text-lg font-bold">{lang === 'ko' ? '마이페이지' : 'My Page'}</h1>
+          <LangToggle />
         </div>
       </div>
 
@@ -126,21 +131,21 @@ export default function MyPage() {
 
         {/* 구독 관리 */}
         <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          <h2 className="text-base font-bold">구독 관리</h2>
+          <h2 className="text-base font-bold">{lang === 'ko' ? '구독 관리' : 'Subscription'}</h2>
 
           {isPlus ? (
             <div className="space-y-3">
               <div className="bg-purple-900/20 border border-purple-500/30 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-semibold text-purple-300">Plus 구독 중</p>
-                    <p className="text-sm text-gray-400 mt-1">${PLANS.plus.price}/월</p>
+                    <p className="font-semibold text-purple-300">{lang === 'ko' ? 'Plus 구독 중' : 'Plus Active'}</p>
+                    <p className="text-sm text-gray-400 mt-1">${PLANS.plus.price}{lang === 'ko' ? '/월' : '/mo'}</p>
                   </div>
                   <span className="text-purple-400 text-2xl">&#10003;</span>
                 </div>
               </div>
               <ul className="space-y-1.5">
-                {PLANS.plus.features.map((f) => (
+                {PLANS.plus.features[lang].map((f) => (
                   <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                     <span className="text-purple-400">&#10003;</span> {f}
                   </li>
@@ -151,29 +156,33 @@ export default function MyPage() {
                 disabled={subscribing}
                 className="w-full text-gray-500 hover:text-red-400 disabled:text-gray-700 py-2 text-xs transition cursor-pointer"
               >
-                {subscribing ? '처리 중...' : '구독 취소'}
+                {subscribing ? (lang === 'ko' ? '처리 중...' : 'Processing...') : (lang === 'ko' ? '구독 취소' : 'Cancel')}
               </button>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="bg-gray-800 rounded-xl p-4">
-                <p className="text-sm text-gray-400">현재 무료 요금제를 사용 중입니다.</p>
-                <p className="text-sm text-gray-500 mt-1">멀티캠 2회, 타임라인캠 2회 이용 가능</p>
+                <p className="text-sm text-gray-400">
+                  {lang === 'ko' ? '현재 무료 요금제를 사용 중입니다.' : "You're on the Free plan."}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  {lang === 'ko' ? '멀티캠 2회, 타임라인캠 2회 이용 가능' : '2 MultiCam + 2 Timeline Cam sessions available'}
+                </p>
               </div>
 
               <div className="border border-purple-500/50 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-bold text-lg">Plus</p>
-                    <p className="text-gray-400 text-sm">{PLANS.plus.description}</p>
+                    <p className="text-gray-400 text-sm">{PLANS.plus.description[lang]}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-2xl font-bold">${PLANS.plus.price}</p>
-                    <p className="text-xs text-gray-500">/월</p>
+                    <p className="text-xs text-gray-500">{lang === 'ko' ? '/월' : '/mo'}</p>
                   </div>
                 </div>
                 <ul className="space-y-1.5">
-                  {PLANS.plus.features.map((f) => (
+                  {PLANS.plus.features[lang].map((f) => (
                     <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                       <span className="text-purple-400">&#10003;</span> {f}
                     </li>
@@ -184,14 +193,16 @@ export default function MyPage() {
                   disabled={subscribing}
                   className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 py-3 rounded-xl text-sm font-bold transition cursor-pointer"
                 >
-                  {subscribing ? '처리 중...' : `Plus 구독하기 — $${PLANS.plus.price}/월`}
+                  {subscribing
+                    ? (lang === 'ko' ? '처리 중...' : 'Processing...')
+                    : (lang === 'ko' ? `Plus 구독하기 — $${PLANS.plus.price}/월` : `Subscribe to Plus — $${PLANS.plus.price}/mo`)}
                 </button>
               </div>
             </div>
           )}
 
           {message && (
-            <p className={`text-center text-sm ${message.includes('활성화') ? 'text-green-400' : 'text-red-400'}`}>
+            <p className={`text-center text-sm ${message.includes('활성화') || message.includes('activated') ? 'text-green-400' : 'text-red-400'}`}>
               {message}
             </p>
           )}
@@ -199,36 +210,30 @@ export default function MyPage() {
 
         {/* 계정 관리 */}
         <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
-          <h2 className="text-base font-bold">계정</h2>
-          <button
-            onClick={() => router.push('/studio')}
-            className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm transition cursor-pointer"
-          >
-            스튜디오 →
-          </button>
+          <h2 className="text-base font-bold">{lang === 'ko' ? '계정' : 'Account'}</h2>
           <button
             onClick={signOut}
             className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-red-400 transition cursor-pointer"
           >
-            로그아웃
+            {lang === 'ko' ? '로그아웃' : 'Sign Out'}
           </button>
         </div>
 
         {/* 서비스 정보 */}
         <div className="bg-gray-900 rounded-2xl p-6 space-y-3">
-          <h2 className="text-base font-bold">서비스 정보</h2>
+          <h2 className="text-base font-bold">{lang === 'ko' ? '서비스 정보' : 'Service Info'}</h2>
           <div className="grid grid-cols-2 gap-2">
             <Link href="/pricing" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              요금제
+              {lang === 'ko' ? '요금제' : 'Pricing'}
             </Link>
             <Link href="/legal/terms" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              이용약관
+              {lang === 'ko' ? '이용약관' : 'Terms'}
             </Link>
             <Link href="/privacy" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              개인정보처리방침
+              {lang === 'ko' ? '개인정보처리방침' : 'Privacy'}
             </Link>
             <Link href="/refund" className="px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition text-center">
-              환불정책
+              {lang === 'ko' ? '환불정책' : 'Refund'}
             </Link>
           </div>
           <p className="text-xs text-gray-600 text-center pt-1">ai.agent.yh@gmail.com</p>

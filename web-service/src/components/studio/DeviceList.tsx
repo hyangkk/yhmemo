@@ -1,21 +1,24 @@
 'use client';
 
 import type { StudioDevice } from '@/lib/studio';
+import { useLang } from '@/lib/i18n';
 
 interface DeviceListProps {
   devices: StudioDevice[];
   myDeviceId: string | null;
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  connected: { label: '대기', color: 'bg-green-500' },
-  recording: { label: '녹화 중', color: 'bg-red-500 animate-pulse' },
-  uploading: { label: '업로드 중', color: 'bg-yellow-500 animate-pulse' },
-  done: { label: '완료', color: 'bg-blue-500' },
-  error: { label: '오류', color: 'bg-red-700' },
+const STATUS_MAP: Record<string, { label: { ko: string; en: string }; color: string }> = {
+  connected: { label: { ko: '대기', en: 'Ready' }, color: 'bg-green-500' },
+  recording: { label: { ko: '녹화 중', en: 'Recording' }, color: 'bg-red-500 animate-pulse' },
+  uploading: { label: { ko: '업로드 중', en: 'Uploading' }, color: 'bg-yellow-500 animate-pulse' },
+  done: { label: { ko: '완료', en: 'Done' }, color: 'bg-blue-500' },
+  error: { label: { ko: '오류', en: 'Error' }, color: 'bg-red-700' },
 };
 
 export default function DeviceList({ devices, myDeviceId }: DeviceListProps) {
+  const { lang } = useLang();
+
   return (
     <div className="flex gap-2 overflow-x-auto pb-1">
       {devices.map((device) => {
@@ -32,9 +35,9 @@ export default function DeviceList({ devices, myDeviceId }: DeviceListProps) {
             <div className={`w-2 h-2 rounded-full ${status.color}`} />
             <span className="text-white">
               {device.name}
-              {isMe && <span className="text-purple-300 ml-1">(나)</span>}
+              {isMe && <span className="text-purple-300 ml-1">{lang === 'ko' ? '(나)' : '(me)'}</span>}
             </span>
-            <span className="text-gray-400 text-xs">{status.label}</span>
+            <span className="text-gray-400 text-xs">{status.label[lang]}</span>
           </div>
         );
       })}

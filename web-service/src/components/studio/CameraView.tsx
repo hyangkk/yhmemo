@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useCamera } from '@/hooks/useCamera';
+import { useLang } from '@/lib/i18n';
 
 interface CameraViewProps {
   onRecordingComplete: (blob: Blob, durationMs: number) => void;
@@ -23,6 +24,8 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
     switchCamera,
     tapToFocus,
   } = useCamera();
+
+  const { lang } = useLang();
 
   // 탭-투-포커스 상태
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
@@ -174,7 +177,7 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
               onClick={startCamera}
               className="bg-white/20 px-6 py-2 rounded-full text-white"
             >
-              다시 시도
+              {lang === 'ko' ? '다시 시도' : 'Retry'}
             </button>
           </div>
         </div>
@@ -193,7 +196,7 @@ export default function CameraView({ onRecordingComplete, isHost, externalRecord
         <button
           onClick={switchCamera}
           className="absolute top-4 right-4 bg-black/60 p-3 rounded-full text-white hover:bg-black/80 transition"
-          aria-label="카메라 전환"
+          aria-label={lang === 'ko' ? '카메라 전환' : 'Switch camera'}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
