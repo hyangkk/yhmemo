@@ -285,6 +285,12 @@ export default function ResultPage({ params }: { params: Promise<{ sessionId: st
       {/* 상태 헤더 */}
       <div className="px-4 py-2.5 bg-gray-900 border-b border-gray-800">
         <div className="max-w-2xl mx-auto flex items-baseline gap-2">
+          <button
+            onClick={() => router.push('/studio')}
+            className="text-sm text-gray-400 hover:text-white transition shrink-0"
+          >
+            ←
+          </button>
           <h1 className="text-lg font-bold">{session.title}</h1>
           <span className="text-gray-500 text-xs">
             {clips.length} {T.clips}{failedDevices.length > 0 && ` · ${failedDevices.length}${T.unusedDevices}`}

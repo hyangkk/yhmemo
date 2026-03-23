@@ -307,8 +307,14 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
       {/* 상단 헤더 - 컴팩트 1줄 + 녹화 버튼 */}
       <div className="flex-shrink-0 px-3 py-2 bg-gray-900/80 backdrop-blur-sm safe-area-top">
         <div className="flex items-center justify-between gap-2">
-          {/* 왼쪽: 세션 정보 */}
+          {/* 왼쪽: 홈 + 세션 정보 */}
           <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => router.push('/studio')}
+              className="text-xs text-gray-400 hover:text-white transition"
+            >
+              ←
+            </button>
             <span className="text-xs text-gray-400 font-mono">{session.code}</span>
             <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">
               {lang === 'ko' ? `${devices.length}대` : `${devices.length} ${t.devices}`}

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { useLang } from '@/lib/i18n';
+import { useLang, LangToggle } from '@/lib/i18n';
 
 type Mode = 'multicam' | 'timeline';
 
@@ -145,8 +145,19 @@ export default function StudioPage() {
 
   return (
     <div className={`min-h-screen bg-black text-white flex flex-col items-center p-4 ${recentSessions.length > 0 ? 'pt-12' : 'justify-center'}`}>
+      {/* 좌측 상단: 홈으로 가기 */}
+      <div className="fixed top-4 left-4 z-50">
+        <button
+          onClick={() => router.push('/supacam-home')}
+          className="bg-gray-900 hover:bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-sm transition cursor-pointer text-gray-300"
+        >
+          ← {lang === 'ko' ? '홈' : 'Home'}
+        </button>
+      </div>
+
       {/* 우측 상단 버튼 */}
       <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <LangToggle />
         {user && (
           <button
             onClick={handleProfileClick}
