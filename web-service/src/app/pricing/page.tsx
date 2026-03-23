@@ -1,24 +1,49 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
 import { useLang, LangToggle } from '@/lib/i18n';
+import { usePaddle } from '@/lib/usePaddle';
 import { Footer } from '@/components/common/Footer';
 
 export default function PricingPage() {
-  const { user, signInWithGoogle } = useAuth();
+  const { user, signInWithGoogle, refreshProfile } = useAuth();
   const { lang } = useLang();
+  const router = useRouter();
 
-  const ActionButton = ({ variant, children }: { variant: 'outline' | 'primary'; children: React.ReactNode }) => {
+  const { openCheckout } = usePaddle({
+    userId: user?.id,
+    userEmail: user?.email,
+    onSuccess: async (transactionId) => {
+      // 결제 완료 → 트랜잭션 기록 + 프로필 새로고침
+      await fetch('/api/paddle/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.id,
+          transactionId,
+          plan: 'plus',
+        }),
+      });
+      await refreshProfile();
+      router.push('/mypage?subscribed=1');
+    },
+  });
+
+  const ActionButton = ({ variant, children, onClick }: { variant: 'outline' | 'primary'; children: React.ReactNode; onClick?: () => void }) => {
     const base = variant === 'primary'
       ? 'bg-violet-600 hover:bg-violet-500 text-sm font-bold'
       : 'border border-gray-700 hover:border-gray-600 text-sm font-medium';
 
+    if (onClick) {
+      return <button onClick={onClick} className={`w-full px-4 py-2.5 rounded-lg transition-colors cursor-pointer ${base}`}>{children}</button>;
+    }
     if (user) {
       return <Link href="/studio" className={`block w-full text-center px-4 py-2.5 rounded-lg transition-colors ${base}`}>{children}</Link>;
     }
-    return <button onClick={signInWithGoogle} className={`w-full px-4 py-2.5 rounded-lg transition-colors ${base}`}>{children}</button>;
+    return <button onClick={signInWithGoogle} className={`w-full px-4 py-2.5 rounded-lg transition-colors cursor-pointer ${base}`}>{children}</button>;
   };
 
   return (
@@ -96,7 +121,12 @@ export default function PricingPage() {
               ))}
             </ul>
             <div className="mt-8">
-              <ActionButton variant="primary">{lang === 'ko' ? 'Plus 시작하기' : 'Start Plus'}</ActionButton>
+              <ActionButton
+                variant="primary"
+                onClick={user ? openCheckout : signInWithGoogle}
+              >
+                {lang === 'ko' ? 'Plus 시작하기' : 'Start Plus'}
+              </ActionButton>
             </div>
           </div>
         </div>

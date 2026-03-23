@@ -1,37 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-// 테스트 기간: 결제 없이 바로 Plus 활성화
-export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ error: '인증 필요' }, { status: 401 });
-  }
-
-  const token = authHeader.slice(7);
-  const anonClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// 구독은 Paddle 결제를 통해서만 가능합니다.
+// /api/paddle/checkout 또는 Paddle Webhook을 통해 처리됩니다.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'Please use Paddle checkout to subscribe.' },
+    { status: 410 }
   );
-  const { data: { user }, error: authError } = await anonClient.auth.getUser(token);
-
-  if (authError || !user) {
-    return NextResponse.json({ error: '인증 실패' }, { status: 401 });
-  }
-
-  const { error } = await supabase
-    .from('profiles')
-    .update({ plan: 'plus' })
-    .eq('id', user.id);
-
-  if (error) {
-    return NextResponse.json({ error: '구독 업데이트 실패' }, { status: 500 });
-  }
-
-  return NextResponse.json({ plan: 'plus' });
 }

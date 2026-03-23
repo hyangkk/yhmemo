@@ -26,38 +26,73 @@ export async function POST(req: NextRequest) {
 
   const event = JSON.parse(body);
   const supabase = getServiceSupabase();
+  const eventType = event.event_type;
+  const data = event.data || {};
+  const customData = data.custom_data || {};
+  const userId = customData.user_id;
 
   // 구독 활성화
-  if (event.event_type === 'subscription.activated' || event.event_type === 'transaction.completed') {
-    const customData = event.data?.custom_data;
-    const userId = customData?.user_id;
-
+  if (eventType === 'subscription.activated' || eventType === 'transaction.completed') {
     if (userId) {
-      // 유저 플랜 업그레이드
+      const updates: Record<string, string> = { plan: 'plus' };
+      if (data.id && eventType === 'subscription.activated') {
+        updates.paddle_subscription_id = data.id;
+      }
+      if (data.customer_id) {
+        updates.paddle_customer_id = data.customer_id;
+      }
+
       await supabase
         .from('profiles')
-        .update({ plan: 'plus' })
+        .update(updates)
         .eq('id', userId);
 
       // 결제 기록 업데이트
-      const txId = event.data?.id || event.data?.transaction_id;
+      const txId = data.transaction_id || data.id;
       if (txId) {
         await supabase
           .from('payments')
-          .update({ status: 'completed', paddle_transaction_id: txId })
+          .update({ status: 'completed' })
           .eq('paddle_transaction_id', txId);
       }
     }
   }
 
+  // 구독 갱신 (매월 결제 성공)
+  if (eventType === 'subscription.updated') {
+    if (userId && data.status === 'active') {
+      const updates: Record<string, string> = { plan: 'plus' };
+      if (data.id) updates.paddle_subscription_id = data.id;
+      await supabase.from('profiles').update(updates).eq('id', userId);
+    }
+  }
+
   // 구독 취소
-  if (event.event_type === 'subscription.canceled') {
-    const customData = event.data?.custom_data;
-    const userId = customData?.user_id;
+  if (eventType === 'subscription.canceled') {
+    if (userId) {
+      await supabase
+        .from('profiles')
+        .update({ plan: 'free', paddle_subscription_id: null })
+        .eq('id', userId);
+    }
+  }
+
+  // 구독 일시정지
+  if (eventType === 'subscription.paused') {
     if (userId) {
       await supabase
         .from('profiles')
         .update({ plan: 'free' })
+        .eq('id', userId);
+    }
+  }
+
+  // 구독 재개
+  if (eventType === 'subscription.resumed') {
+    if (userId) {
+      await supabase
+        .from('profiles')
+        .update({ plan: 'plus' })
         .eq('id', userId);
     }
   }

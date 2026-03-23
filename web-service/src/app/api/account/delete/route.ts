@@ -25,24 +25,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Auth failed' }, { status: 401 });
   }
 
-  // 프로필에서 subscription_id 조회
+  // 1. 활성 구독이 있으면 Paddle에서 취소
   const { data: profile } = await supabase
     .from('profiles')
     .select('paddle_subscription_id, plan')
     .eq('id', user.id)
     .single();
 
-  if (!profile || profile.plan !== 'plus') {
-    return NextResponse.json({ error: 'No active subscription' }, { status: 400 });
-  }
-
-  // Paddle API로 구독 취소 (API Key가 있는 경우)
-  if (profile.paddle_subscription_id && PADDLE_CONFIG.apiKey) {
+  if (profile?.paddle_subscription_id && profile.plan === 'plus' && PADDLE_CONFIG.apiKey) {
     const paddleUrl = PADDLE_CONFIG.environment === 'sandbox'
       ? 'https://sandbox-api.paddle.com'
       : 'https://api.paddle.com';
 
-    const cancelRes = await fetch(
+    await fetch(
       `${paddleUrl}/subscriptions/${profile.paddle_subscription_id}/cancel`,
       {
         method: 'POST',
@@ -50,22 +45,22 @@ export async function POST(req: NextRequest) {
           'Authorization': `Bearer ${PADDLE_CONFIG.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ effective_from: 'next_billing_period' }),
+        body: JSON.stringify({ effective_from: 'immediately' }),
       }
-    );
-
-    if (!cancelRes.ok) {
-      const err = await cancelRes.text();
-      console.error('Paddle cancel failed:', err);
-      // Paddle 취소 실패해도 DB는 업데이트 (fallback)
-    }
+    ).catch(() => {}); // 실패해도 계속 진행
   }
 
-  // DB에서 즉시 free로 전환
-  await supabase
-    .from('profiles')
-    .update({ plan: 'free' })
-    .eq('id', user.id);
+  // 2. 사용자 데이터 삭제 (프로필, 결제 기록 등)
+  await supabase.from('payments').delete().eq('user_id', user.id);
+  await supabase.from('profiles').delete().eq('id', user.id);
 
-  return NextResponse.json({ plan: 'free' });
+  // 3. Supabase Auth에서 사용자 삭제
+  const { error: deleteError } = await supabase.auth.admin.deleteUser(user.id);
+
+  if (deleteError) {
+    console.error('User deletion failed:', deleteError);
+    return NextResponse.json({ error: 'Account deletion failed' }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth, getBrowserSupabase } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
 import { useLang, LangToggle } from '@/lib/i18n';
+import { usePaddle } from '@/lib/usePaddle';
 
 export default function MyPage() {
   const { user, loading: authLoading, signOut, refreshProfile } = useAuth();
@@ -14,6 +15,28 @@ export default function MyPage() {
   const [subscribing, setSubscribing] = useState(false);
   const [plan, setPlan] = useState<string>('free');
   const [message, setMessage] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  const { openCheckout } = usePaddle({
+    userId: user?.id,
+    userEmail: user?.email,
+    onSuccess: async (transactionId) => {
+      setSubscribing(true);
+      await fetch('/api/paddle/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.id,
+          transactionId,
+          plan: 'plus',
+        }),
+      });
+      await refreshProfile();
+      setPlan('plus');
+      setMessage(lang === 'ko' ? 'Plus 구독이 활성화되었습니다!' : 'Plus subscription activated!');
+      setSubscribing(false);
+    },
+  });
 
   useEffect(() => {
     if (authLoading) return;
@@ -30,24 +53,8 @@ export default function MyPage() {
     return session?.access_token || '';
   }, []);
 
-  const handleSubscribe = async () => {
-    setSubscribing(true);
-    setMessage('');
-    try {
-      const token = await getToken();
-      const res = await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('subscription failed');
-      await refreshProfile();
-      setPlan('plus');
-      setMessage(lang === 'ko' ? 'Plus 구독이 활성화되었습니다!' : 'Plus subscription activated!');
-    } catch {
-      setMessage(lang === 'ko' ? '구독 처리 중 오류가 발생했습니다.' : 'Error processing subscription.');
-    } finally {
-      setSubscribing(false);
-    }
+  const handleSubscribe = () => {
+    openCheckout();
   };
 
   const handleUnsubscribe = async () => {
@@ -216,6 +223,40 @@ export default function MyPage() {
             className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm text-red-400 transition cursor-pointer"
           >
             {lang === 'ko' ? '로그아웃' : 'Sign Out'}
+          </button>
+          <button
+            disabled={deleting}
+            onClick={async () => {
+              const msg = lang === 'ko'
+                ? '정말 탈퇴하시겠어요?\n\n• 모든 데이터가 삭제됩니다\n• 활성 구독이 있으면 즉시 취소됩니다\n• 이 작업은 되돌릴 수 없습니다'
+                : "Delete your account?\n\n• All data will be deleted\n• Active subscriptions will be cancelled\n• This cannot be undone";
+              if (!confirm(msg)) return;
+              const confirmMsg = lang === 'ko' ? '마지막 확인: 정말 탈퇴하시겠어요?' : 'Final confirmation: delete your account?';
+              if (!confirm(confirmMsg)) return;
+              setDeleting(true);
+              try {
+                const token = await getToken();
+                const res = await fetch('/api/account/delete', {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                if (res.ok) {
+                  await signOut();
+                  router.replace('/');
+                } else {
+                  setMessage(lang === 'ko' ? '탈퇴 처리 중 오류가 발생했습니다.' : 'Error deleting account.');
+                }
+              } catch {
+                setMessage(lang === 'ko' ? '탈퇴 처리 중 오류가 발생했습니다.' : 'Error deleting account.');
+              } finally {
+                setDeleting(false);
+              }
+            }}
+            className="w-full text-left px-4 py-3 rounded-xl bg-gray-800 hover:bg-red-900/30 text-sm text-gray-600 hover:text-red-400 transition cursor-pointer disabled:opacity-50"
+          >
+            {deleting
+              ? (lang === 'ko' ? '처리 중...' : 'Deleting...')
+              : (lang === 'ko' ? '회원 탈퇴' : 'Delete Account')}
           </button>
         </div>
 
