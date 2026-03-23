@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { generateSessionCode } from '@/lib/studio';
+import { notifyServiceLog } from '@/lib/slack-notify';
 
 // POST: 새 세션 생성
 export async function POST(req: NextRequest) {
@@ -8,6 +9,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const title = body.title || '새 촬영';
     const supabase = getServiceSupabase();
+
+    // 인증된 사용자 ID 추출 (선택적)
+    let createdBy: string | null = null;
+    const authHeader = req.headers.get('authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user } } = await supabase.auth.getUser(token);
+      if (user) createdBy = user.id;
+    }
 
     // 유니크 코드 생성 (충돌 시 재시도)
     let code = generateSessionCode();
@@ -25,13 +35,17 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await supabase
       .from('studio_sessions')
-      .insert({ code, title })
+      .insert({ code, title, created_by: createdBy })
       .select()
       .single();
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // 슬랙 알림: 새 촬영 시작
+    const userEmail = createdBy ? `(user: ${createdBy.slice(0, 8)}...)` : '(비로그인)';
+    notifyServiceLog(`📹 *새 촬영* | "${title}" ${userEmail}`);
 
     return NextResponse.json(data);
   } catch {

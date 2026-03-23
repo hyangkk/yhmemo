@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useStudioSession } from '@/hooks/useStudioSession';
 import { supabase } from '@/lib/supabase';
 import CameraView from '@/components/studio/CameraView';
+import { useLang } from '@/lib/i18n';
 
 export default function SessionRoomPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
   const router = useRouter();
+  const { lang } = useLang();
   const {
     session,
     devices,
@@ -20,6 +22,25 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     sendSignal,
     updateDeviceStatus,
   } = useStudioSession(sessionId);
+
+  const t = {
+    loadingSession: lang === 'ko' ? '세션 로드 중...' : 'Loading session...',
+    notFound: lang === 'ko' ? '세션을 찾을 수 없습니다' : 'Session not found',
+    goBack: lang === 'ko' ? '돌아가기' : 'Go back',
+    host: lang === 'ko' ? '호스트 카메라' : 'Host',
+    sub: lang === 'ko' ? '서브 카메라' : 'Sub',
+    devices: lang === 'ko' ? '대' : 'devices',
+    start: lang === 'ko' ? '녹화 시작' : 'Start',
+    stop: lang === 'ko' ? '녹화 종료' : 'Stop',
+    waiting: lang === 'ko' ? '대기 중...' : 'Waiting...',
+    confirmStopHost: lang === 'ko'
+      ? '녹화를 종료하시겠습니까?\n모든 카메라의 녹화가 종료됩니다.'
+      : 'Stop recording?\nAll cameras will stop.',
+    confirmStopGuest: lang === 'ko'
+      ? '내 카메라 녹화를 종료하시겠습니까?\n다른 카메라는 계속 녹화됩니다.'
+      : 'Stop your camera?\nOther cameras will keep recording.',
+    uploading: lang === 'ko' ? '영상 업로드 중...' : 'Uploading video...',
+  };
 
   const [recordingSignal, setRecordingSignal] = useState<'idle' | 'start' | 'stop'>('idle');
   const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -91,16 +112,16 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
 
   // 호스트: 녹화 종료 (확인 후 전체 카메라 종료)
   const handleStopRecording = useCallback(async () => {
-    if (!window.confirm('녹화를 종료하시겠습니까?\n모든 카메라의 녹화가 종료됩니다.')) return;
+    if (!window.confirm(t.confirmStopHost)) return;
     setRecordingSignal('stop');
     try { await sendSignal('stop'); } catch {}
-  }, [sendSignal]);
+  }, [sendSignal, t.confirmStopHost]);
 
   // 게스트: 내 카메라만 녹화 종료 (다른 카메라는 계속 녹화)
   const handleGuestStopRecording = useCallback(() => {
-    if (!window.confirm('내 카메라 녹화를 종료하시겠습니까?\n다른 카메라는 계속 녹화됩니다.')) return;
+    if (!window.confirm(t.confirmStopGuest)) return;
     setRecordingSignal('stop');
-  }, []);
+  }, [t.confirmStopGuest]);
 
   // XHR 업로드 (Promise 래핑, 진행률 콜백)
   const uploadWithXHR = useCallback((url: string, blob: Blob, timeoutMs: number): Promise<boolean> => {
@@ -259,7 +280,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p>세션 로드 중...</p>
+          <p>{t.loadingSession}</p>
         </div>
       </div>
     );
@@ -269,12 +290,12 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-400 mb-4">{error || '세션을 찾을 수 없습니다'}</p>
+          <p className="text-red-400 mb-4">{error || t.notFound}</p>
           <button
             onClick={() => router.push('/studio')}
             className="bg-gray-800 px-6 py-2 rounded-full"
           >
-            돌아가기
+            {t.goBack}
           </button>
         </div>
       </div>
@@ -289,10 +310,12 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           {/* 왼쪽: 세션 정보 */}
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs text-gray-400 font-mono">{session.code}</span>
-            <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">{devices.length}대</span>
+            <span className="text-xs bg-gray-800 px-2 py-0.5 rounded-full">
+              {lang === 'ko' ? `${devices.length}대` : `${devices.length} ${t.devices}`}
+            </span>
             {isHost
-              ? <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">호스트 카메라</span>
-              : <span className="text-xs bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full">서브 카메라</span>
+              ? <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-0.5 rounded-full">{t.host}</span>
+              : <span className="text-xs bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full">{t.sub}</span>
             }
           </div>
 
@@ -304,7 +327,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
                 className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-4 py-2 rounded-full text-sm font-semibold transition"
               >
                 <div className="w-2.5 h-2.5 bg-white rounded-full" />
-                녹화 시작
+                {t.start}
               </button>
             ) : (
               <button
@@ -312,12 +335,12 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
                 className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-full text-sm font-semibold transition"
               >
                 <div className="w-2.5 h-2.5 bg-red-500 rounded-sm animate-pulse" />
-                녹화 종료
+                {t.stop}
               </button>
             )
           )}
           {!isHost && !uploading && recordingSignal === 'idle' && (
-            <span className="text-xs text-gray-500">대기 중...</span>
+            <span className="text-xs text-gray-500">{t.waiting}</span>
           )}
           {!isHost && !uploading && recordingSignal === 'start' && (
             <button
@@ -325,7 +348,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
               className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-full text-sm font-semibold transition"
             >
               <div className="w-2.5 h-2.5 bg-red-500 rounded-sm animate-pulse" />
-              녹화 종료
+              {t.stop}
             </button>
           )}
         </div>
@@ -346,7 +369,7 @@ export default function SessionRoomPage({ params }: { params: Promise<{ sessionI
           <div className="absolute inset-0 bg-black flex items-center justify-center">
             <div className="text-center space-y-4">
               <div className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
-              <p className="text-lg">영상 업로드 중...</p>
+              <p className="text-lg">{t.uploading}</p>
               <div className="w-48 h-2 bg-gray-700 rounded-full mx-auto overflow-hidden">
                 <div
                   className="h-full bg-purple-500 rounded-full transition-all duration-300"

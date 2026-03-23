@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useLang } from '@/lib/i18n';
 
 export interface ChatMessage {
   id: string;
@@ -18,11 +19,17 @@ interface PromptChatProps {
 }
 
 export default function PromptChat({ sessionId, clipCount, disabled, onEditRequested }: PromptChatProps) {
+  const { lang } = useLang();
+
+  const welcomeMessage = lang === 'ko'
+    ? `${clipCount}개 클립이 준비되었습니다. 어떻게 편집해드릴까요?\n\n예시:\n• "3초마다 카메라 전환해줘"\n• "배경음악 넣어서 편집해줘"\n• "메인 카메라 중심으로 리액션 컷 넣어줘"\n• "5초 간격으로 교차편집하고 배경음악 추가"`
+    : `${clipCount} clips ready. How would you like them edited?\n\nExamples:\n• "Switch cameras every 3 seconds"\n• "Edit with background music"\n• "Focus on the main camera with reaction cuts"\n• "Cross-edit every 5 seconds with BGM"`;
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
-      content: `${clipCount}개 클립이 준비되었습니다. 어떻게 편집해드릴까요?\n\n예시:\n• "3초마다 카메라 전환해줘"\n• "배경음악 넣어서 편집해줘"\n• "메인 카메라 중심으로 리액션 컷 넣어줘"\n• "5초 간격으로 교차편집하고 배경음악 추가"`,
+      content: welcomeMessage,
       timestamp: Date.now(),
     },
   ]);
@@ -62,7 +69,7 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
     const processingMsg: ChatMessage = {
       id: `assistant-${Date.now()}`,
       role: 'assistant',
-      content: '편집 요청을 처리하고 있습니다...',
+      content: lang === 'ko' ? '편집 요청을 처리하고 있습니다...' : 'Processing your edit request...',
       timestamp: Date.now(),
       status: 'processing',
     };
@@ -79,17 +86,17 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
         setMessages(prev =>
           prev.map(m =>
             m.id === processingMsg.id
-              ? { ...m, content: '편집을 시작했습니다. 완료되면 위에 결과가 표시됩니다.', status: 'done' }
+              ? { ...m, content: lang === 'ko' ? '편집을 시작했습니다. 완료되면 위에 결과가 표시됩니다.' : 'Edit started. Results will appear above when done.', status: 'done' }
               : m
           )
         );
         onEditRequested?.();
       } else {
-        const err = await res.json().catch(() => ({ error: '요청 실패' }));
+        const err = await res.json().catch(() => ({ error: lang === 'ko' ? '요청 실패' : 'Request failed' }));
         setMessages(prev =>
           prev.map(m =>
             m.id === processingMsg.id
-              ? { ...m, content: `오류: ${err.error || '편집 요청에 실패했습니다.'}`, status: 'error' }
+              ? { ...m, content: `${lang === 'ko' ? '오류' : 'Error'}: ${err.error || (lang === 'ko' ? '편집 요청에 실패했습니다.' : 'Edit request failed.')}`, status: 'error' }
               : m
           )
         );
@@ -98,7 +105,7 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
       setMessages(prev =>
         prev.map(m =>
           m.id === processingMsg.id
-            ? { ...m, content: '네트워크 오류가 발생했습니다. 다시 시도해주세요.', status: 'error' }
+            ? { ...m, content: lang === 'ko' ? '네트워크 오류가 발생했습니다. 다시 시도해주세요.' : 'Network error. Please try again.', status: 'error' }
             : m
         )
       );
@@ -119,7 +126,7 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
       {/* 채팅 헤더 */}
       <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
         <span className="text-sm">✨</span>
-        <span className="text-sm font-semibold text-gray-300">AI 편집 프롬프트</span>
+        <span className="text-sm font-semibold text-gray-300">{lang === 'ko' ? 'AI 편집 프롬프트' : 'AI Edit Prompt'}</span>
       </div>
 
       {/* 메시지 영역 */}
@@ -154,7 +161,9 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? '편집 완료 후 다시 입력할 수 있습니다' : '편집 지시를 입력하세요...'}
+          placeholder={disabled
+            ? (lang === 'ko' ? '편집 완료 후 다시 입력할 수 있습니다' : 'Available after editing completes')
+            : (lang === 'ko' ? '편집 지시를 입력하세요...' : 'Enter editing instructions...')}
           disabled={disabled || sending}
           rows={1}
           className="flex-1 bg-gray-800 text-white text-sm rounded-xl px-3 py-2 resize-none outline-none placeholder-gray-500 disabled:opacity-50 border border-gray-700 focus:border-purple-500/50 transition"
@@ -167,7 +176,7 @@ export default function PromptChat({ sessionId, clipCount, disabled, onEditReque
           {sending ? (
             <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
-            '전송'
+            lang === 'ko' ? '전송' : 'Send'
           )}
         </button>
       </div>

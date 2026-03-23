@@ -69,17 +69,44 @@ export default function StudioPage() {
 
   useEffect(() => {
     fetch('/api/studio/version').then(r => r.json()).then(setVersion).catch(() => {});
-    fetch('/api/studio/sessions/recent').then(r => r.json()).then(setRecentSessions).catch(() => {});
   }, []);
+
+  // 사용자 로그인 상태 변경 시 최근 세션 갱신
+  useEffect(() => {
+    if (!user) {
+      setRecentSessions([]);
+      return;
+    }
+    const sb = (async () => {
+      const { getBrowserSupabase } = await import('@/lib/auth');
+      const supabase = getBrowserSupabase();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        fetch('/api/studio/sessions/recent', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        }).then(r => r.json()).then(setRecentSessions).catch(() => {});
+      }
+    })();
+  }, [user]);
 
   const createSession = async () => {
     setLoading(true);
     setError('');
     try {
       const defaultTitle = mode === 'multicam' ? t.defaultMulticam : t.defaultTimeline;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+      // 로그인 상태면 auth 토큰 추가 (created_by 저장용)
+      const { getBrowserSupabase } = await import('@/lib/auth');
+      const supabase = getBrowserSupabase();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
       const res = await fetch('/api/studio/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ title: title || defaultTitle }),
       });
       const data = await res.json();

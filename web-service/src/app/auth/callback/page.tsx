@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getBrowserSupabase } from '@/lib/auth';
+import { useLang } from '@/lib/i18n';
 
 export default function AuthCallbackPage() {
   const router = useRouter();
+  const { lang } = useLang();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,13 +22,34 @@ export default function AuthCallbackPage() {
     const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
       // INITIAL_SESSION: URL hash에서 세션 복원, SIGNED_IN: OAuth 콜백 처리
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
-        router.replace(redirectPath);
+        // 약관 동의 여부 확인 (콜백 밖에서 비동기 실행 — 데드락 방지)
+        // 로그인 이벤트 기록 (fire-and-forget)
+        fetch('/api/auth/login-event', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        }).catch(() => {});
+
+        // 약관 동의 여부 확인
+        fetch('/api/auth/consent', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        })
+          .then(r => r.json())
+          .then(({ agreed }) => {
+            if (agreed) {
+              router.replace(redirectPath);
+            } else {
+              router.replace('/auth/consent');
+            }
+          })
+          .catch(() => {
+            router.replace(redirectPath);
+          });
       }
     });
 
     // 타임아웃: 10초 내 로그인 안 되면 에러 표시
     const timeout = setTimeout(() => {
-      setError('로그인 처리 시간 초과. 다시 시도해주세요.');
+      setError(lang === 'ko' ? '로그인 처리 시간 초과. 다시 시도해주세요.' : 'Login timed out. Please try again.');
       setTimeout(() => router.replace(redirectPath), 2000);
     }, 10000);
 
@@ -34,7 +57,7 @@ export default function AuthCallbackPage() {
       subscription.unsubscribe();
       clearTimeout(timeout);
     };
-  }, [router]);
+  }, [router, lang]);
 
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -42,12 +65,12 @@ export default function AuthCallbackPage() {
         {error ? (
           <>
             <p className="text-red-400 mb-2">{error}</p>
-            <p className="text-gray-500 text-sm">이동 중...</p>
+            <p className="text-gray-500 text-sm">{lang === 'ko' ? '이동 중...' : 'Redirecting...'}</p>
           </>
         ) : (
           <>
             <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-gray-400">로그인 처리 중...</p>
+            <p className="text-gray-400">{lang === 'ko' ? '로그인 처리 중...' : 'Signing in...'}</p>
           </>
         )}
       </div>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
 import { useLang, LangToggle } from '@/lib/i18n';
+import { Footer } from '@/components/common/Footer';
 
 export default function PricingPage() {
   const { user, signInWithGoogle } = useAuth();
@@ -148,19 +149,7 @@ export default function PricingPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-800 py-8">
-        <div className="max-w-4xl mx-auto px-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-gray-500">&copy; 2026 SupaCam. Payments by Paddle.</p>
-            <div className="flex items-center gap-4 text-sm">
-              <Link href="/legal/terms" className="text-gray-500 hover:text-gray-300 transition-colors">Terms</Link>
-              <Link href="/privacy" className="text-gray-500 hover:text-gray-300 transition-colors">Privacy</Link>
-              <Link href="/refund" className="text-gray-500 hover:text-gray-300 transition-colors">Refund</Link>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }
