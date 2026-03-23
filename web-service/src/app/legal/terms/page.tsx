@@ -2,10 +2,10 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'SupaCam — Terms of Service',
-  description: 'SupaCam 이용약관. 서비스 이용 조건, 구독, 환불 정책을 확인하세요.',
+  description: 'SupaCam Terms of Service. Subscription, refund, and usage policies.',
   openGraph: {
     title: 'SupaCam — Terms of Service',
-    description: 'SupaCam 이용약관 및 개인정보처리방침.',
+    description: 'SupaCam Terms of Service and usage policies.',
     type: 'website',
     siteName: 'SupaCam',
   },

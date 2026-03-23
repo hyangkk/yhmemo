@@ -1,13 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 
 export const metadata: Metadata = {
-  title: 'SupaCam 슈파캠',
-  description: '여러 대의 카메라로 동시 촬영하고 자동 편집된 영상을 받아보세요',
+  title: 'SupaCam — Studio',
+  description: 'Record with multiple cameras and get AI-edited videos. MultiCam and Timeline Cam modes available.',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'SupaCam 슈파캠',
+    title: 'SupaCam',
   },
+  openGraph: { title: 'SupaCam — Studio', siteName: 'SupaCam' },
 };
 
 export const viewport: Viewport = {

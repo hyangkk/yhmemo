@@ -1,23 +1,23 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'SupaCam — AI 다중 카메라 자동 편집',
-  description:
-    '여러 대의 카메라로 촬영한 영상을 AI가 자동으로 교차 편집합니다. 무료로 시작하세요.',
-  keywords: ['SupaCam', '영상 편집', 'AI 편집', '다중 카메라', '교차편집', '멀티캠'],
+  title: 'SupaCam — AI Multi-Camera Auto Editing',
+  description: 'Record with multiple cameras and let AI automatically edit your footage. MultiCam for simultaneous shooting, Timeline Cam for continuous recording.',
+  keywords: ['SupaCam', 'multi-camera', 'AI video editing', 'multicam', 'timeline cam', 'auto editing'],
+  authors: [{ name: 'SupaCam' }],
   openGraph: {
-    title: 'SupaCam — AI 다중 카메라 자동 편집',
-    description: '여러 대의 카메라 영상을 AI가 자동으로 교차 편집합니다.',
+    title: 'SupaCam — AI Multi-Camera Auto Editing',
+    description: 'Multiple cameras, one video. AI picks the best shots and creates a polished final video.',
     type: 'website',
-    locale: 'ko_KR',
     siteName: 'SupaCam',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'SupaCam — AI Multi-Camera Auto Editing',
+    description: 'Multiple cameras, one video. Edited by AI automatically.',
   },
 };
 
-export default function SupaCamHomeLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return children;
+export default function SupaCamHomeLayout({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }

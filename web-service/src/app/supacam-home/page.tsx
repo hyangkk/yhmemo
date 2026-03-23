@@ -1,11 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { PLANS } from '@/lib/paddle';
-
-type Lang = 'ko' | 'en';
+import { useLang, LangToggle } from '@/lib/i18n';
 
 const t = {
   ko: {
@@ -72,14 +70,7 @@ const t = {
 
 export default function SupaCamHome() {
   const { user, signInWithGoogle } = useAuth();
-  const [lang, setLang] = useState<Lang>('en');
-
-  useEffect(() => {
-    const browserLang = navigator.language || '';
-    if (browserLang.startsWith('ko')) {
-      setLang('ko');
-    }
-  }, []);
+  const { lang } = useLang();
 
   const l = t[lang];
 
@@ -101,12 +92,7 @@ export default function SupaCamHome() {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}
-            className="text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md px-2 py-1 transition-colors"
-          >
-            {lang === 'ko' ? 'EN' : '한국어'}
-          </button>
+          <LangToggle />
           <Link href="/pricing" className="text-sm text-gray-400 hover:text-white transition-colors">
             {l.pricingTitle}
           </Link>
@@ -230,9 +216,9 @@ export default function SupaCamHome() {
               <span className="text-4xl font-extrabold">$0</span>
               <span className="text-gray-400">{l.perMonth}</span>
             </div>
-            <p className="mt-2 text-sm text-gray-400">{PLANS.free.description}</p>
+            <p className="mt-2 text-sm text-gray-400">{PLANS.free.description[lang]}</p>
             <ul className="mt-6 space-y-3">
-              {PLANS.free.features.map((f) => (
+              {PLANS.free.features[lang].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                   <span className="text-green-400">&#10003;</span> {f}
                 </li>
@@ -255,9 +241,9 @@ export default function SupaCamHome() {
               <span className="text-4xl font-extrabold">${PLANS.plus.price}</span>
               <span className="text-gray-400">{l.perMonth}</span>
             </div>
-            <p className="mt-2 text-sm text-gray-400">{PLANS.plus.description}</p>
+            <p className="mt-2 text-sm text-gray-400">{PLANS.plus.description[lang]}</p>
             <ul className="mt-6 space-y-3">
-              {PLANS.plus.features.map((f) => (
+              {PLANS.plus.features[lang].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
                   <span className="text-violet-400">&#10003;</span> {f}
                 </li>
