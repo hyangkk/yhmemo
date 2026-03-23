@@ -31,7 +31,15 @@ jobs:
           VERCEL_PROJECT_ID: prj_HfQBSsM0revTwKDvpq5hlQrnxWRN
           BUILD_NUM: ${{ github.run_number }}
         run: |
+          cd web-service
           export BUILD_NUM=$(printf "%04d" $BUILD_NUM)
           vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          # rootDirectory 중복 방지: vercel pull이 가져온 설정에서 rootDirectory 제거
+          python3 -c "
+          import json
+          with open('.vercel/project.json') as f: d = json.load(f)
+          d.pop('rootDirectory', None)
+          with open('.vercel/project.json', 'w') as f: json.dump(d, f)
+          "
           vercel build --prod --token=$VERCEL_TOKEN
           vercel deploy --prebuilt --prod --archive=tgz --token=$VERCEL_TOKEN
